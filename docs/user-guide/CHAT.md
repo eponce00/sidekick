@@ -132,6 +132,9 @@ of its report.
   is offered as `/` followed by its file name. A `description:` line in a leading `---` block
   describes it in the menu. Claude Code's `.claude/commands` folders are read too. Choosing one fills
   the message box; where the prompt says `$ARGUMENTS`, that word is selected so you type over it.
+- **Permissions:** the shield beside the model shows and changes the
+  [permission mode](PERMISSIONS.md), one setting for every chat: Full access, the default, or a mode
+  that asks first. A change applies from the next reply.
 - **Model:** each conversation keeps the model chosen in it, so choosing a model in one
   conversation never changes another. A new conversation starts on the model chosen most recently
   in any conversation. Retries, continued replies, and chats a conversation starts use its model; a

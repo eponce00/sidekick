@@ -161,8 +161,8 @@ export interface AgentKernelToolRouter {
   ) => Promise<void>
   releaseBrowserHumanCheck?: (conversationId: string, expectedSessionId: string) => Promise<void>
   /**
-   * The approval a call that names a stored credential needs, or why the call is refused when its
-   * scope does not allow that use here. Undefined when it names none.
+   * The approval a call that names a stored credential needs, or why the call is refused when the
+   * use breaks a credential rule. Undefined when it names none.
    */
   credentialApproval?: (
     name: string,
@@ -194,8 +194,7 @@ export interface AgentCredentialContext {
 /** What a call that uses a credential shows before it runs. */
 export interface AgentCredentialApproval {
   alias: string
-  ask: 'every_use' | 'once_per_chat' | 'never'
-  /** The chat grant that covers the same entry with the same target. */
+  /** The chat grant that covers the same entries again. */
   keys: string[]
   label: string
   preview: AgentApprovalPreview
@@ -1169,6 +1168,12 @@ The user approved this exact plan revision. Act capabilities are now available a
     return decision
   }
 
+  /**
+   * A call that uses a stored credential is a sensitive action: the permission mode decides it as
+   * it decides any other, so Full access runs it without asking, and "Allow for this chat" covers
+   * the same credential again. A use that breaks a credential rule is refused here, before any
+   * card, whatever the mode.
+   */
   private async decideTool(
     input: StartAgentKernelRunInput,
     call: AgentToolCall,
@@ -1176,23 +1181,27 @@ The user approved this exact plan revision. Act capabilities are now available a
     signal: AbortSignal
   ): Promise<'approved' | 'denied' | 'denied_stop' | { refused: string }> {
     const catalog = currentCatalog(input)
-    const credential = await this.authorizeCredential(input, call, title, signal)
-    if (credential !== 'unasked') return credential
     const context = { conversationId: input.threadId, runId: input.id, toolCallId: call.id }
+    const credential = input.toolRouter.credentialApproval?.(call.name, call.arguments, context)
+    if (credential && 'refused' in credential) return { refused: credential.refused }
     const routedAccess = input.toolRouter.requestedAccess?.(call.name, call.arguments, context)
     // Tools that change SideKick itself ask every time, even in full access, as do calls the
     // router marks so.
     const alwaysAsk =
       getAgentToolEntry(catalog, call.name)?.approval === 'always' || routedAccess === 'always'
-    if (!alwaysAsk && !toolNeedsPolicyDecision(catalog, call.name)) return 'approved'
-    const requestedAccess = alwaysAsk
+    if (!alwaysAsk && !credential && !toolNeedsPolicyDecision(catalog, call.name)) {
+      return 'approved'
+    }
+    const toolAccess = alwaysAsk
       ? 'confirm'
       : (routedAccess ?? toolRequestedAccess(catalog, call.name, call.arguments))
+    const requestedAccess = credential ? 'confirm' : toolAccess
     const decision = alwaysAsk
       ? { effectiveAccess: 'confirm' as const }
       : resolvePermissionPolicy(input.permissionMode, requestedAccess)
     const safeArguments =
       input.toolRouter.safeArguments?.(call.name, call.arguments) ?? call.arguments
+    const credentialFacts = credential ? { credential: credential.alias } : {}
     if (decision.effectiveAccess === 'auto') {
       this.append(input.id, 'permission.resolved', {
         toolCallId: call.id,
@@ -1203,11 +1212,28 @@ The user approved this exact plan revision. Act capabilities are now available a
         mode: input.permissionMode,
         approved: true,
         source: 'policy',
-        arguments: safeArguments
+        arguments: safeArguments,
+        ...credentialFacts
       })
       return 'approved'
     }
-    const scope = alwaysAsk ? null : agentPermissionScope(call.name, call.arguments)
+    // A chat grant covers what the call does on its own, when that asks, and every credential it
+    // uses; a call that would run unasked but for its credential needs only the credential's.
+    const ownScope = alwaysAsk ? null : agentPermissionScope(call.name, call.arguments)
+    const asksOnItsOwn =
+      resolvePermissionPolicy(input.permissionMode, toolAccess).effectiveAccess === 'confirm'
+    const scope = alwaysAsk
+      ? null
+      : credential
+        ? !asksOnItsOwn
+          ? { keys: credential.keys, label: credential.label }
+          : ownScope
+            ? {
+                keys: [...ownScope.keys, ...credential.keys],
+                label: `${ownScope.label}, with ${credential.label}`
+              }
+            : null
+        : ownScope
     const grants = this.chatGrants.get(input.threadId)
     if (scope && grants && scope.keys.every((key) => grants.has(key))) {
       this.append(input.id, 'permission.resolved', {
@@ -1221,30 +1247,34 @@ The user approved this exact plan revision. Act capabilities are now available a
         source: 'chat_grant',
         decision: 'chat_grant',
         chatScope: scope.label,
-        arguments: safeArguments
+        arguments: safeArguments,
+        ...credentialFacts
       })
       return 'approved'
     }
-    const preview = await input.toolRouter
-      .approvalPreview?.(call.name, call.arguments, context)
-      .catch(() => undefined)
+    const preview = credential
+      ? credential.preview
+      : await input.toolRouter
+          .approvalPreview?.(call.name, call.arguments, context)
+          .catch(() => undefined)
     const interaction = await this.suspendForInteraction(
       input.id,
       'permission',
       {
         toolCallId: call.id,
         name: call.name,
-        title,
+        title: credential ? `Use ${credential.alias}: ${title}` : title,
         requestedAccess,
         mode: input.permissionMode,
         arguments: safeArguments,
+        ...credentialFacts,
         ...(scope ? { chatScope: scope.label } : {}),
         ...(preview ? { preview } : {})
       },
       signal
     )
-    if (interaction.status !== 'resolved') return 'denied'
-    const answer = agentPermissionDecision(interaction.response)
+    const answer =
+      interaction.status === 'resolved' ? agentPermissionDecision(interaction.response) : 'deny'
     if (answer === 'allow_chat' && scope) {
       // Only the scope computed here is granted; the response cannot name its own.
       const granted = this.chatGrants.get(input.threadId) ?? new Set<string>()
@@ -1252,57 +1282,7 @@ The user approved this exact plan revision. Act capabilities are now available a
       this.chatGrants.set(input.threadId, granted)
     }
     if (answer === 'allow_once' || answer === 'allow_chat') return 'approved'
-    return answer === 'deny_stop' ? 'denied_stop' : 'denied'
-  }
-
-  /**
-   * A stored credential's own approval setting applies before the permission mode, so it asks
-   * even in Full access. Its card stands for the whole call: once approved, the call needs no
-   * second approval. A use outside scope is refused here, before any card, whatever the mode.
-   * `unasked` lets the usual policy decide, as when the entry never asks.
-   */
-  private async authorizeCredential(
-    input: StartAgentKernelRunInput,
-    call: AgentToolCall,
-    title: string,
-    signal: AbortSignal
-  ): Promise<'approved' | 'denied' | 'denied_stop' | 'unasked' | { refused: string }> {
-    const context = { conversationId: input.threadId, runId: input.id, toolCallId: call.id }
-    const credential = input.toolRouter.credentialApproval?.(call.name, call.arguments, context)
-    if (!credential) return 'unasked'
-    if ('refused' in credential) return { refused: credential.refused }
-    if (credential.ask === 'never') return 'unasked'
-    const grants = this.chatGrants.get(input.threadId)
-    if (credential.ask === 'once_per_chat' && credential.keys.every((key) => grants?.has(key))) {
-      return 'unasked'
-    }
-    const safeArguments =
-      input.toolRouter.safeArguments?.(call.name, call.arguments) ?? call.arguments
-    const interaction = await this.suspendForInteraction(
-      input.id,
-      'permission',
-      {
-        toolCallId: call.id,
-        name: call.name,
-        title: `Use ${credential.alias}: ${title}`,
-        requestedAccess: 'confirm',
-        mode: input.permissionMode,
-        arguments: safeArguments,
-        credential: credential.alias,
-        ...(credential.ask === 'once_per_chat' ? { chatScope: credential.label } : {}),
-        preview: credential.preview
-      },
-      signal
-    )
-    const answer =
-      interaction.status === 'resolved' ? agentPermissionDecision(interaction.response) : 'deny'
-    if (answer === 'allow_chat' && credential.ask === 'once_per_chat') {
-      const granted = this.chatGrants.get(input.threadId) ?? new Set<string>()
-      for (const key of credential.keys) granted.add(key)
-      this.chatGrants.set(input.threadId, granted)
-    }
-    if (answer === 'allow_once' || answer === 'allow_chat') return 'approved'
-    input.toolRouter.credentialDenied?.(call.name, call.arguments, context)
+    if (credential) input.toolRouter.credentialDenied?.(call.name, call.arguments, context)
     return answer === 'deny_stop' ? 'denied_stop' : 'denied'
   }
 

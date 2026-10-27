@@ -329,30 +329,19 @@ describe('AgentToolRuntime file receipts', () => {
       alias: 'gh-token',
       kind: 'secret' as const,
       description: '',
-      usernameVisible: false,
-      ask: 'never' as const,
-      scope: {
-        projects: 'all' as const,
-        background: false,
-        commands: { mode: 'programs' as const, programs: ['node'] }
-      },
       createdAt: 1,
       updatedAt: 1,
       needsValue: false
     }
     runtime.setCredentials({
       list: () => [entry],
-      useContext: () => ({ projectId: null, background: false }),
       openEditor: () => true,
-      uses: new CredentialUses(
-        {
-          list: () => [entry],
-          resolve: () => ({ summary: entry, values: { secret: value } }),
-          record: vi.fn(),
-          setTransientSecrets: vi.fn()
-        },
-        () => ({ projectId: null, background: false })
-      )
+      uses: new CredentialUses({
+        list: () => [entry],
+        resolve: () => ({ summary: entry, values: { secret: value } }),
+        record: vi.fn(),
+        setTransientSecrets: vi.fn()
+      })
     })
     const session = await runtime.createSession({
       runId: 'run-secret',
@@ -386,19 +375,6 @@ describe('AgentToolRuntime file receipts', () => {
       const reserved = await shell('node -v', { PATH: 'gh-token' })
       expect(reserved.status).toBe('error')
       expect(reserved.error?.message).toContain('changes how commands run')
-
-      // The kernel refuses this before any card; the tool checks again when it runs.
-      expect(
-        session.router.credentialApproval?.(
-          'shell',
-          { command: 'node -v; echo done', secrets: { GH_TOKEN: 'gh-token' } },
-          { conversationId: 'chat', runId: 'run-secret', toolCallId: 'call-0' }
-        )
-      ).toEqual({ refused: expect.stringContaining('one simple command') })
-      const chained = await shell('node -v; echo done', { GH_TOKEN: 'gh-token' })
-      expect(chained.status).toBe('denied')
-      expect(chained.error?.message).toContain('one simple command')
-      expect(execute).not.toHaveBeenCalled()
 
       const allowed = await shell('node --version', { GH_TOKEN: 'gh-token' })
       expect(allowed.status).toBe('success')

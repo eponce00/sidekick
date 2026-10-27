@@ -224,6 +224,69 @@ describe('AgentContextManager', () => {
     expect(result.details?.messagesCompacted).toBeGreaterThan(1)
   })
 
+  it('keeps the request a long run answers word for word, not an earlier question', async () => {
+    const messages: ProviderChatMessage[] = [
+      { role: 'system', content: 'System policy' },
+      { role: 'user', content: 'Can you clone the private repository for me?' },
+      { role: 'assistant', content: 'I cannot reach it; clone it and I will read the files.' },
+      { role: 'user', content: 'So what is done and what is pending?' }
+    ]
+    for (let index = 0; index < 8; index++) {
+      const id = `call-${index}`
+      messages.push(
+        {
+          role: 'assistant',
+          content: `Checking ${index}`,
+          tool_calls: [
+            { id, function: { name: 'shell', arguments: { command: `check ${index}` } } }
+          ]
+        },
+        { role: 'tool', tool_call_id: id, content: `Result ${index}: ${'log line '.repeat(900)}` }
+      )
+      if (index === 5) {
+        messages.push({
+          role: 'user',
+          content:
+            '<sidekick_verification_guard trust="app-policy">\nVerify.\n</sidekick_verification_guard>'
+        })
+      }
+    }
+    const manager = new AgentContextManager({
+      target: { ...target, contextLength: 32_768 },
+      contextLength: 32_768,
+      maxOutputTokens: 8_192,
+      threshold: 0.8,
+      enabled: true,
+      // The summary a local model wrote: the earlier question as the objective.
+      complete: async () => ({
+        ok: true,
+        data: {
+          message: { role: 'assistant', content: '## Objective\n- Clone the private repository.' },
+          promptTokens: 10_000,
+          completionTokens: 20,
+          reasoningTokens: 0,
+          finishReason: 'stop'
+        }
+      })
+    })
+
+    const result = await manager.compact(messages, [], new AbortController().signal)
+    expect(result.compacted).toBe(true)
+    const kept = result.messages.filter(
+      (message) => message.content === 'So what is done and what is pending?'
+    )
+    expect(kept).toHaveLength(1)
+    const summaryAt = result.messages.findIndex((message) =>
+      message.content?.startsWith('<historical_context')
+    )
+    expect(result.messages[summaryAt + 1].content).toBe('So what is done and what is pending?')
+    expect(
+      result.messages.some(
+        (message) => message.content === 'Can you clone the private repository for me?'
+      )
+    ).toBe(false)
+  })
+
   it('uses actual provider prompt usage to correct future preflight estimates', () => {
     const manager = new AgentContextManager({
       target,

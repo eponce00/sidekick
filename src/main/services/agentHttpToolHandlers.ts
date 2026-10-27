@@ -1,6 +1,6 @@
 import type { AxiosRequestConfig, AxiosResponse } from 'axios'
 import { toolExecutionFailed, toolExecutionSucceeded } from '../../shared/agentRuntime'
-import type { CredentialSend } from '../../shared/credentials'
+import { credentialSendFor, type CredentialSend } from '../../shared/credentials'
 import { HTTP_REQUEST_METHODS, HTTP_REQUEST_TOOL } from '../../shared/httpRequestTool'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
 import { browserNetworkApprovals, type BrowserNetworkPolicy } from './browserNetworkApprovals'
@@ -92,7 +92,7 @@ interface Body {
 }
 
 /**
- * Puts the credential where its entry says, refusing anything the model already set there in any
+ * Puts the credential where the call said, refusing anything the model already set there in any
  * letter case, and any header that would change how the server reads the part holding the value.
  */
 function place(
@@ -225,8 +225,11 @@ export function registerHttpToolHandlers(
           recoveryAction: 'change_strategy'
         })
       }
-      if (!taken.send) return invalid(title, `${alias} cannot be sent in a web request.`)
-      const refusal = place(taken.send, taken.values, url, headers, body)
+      const placement: CredentialSend | string = taken.derived
+        ? { as: 'header', name: 'Authorization', prefix: 'Bearer ' }
+        : credentialSendFor(args.credential_as, taken.summary.kind)
+      if (typeof placement === 'string') return invalid(title, placement)
+      const refusal = place(placement, taken.values, url, headers, body)
       if (refusal) return invalid(title, refusal)
       usedAlias = alias.replace(/~\d+$/, '')
     }

@@ -464,7 +464,7 @@ function SettingsModal({
           <SettingsSection
             icon={ShieldCheck}
             title="Permissions"
-            description="What the agent may do without asking you. It applies to commands, files, connectors, and the browser."
+            description="What the agent may do without asking you. It applies to commands, files, connectors, the browser, and stored credentials, and you can also change it beside the model in the composer."
           >
             <SettingsRow
               icon={Hand}
@@ -745,7 +745,7 @@ function SettingsModal({
         <div className="settings-page">
           <SettingsPageHeader
             title="Credentials"
-            description="API keys and sign-ins the agent can use by name without ever seeing them. Each one saves on its own, apart from Save changes."
+            description="Sign-ins and keys the agent uses without ever seeing them."
           />
           <CredentialSettings request={credentialRequest} />
         </div>

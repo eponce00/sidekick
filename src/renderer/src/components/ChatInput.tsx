@@ -22,6 +22,8 @@ import type { PinnedModel } from '../types/models.types'
 import type { AgentRunPhase } from '../../../shared/agentRuntime'
 import { ChatComposer } from './ChatComposer'
 import { ChatModelPicker } from './ChatModelPicker'
+import { PermissionModePicker } from './PermissionModePicker'
+import type { PermissionMode } from '../../../shared/permissions'
 import {
   nextReasoningLevel,
   REASONING_LEVEL_LABELS,
@@ -218,6 +220,9 @@ interface ChatInputProps {
   onToggleModelMenu: () => void
   onModelChange: (modelId: string) => void
   onOpenModelSearch: () => void
+  permissionMode?: PermissionMode
+  /** Shows the permission picker beside the model. */
+  onPermissionModeChange?: (mode: PermissionMode) => void
   workspaceFolder: string | null
   /** The chat has no project and keeps attached files as copies in its own folder. */
   attachesToChatFolder?: boolean
@@ -308,6 +313,8 @@ export function ChatInput({
   onToggleModelMenu,
   onModelChange,
   onOpenModelSearch,
+  permissionMode = 'full-access',
+  onPermissionModeChange,
   workspaceFolder,
   attachesToChatFolder = false,
   toolbarExtra,
@@ -1192,6 +1199,9 @@ export function ChatInput({
       }
       toolbarRight={
         <>
+          {onPermissionModeChange && (
+            <PermissionModePicker mode={permissionMode} onChange={onPermissionModeChange} />
+          )}
           <ChatModelPicker
             selectedModelId={selectedModel}
             models={pinnedModels}

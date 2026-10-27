@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { SiteIconService } from './siteIconService'
+import { SiteIconService, guardedIconFetch } from './siteIconService'
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
@@ -51,6 +51,11 @@ describe('SiteIconService', () => {
     })
     const service = new SiteIconService(cacheDir, fetchImpl as unknown as typeof fetch)
     expect(await service.iconFor('https://example.org/deep/link')).toMatch(/^data:image\/png/)
+  })
+
+  it('fetches by default under the network guard, which refuses local addresses', async () => {
+    await expect(guardedIconFetch('https://127.0.0.1/favicon.ico')).rejects.toThrow()
+    await expect(guardedIconFetch('https://10.0.0.5/favicon.ico')).rejects.toThrow(/local network/)
   })
 
   it('never contacts anything for non-http or local hosts', async () => {
