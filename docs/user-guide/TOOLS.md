@@ -24,8 +24,9 @@ tools the model can see. A tool missing from that catalog cannot be invoked thro
 
 Project-bound runs can also receive the bounded `read` tool and the file editor the model was
 trained on: `apply_patch` for OpenAI models, `Edit`/`Write` for Claude, search-and-replace for Grok,
-and `edit`/`write`/`delete_file` for other models such as Qwen. Files must be read in the same run
-before they are changed, and every edit uses the same transactional workspace mutation service.
+and `edit`/`write`/`delete_file` for other models such as Qwen. A file must be read earlier in the
+same chat before it is changed, though not before it is deleted, and every edit uses the same
+transactional workspace mutation service.
 
 The native browser catalog includes `browser_open`, `browser_observe`, `browser_screenshot`,
 `browser_click`, `browser_type`, `browser_sign_in`, `browser_select`, `browser_fill_form`, `browser_scroll`, `browser_hover`,
