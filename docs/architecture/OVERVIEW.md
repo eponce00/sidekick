@@ -139,7 +139,7 @@ formatters, and broad mechanical transformations, not the ordinary code-editing 
 `AgentToolRegistry` normalizes only unambiguous syntax differences, validates the complete recursive
 schema before permission prompts or side effects, and returns every missing or invalid field in one
 model-visible result. MCP schemas pass through the same portable schema normalizer, including local
-reference resolution. Malformed provider JSON becomes an ordinary failed tool result with the
+reference resolution and merging `allOf` branches into one schema. Malformed provider JSON becomes an ordinary failed tool result with the
 original call identity; it never aborts the provider loop by itself.
 
 Models bring names from other agent harnesses. The registry renames an argument another harness
