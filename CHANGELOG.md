@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.23.0 — 2026-10-27
+
+- Keep files intact when the agent edits them. A binary file is no longer filled with replacement
+  characters, an edit that fails puts the file back exactly as it was, and a UTF-8 byte-order mark,
+  old Mac line endings and UTF-16 text survive edits. A file spelled with different letter case or
+  through `..` counts as the same file, and renaming a file by case alone works.
+- Get long command output in seconds. A command printing a hundred thousand lines took minutes or
+  never returned; it now finishes in seconds, keeps to its time limit, and says when the start of its
+  output was cut and where the full log is. On Windows, `2>&1` no longer turns success into failure,
+  `Write-Error` no longer prints SideKick's own wrapper, and accented text and emoji come through.
+- Let a follow-up edit files the agent already read or wrote in the same chat, without reading them
+  again; a file that changed since is still refused, and rewinding the chat forgets what it read.
+- Keep connectors working. A local MCP server that logs a lot no longer hangs, stopping a reply stops
+  the server's work too, the call time limit applies, long tool lists are read in full, a server
+  that quit is started again, and a tool that reports an error counts as failed.
+- Read web pages in any character set, see the start of large JSON responses, and stop fetches that
+  are too slow or too large instead of hanging.
+- Keep a reply going through more provider trouble. Tool calls streamed in unusual shapes are
+  rebuilt correctly instead of stopping the reply, an Anthropic overload is waited out, partial text
+  is not shown twice after a retry, an exhausted quota fails at once with a clear message, and an
+  empty final reply is asked again once.
+- Rewind, retry and edit stop and say why when your files could not be restored, instead of deleting
+  messages anyway. Files you attach and project start-hook results stay in the next reply's history.
+- Schedules: a run that could not start is recorded with the reason, and an hourly schedule no
+  longer skips a run when daylight saving time ends.
+- Harden security boundaries: a saved API key is only sent to the address it was saved with, a
+  project folder must be one you picked, and more encodings of a stored secret are redacted.
+
 ## 0.22.3 — 2026-10-27
 
 - Keep a reply going when the model server is busy or limiting requests. A single "too many
