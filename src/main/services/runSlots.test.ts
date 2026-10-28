@@ -20,6 +20,17 @@ function request(
 }
 
 describe('RunSlots', () => {
+  it('lends free slots to work that can wait, never ahead of a waiting run', async () => {
+    const slots = new RunSlots(() => 1)
+    const idle = slots.tryAcquire(request('idle'))!
+    expect(idle).not.toBeNull()
+    const run = slots.acquire(request('run'))
+    expect(slots.tryAcquire(request('another'))).toBeNull()
+    idle.release()
+    await run
+    expect(slots.tryAcquire(request('later'))).toBeNull()
+  })
+
   it('runs up to the global limit and hands slots over in order', async () => {
     const slots = new RunSlots(() => 2)
     const first = await slots.acquire(request('a'))

@@ -32,7 +32,7 @@ import type { ProviderSettings } from '../../shared/settings'
 import { refreshProviderTargetMetadata } from '../../shared/providerInstances'
 import { resolveProviderContext } from '../providers/providerRuntime'
 import { editingDialectForTarget, isWorkspaceMutationTool } from '../../shared/workspaceMutations'
-import { beginWorkspaceInstructionScope } from './workspaceRules'
+import { beginWorkspaceInstructionScope, clearWorkspaceInstructionScope } from './workspaceRules'
 import { ProjectStore } from './projectStore'
 import { ConversationCompactionStore } from './conversationCompactionStore'
 import { AgentContextManager, type AgentCompactionRecord } from './agentContextManager'
@@ -796,6 +796,35 @@ export class ConversationRunPreparer {
     private readonly skillAssetsPath: () => string,
     private readonly sessionTools?: ConversationSessionTools
   ) {}
+
+  /**
+   * Summarizes an idle chat the way its next run would, saving the summary that run starts from,
+   * when the chat is already within `pressure` of the point where that run would compact. Returns
+   * whether a summary was saved.
+   */
+  async compactAhead(
+    input: StartConversationAgentRunInput,
+    pressure: number,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    try {
+      const prepared = await this.prepare(input, async () => undefined, signal)
+      const { contextManager, messages } = prepared.kernelInput
+      const tools =
+        input.model.supportsTools === false
+          ? []
+          : getAgentToolDefinitions(prepared.toolSession.catalog())
+      if (
+        !(contextManager instanceof AgentContextManager) ||
+        contextManager.compactionPressure(messages, tools) < pressure
+      )
+        return false
+      const result = await contextManager.compact(messages, tools, signal)
+      return result.compacted && typeof result.details?.summary === 'string'
+    } finally {
+      clearWorkspaceInstructionScope(input.id)
+    }
+  }
 
   async prepare(
     input: StartConversationAgentRunInput,

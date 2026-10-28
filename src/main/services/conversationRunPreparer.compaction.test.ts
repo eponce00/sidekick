@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProviderChatMessage, ProviderStreamChunk } from '../../shared/providerRuntime'
 import { getAgentToolDefinitions } from '../../shared/agentToolCatalog'
 import type { AgentRunEventType } from '../../shared/agentRuntime'
+import type { StartConversationAgentRunInput } from '../../shared/agentRunApi'
 import { calculateRequestBudget, estimateProviderRequestTokens } from '../../shared/contextBudget'
 import { validateProviderTranscript } from '../../shared/providerTranscript'
 import type { ProviderSettings } from '../../shared/settings'
@@ -83,8 +84,8 @@ function chat(instructions?: string): {
   return { db, request: db.prepare("SELECT * FROM messages WHERE id = 'request'").get() as never }
 }
 
-async function prepare(db: ReturnType<typeof openApplicationDatabase>, runId: string) {
-  const preparer = new ConversationRunPreparer(
+function preparerFor(db: ReturnType<typeof openApplicationDatabase>): ConversationRunPreparer {
+  return new ConversationRunPreparer(
     db,
     {
       createSession: async () => ({
@@ -97,23 +98,27 @@ async function prepare(db: ReturnType<typeof openApplicationDatabase>, runId: st
     () => ({ autoCompactEnabled: true, autoCompactThreshold: 0.8 }) as ProviderSettings,
     () => 'assets'
   )
-  return preparer.prepare(
-    {
-      id: runId,
-      conversationId: 'chat',
-      assistantMessageId: `${runId}-reply`,
-      model: {
-        id: 'model',
-        name: 'model',
-        provider: 'lmstudio',
-        providerKind: 'openai-compatible',
-        contextLength: 32_768,
-        maxOutputTokens: 4_096,
-        supportsTools: true
-      }
-    },
-    async () => undefined
-  )
+}
+
+function runInput(runId: string): StartConversationAgentRunInput {
+  return {
+    id: runId,
+    conversationId: 'chat',
+    assistantMessageId: `${runId}-reply`,
+    model: {
+      id: 'model',
+      name: 'model',
+      provider: 'lmstudio',
+      providerKind: 'openai-compatible',
+      contextLength: 32_768,
+      maxOutputTokens: 4_096,
+      supportsTools: true
+    }
+  }
+}
+
+async function prepare(db: ReturnType<typeof openApplicationDatabase>, runId: string) {
+  return preparerFor(db).prepare(runInput(runId), async () => undefined)
 }
 
 const contents = (messages: readonly ProviderChatMessage[]): string =>
@@ -360,6 +365,23 @@ describe('a compaction during a conversation run', () => {
       run.kernelInput.contextManager!.compact(messages, [], controller.signal)
     ).rejects.toThrow()
     expect(new ConversationCompactionStore(db).latest('chat')).toBeNull()
+  })
+
+  it('is written ahead for an idle chat only when its next run would compact', async () => {
+    summarizes()
+    const { db } = chat()
+    const signal = new AbortController().signal
+    expect(await preparerFor(db).compactAhead(runInput('idle-1'), 10, signal)).toBe(false)
+    expect(new ConversationCompactionStore(db).latest('chat')).toBeNull()
+
+    expect(await preparerFor(db).compactAhead(runInput('idle-2'), 0.85, signal)).toBe(true)
+    expect(new ConversationCompactionStore(db).latest('chat')?.summary).toBe(SUMMARY)
+    // The next run starts from the summary instead of writing one first.
+    const next = await prepare(db, 'next')
+    expect(contents(next.kernelInput.messages)).toContain(SUMMARY)
+    expect(next.kernelInput.contextManager!.shouldCompact(next.kernelInput.messages, [])).toBe(
+      false
+    )
   })
 })
 
