@@ -170,13 +170,14 @@ SideKick restarts.
 sign-in's username, which the agent may read, plus values replaced or deleted since launch and returned tokens,
 and matches them with one Aho–Corasick automaton together
 with the encodings the GitHub Actions runner registers for its secrets: each line of a multi-line
-value (PEM armor lines excepted), JSON escaping, percent-encoding in both forms and both cases,
-HTML and XML entities, Bash and PowerShell quoting, standard and URL-safe Base64 at all three
-alignments, Base64 of UTF-16LE, and hexadecimal. Values under 4 characters and encoded forms under
-6 are skipped. Overlapping matches merge into one `[secret: alias]`. Matching runs on the text with
-terminal escape sequences (CSI, OSC and two-character escapes) removed, and each match replaces the
-original text it spans, escapes included, so a value a program prints in pieces between color codes
-is still caught.
+value (PEM armor lines excepted), JSON escaping, percent-encoding in both forms and both cases
+and as `URLSearchParams` writes form fields, HTML and XML entities, Bash and PowerShell quoting,
+standard and URL-safe Base64 at all three alignments, Base64 of UTF-16LE, and hexadecimal. Values
+under 4 characters and encoded forms under 6 are skipped. Overlapping matches merge into one
+`[secret: alias]`. Matching runs on the text with terminal escape sequences (CSI, OSC and
+two-character escapes) removed and Base64 wrapped at 76 or 64 columns joined into one line, and each
+match replaces the original text it spans, escapes and line breaks included, so a value a program
+prints in pieces between color codes, or as wrapped Base64, is still caught.
 
 A `CredentialRedactionStream` redacts output that arrives in chunks: it holds back only the tail
 that could still begin a stored form, and an escape sequence cut off at the end, so ordinary output

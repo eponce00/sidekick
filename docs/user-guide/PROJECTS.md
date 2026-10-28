@@ -34,7 +34,9 @@ standalone chats for work that does not belong to a folder.
 source of truth for membership; `NULL` means standalone.
 
 When a conversation is activated, the renderer resolves its project and updates the trusted
-main-process workspace before rendering the conversation as active. File tools, shell commands,
+main-process workspace before rendering the conversation as active. The main process accepts only a
+folder it already knows (a project, a chat's own folder or worktree) as that workspace, and makes a
+project only from a folder chosen in its folder picker. File tools, shell commands,
 memory, checkpoints, and the file explorer continue to use the main-process workspace boundary, but
 that boundary is now derived from the active conversation instead of being an unrelated global UI
 preference.

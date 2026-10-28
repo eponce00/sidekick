@@ -3,7 +3,7 @@ import { resolve } from 'path'
 
 const { state } = vi.hoisted(() => ({
   state: {
-    storedRoot: '/workspaces/visible',
+    storedRoot: '/workspaces/visible' as string | null,
     knownRoots: new Set<string>(),
     chatsWithoutProject: new Set<string>()
   }
@@ -14,7 +14,12 @@ vi.mock('electron', () => ({
 }))
 
 vi.mock('./state', () => ({
-  getStore: () => ({ get: () => state.storedRoot }),
+  getStore: () => ({
+    get: () => state.storedRoot,
+    set: (_key: string, value: string | null) => {
+      state.storedRoot = value
+    }
+  }),
   getDb: () => ({
     prepare: (sql: string) => ({
       get: (projectRoot: string, conversationRoot: string) =>
@@ -34,7 +39,12 @@ vi.mock('../services/chatFolders', async (original) => ({
   ensureChatFolder: vi.fn()
 }))
 
-import { resolveKnownWorkspace } from './workspaceUtils'
+import {
+  assertPickedFolder,
+  rememberPickedFolder,
+  resolveKnownWorkspace,
+  setStoredWorkspace
+} from './workspaceUtils'
 import { configureChatFoldersRoot } from '../services/chatFolders'
 
 describe('resolveKnownWorkspace', () => {
@@ -77,5 +87,33 @@ describe('resolveKnownWorkspace', () => {
         'Workspace is not associated with a SideKick project chat'
       )
     }
+  })
+})
+
+describe('setting the visible workspace', () => {
+  beforeEach(() => {
+    state.storedRoot = resolve('/workspaces/visible')
+    state.knownRoots.clear()
+  })
+
+  it('accepts a registered project folder, or none', () => {
+    state.knownRoots.add(resolve('/workspaces/other'))
+    setStoredWorkspace('/workspaces/other')
+    expect(state.storedRoot).toBe(resolve('/workspaces/other'))
+    setStoredWorkspace(null)
+    expect(state.storedRoot).toBeNull()
+  })
+
+  it('refuses a folder SideKick does not know, keeping the current one', () => {
+    for (const path of ['/private/unrelated', '', 42]) {
+      expect(() => setStoredWorkspace(path)).toThrow()
+    }
+    expect(state.storedRoot).toBe(resolve('/workspaces/visible'))
+  })
+
+  it('makes a project only from a folder the user picked', () => {
+    expect(() => assertPickedFolder('/workspaces/picked')).toThrow('folder picker')
+    rememberPickedFolder('/workspaces/picked')
+    expect(() => assertPickedFolder(resolve('/workspaces/picked'))).not.toThrow()
   })
 })
