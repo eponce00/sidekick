@@ -24,8 +24,14 @@ import { createMcpOAuthCallback, McpOAuthSessionStore } from './mcpOAuth'
 export interface McpConnectionAdapter {
   connect(): Promise<void>
   close(): Promise<void>
+  /** False once the server has gone away, such as a local server that exited. */
+  isOpen(): boolean
   listTools(): Promise<{ tools: McpToolInfo[] }>
-  callTool(name: string, args: Record<string, unknown>): Promise<unknown>
+  callTool(
+    name: string,
+    args: Record<string, unknown>,
+    options: { signal: AbortSignal; timeoutMs: number }
+  ): Promise<unknown>
   finishAuth?(authorizationCode: string): Promise<void>
 }
 
@@ -74,6 +80,8 @@ const CONNECT_TIMEOUT_MS = 15_000
 const LIST_TIMEOUT_MS = 15_000
 const CALL_TIMEOUT_MS = 120_000
 const CLOSE_TIMEOUT_MS = 3_000
+/** Stops a server whose cursors never end from listing forever. */
+const MAX_TOOL_PAGES = 100
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -115,20 +123,48 @@ function withDeadline<T>(
   })
 }
 
-function mapTools(client: Client, config: McpServerConfig): McpConnectionAdapter['listTools'] {
-  return async () => {
-    const page = await client.listTools()
-    return {
-      tools: page.tools.map((tool) => ({
-        serverId: config.id,
-        serverName: config.name,
-        name: tool.name,
-        description: tool.description,
-        inputSchema: tool.inputSchema as Record<string, unknown>,
-        annotations: tool.annotations,
-        approvalMode: config.approvalMode ?? 'prompt'
-      }))
-    }
+function sdkAdapter(
+  client: Client,
+  transport: StdioClientTransport | StreamableHTTPClientTransport,
+  config: McpServerConfig
+): McpConnectionAdapter {
+  return {
+    connect: () => client.connect(transport),
+    close: async () => {
+      await Promise.allSettled([client.close(), transport.close()])
+    },
+    // The SDK drops its transport when the connection closes, whichever side closed it.
+    isOpen: () => client.transport !== undefined,
+    listTools: async () => {
+      const tools: McpToolInfo[] = []
+      const cursors = new Set<string>()
+      let cursor: string | undefined
+      for (let pages = 0; pages < MAX_TOOL_PAGES; pages++) {
+        const page = await client.listTools(cursor === undefined ? undefined : { cursor })
+        for (const tool of page.tools) {
+          tools.push({
+            serverId: config.id,
+            serverName: config.name,
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema as Record<string, unknown>,
+            annotations: tool.annotations,
+            approvalMode: config.approvalMode ?? 'prompt'
+          })
+        }
+        cursor = page.nextCursor
+        if (cursor === undefined || cursors.has(cursor)) break
+        cursors.add(cursor)
+      }
+      return { tools }
+    },
+    // The signal sends the server a cancellation. SideKick's deadline is the limit that applies;
+    // the SDK's own timer, 60 seconds unless set, only backs it up.
+    callTool: (name, args, { signal, timeoutMs }) =>
+      client.callTool({ name, arguments: args }, undefined, {
+        signal,
+        timeout: timeoutMs + CLOSE_TIMEOUT_MS
+      })
   }
 }
 
@@ -144,17 +180,11 @@ function stdioConnection(
     env: Object.keys(environment).length
       ? { ...getDefaultEnvironment(), ...environment }
       : undefined,
-    stderr: 'pipe'
+    // Nothing reads a server's log, and a pipe nobody drains fills up and then blocks the server.
+    stderr: 'ignore'
   })
   const client = new Client({ name: 'sidekick-desktop', version: packageMetadata.version })
-  return {
-    connect: () => client.connect(transport),
-    close: async () => {
-      await Promise.allSettled([client.close(), transport.close()])
-    },
-    listTools: mapTools(client, config),
-    callTool: (name, args) => client.callTool({ name, arguments: args })
-  }
+  return sdkAdapter(client, transport, config)
 }
 
 function streamableHttpConnection(
@@ -172,12 +202,7 @@ function streamableHttpConnection(
   })
   const client = new Client({ name: 'sidekick-desktop', version: packageMetadata.version })
   return {
-    connect: () => client.connect(transport),
-    close: async () => {
-      await Promise.allSettled([client.close(), transport.close()])
-    },
-    listTools: mapTools(client, config),
-    callTool: (name, args) => client.callTool({ name, arguments: args }),
+    ...sdkAdapter(client, transport, config),
     finishAuth: (authorizationCode) => transport.finishAuth(authorizationCode)
   }
 }
@@ -243,7 +268,12 @@ export class McpClientManager {
     }
     for (const [id, connection] of this.connections) {
       const next = enabled.get(id)
-      if (!next || !this.sameConfig(next, connection.config) || !this.trust.isApproved(next)) {
+      if (
+        !next ||
+        !this.sameConfig(next, connection.config) ||
+        !this.trust.isApproved(next) ||
+        !connection.adapter.isOpen()
+      ) {
         await this.closeConnection(connection.adapter)
         this.connections.delete(id)
       }
@@ -441,12 +471,23 @@ export class McpClientManager {
     await this.syncQueue
     const connection = this.connections.get(serverId)
     if (!connection) throw new Error(`MCP server is not connected: ${serverId}`)
-    return withDeadline(
-      connection.adapter.callTool(name, args),
-      `MCP tool ${connection.config.name}/${name}`,
-      Math.max(1, Math.min(options.timeoutMs ?? CALL_TIMEOUT_MS, CALL_TIMEOUT_MS)),
-      options.signal
-    )
+    const label = `MCP tool ${connection.config.name}/${name}`
+    if (options.signal?.aborted) throw new Error(`${label} cancelled`)
+    const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? CALL_TIMEOUT_MS, CALL_TIMEOUT_MS))
+    // A stopped run or a missed deadline cancels the call on the server too, not only here.
+    const cancellation = new AbortController()
+    let answered = false
+    const call = connection.adapter
+      .callTool(name, args, { signal: cancellation.signal, timeoutMs })
+      .finally(() => {
+        answered = true
+      })
+    try {
+      return await withDeadline(call, label, timeoutMs, options.signal)
+    } catch (error) {
+      if (!answered) cancellation.abort(error)
+      throw error
+    }
   }
 
   private async closeConnection(adapter: McpConnectionAdapter): Promise<void> {

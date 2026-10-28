@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { promises as fs } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 import type {
   McpHttpServerConfig,
@@ -6,10 +9,17 @@ import type {
   McpStdioServerConfig,
   McpToolInfo
 } from '../../shared/types'
-import { McpClientManager, type McpConnectionAdapter } from './mcpClientManager'
+import { registerMcpToolHandlers } from './agentMcpToolHandlers'
+import { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
+import {
+  createMcpConnection,
+  McpClientManager,
+  type McpConnectionAdapter
+} from './mcpClientManager'
 import { mcpFunctionName } from './agentToolRuntime'
 import { ConnectorCredentialStore } from './connectorCredentialStore'
 import { McpOAuthSessionStore } from './mcpOAuth'
+import { ToolOutputStore } from './toolOutputStore'
 
 function config(overrides: Partial<McpStdioServerConfig> = {}): McpStdioServerConfig {
   return {
@@ -37,6 +47,7 @@ function adapter(overrides: Partial<McpConnectionAdapter> = {}): McpConnectionAd
   return {
     connect: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
+    isOpen: vi.fn(() => true),
     listTools: vi.fn(async () => ({ tools: [] })),
     callTool: vi.fn(async () => ({ ok: true })),
     ...overrides
@@ -316,5 +327,124 @@ describe('McpClientManager content-bound approval', () => {
     })
     const listed = await manager.listTools()
     expect(JSON.stringify(listed)).not.toContain('decrypted-value')
+  })
+})
+
+/** A local MCP server speaking the stdio protocol, so the SDK client runs for real. */
+const STDIO_SERVER = String.raw`
+const fs = require('fs')
+let cancellations = 0
+let buffer = ''
+const send = (message) => fs.writeSync(1, JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n')
+const text = (value, isError) => ({ content: [{ type: 'text', text: String(value) }], isError })
+process.stdin.on('data', (chunk) => {
+  buffer += chunk
+  for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+    const { id, method, params } = JSON.parse(buffer.slice(0, end))
+    buffer = buffer.slice(end + 1)
+    if (method === 'notifications/cancelled') cancellations += 1
+    if (id === undefined) continue
+    if (method === 'initialize') {
+      send({ id, result: { protocolVersion: params.protocolVersion, capabilities: { tools: {} },
+        serverInfo: { name: 'fixture', version: '1.0.0' } } })
+    } else if (method === 'tools/list') {
+      const tool = (name) => ({ name, inputSchema: { type: 'object' } })
+      send({ id, result: params && params.cursor ? { tools: [tool('second')] }
+        : { tools: [tool('first')], nextCursor: 'page-2' } })
+    } else if (params.name === 'noisy') {
+      fs.writeSync(2, 'log line\n'.repeat(200000))
+      send({ id, result: text('done') })
+    } else if (params.name === 'exit') {
+      process.exit(0)
+    } else if (params.name === 'fail') {
+      send({ id, result: text('Repository not found', true) })
+    } else if (params.name === 'cancellations') {
+      send({ id, result: text(cancellations) })
+    }
+  }
+})
+`
+
+describe('McpClientManager with a local stdio server', () => {
+  let root: string
+  let server: McpStdioServerConfig
+  const managers: McpClientManager[] = []
+
+  beforeAll(async () => {
+    root = await fs.mkdtemp(join(tmpdir(), 'sidekick-mcp-stdio-'))
+    await fs.writeFile(join(root, 'server.cjs'), STDIO_SERVER)
+    server = config({ command: process.execPath, args: [join(root, 'server.cjs')] })
+  })
+
+  afterAll(async () => {
+    await Promise.all(managers.map((manager) => manager.close()))
+    await fs.rm(root, { recursive: true, force: true })
+  })
+
+  async function connected(): Promise<McpClientManager> {
+    // Tests run under Electron's Node; the server must too.
+    const manager = new McpClientManager((next) =>
+      createMcpConnection(next, { environment: { ELECTRON_RUN_AS_NODE: '1' } })
+    )
+    managers.push(manager)
+    await manager.sync([server])
+    return manager
+  }
+
+  async function answer(manager: McpClientManager, name: string): Promise<string> {
+    const result = await manager.callTool(server.id, name, {}, { timeoutMs: 5_000 })
+    return (result as { content: Array<{ text: string }> }).content[0].text
+  }
+
+  const bothPages = {
+    tools: [expect.objectContaining({ name: 'first' }), expect.objectContaining({ name: 'second' })]
+  }
+
+  it('lists every page of tools and keeps answering a server that logs a lot', async () => {
+    const manager = await connected()
+    await expect(manager.listTools()).resolves.toMatchObject(bothPages)
+    expect(await answer(manager, 'noisy')).toBe('done')
+    expect(await answer(manager, 'noisy')).toBe('done')
+  })
+
+  it('cancels the call on the server when the run stops', async () => {
+    const manager = await connected()
+    const controller = new AbortController()
+    const hung = manager.callTool(server.id, 'hang', {}, { signal: controller.signal })
+    // The server reads requests in order, so this answer means it has the hung call.
+    expect(await answer(manager, 'cancellations')).toBe('0')
+    controller.abort()
+    await expect(hung).rejects.toThrow('cancelled')
+    expect(await answer(manager, 'cancellations')).toBe('1')
+  })
+
+  it('starts a server again after it exits', async () => {
+    const manager = await connected()
+    await expect(answer(manager, 'exit')).rejects.toThrow()
+    await manager.sync([server])
+    await expect(manager.listTools()).resolves.toMatchObject(bothPages)
+  })
+
+  it("records a result flagged isError as a failed tool call with the server's text", async () => {
+    const manager = await connected()
+    const listed = await manager.listTools()
+    const registry = new AgentToolHandlerRegistry()
+    registerMcpToolHandlers(registry, {
+      mcp: manager,
+      available: new Map([['fail', { ...listed.tools[0], name: 'fail' }]]),
+      enabled: new Map(),
+      readReceipts: new Map(),
+      outputs: new ToolOutputStore(root)
+    })
+    const result = await registry.execute({
+      name: 'fail',
+      title: 'fail',
+      arguments: {},
+      context: { runId: 'run', signal: new AbortController().signal }
+    })
+    expect(result).toMatchObject({
+      status: 'error',
+      error: { code: 'command_failed', message: 'Repository not found' }
+    })
   })
 })
