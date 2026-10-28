@@ -1,5 +1,5 @@
 import { useId, useState } from 'react'
-import { ArrowLeft, ChevronRight, CircleStop, GitBranch, MessageSquare } from 'lucide-react'
+import { ArrowLeft, ChevronRight, GitBranch, MessageSquare } from 'lucide-react'
 import {
   sessionIsActive,
   type SessionFamilyMember,
@@ -11,6 +11,7 @@ import { memberName } from '../hooks/useSessionFamily'
 import { sessionStateLabel } from '../utils/sessionLabels'
 import { SessionStateDot } from './SessionChip'
 import { MessageMarkdown } from './MessageMarkdown'
+import { StopGlyph } from './StopGlyph'
 import './ChatFamily.css'
 
 /**
@@ -78,7 +79,7 @@ export function WorkerChatHeader({
         )}
         {sessionIsActive(state) && (
           <button type="button" className="worker-header-stop" onClick={() => void onStop()}>
-            <CircleStop size={13} aria-hidden="true" /> Stop
+            <StopGlyph /> Stop
           </button>
         )}
       </span>

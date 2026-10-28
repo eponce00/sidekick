@@ -1,8 +1,7 @@
 .tool-execution-detail {
-  margin: 2px 0 8px 24px;
+  margin: 2px 0 8px var(--work-indent);
   max-width: min(100%, 860px);
-  border-left: 1px solid var(--border-subtle);
-  padding: 6px 0 2px 12px;
+  padding: 4px 0 2px;
 }
 
 .rich-tool-detail,
@@ -33,7 +32,7 @@
   padding: 12px;
   overflow: auto;
   white-space: pre;
-  font: var(--text-sm) / 1.55 var(--font-mono);
+  font: var(--code-text) / var(--code-leading) var(--font-mono);
   tab-size: 4;
 }
 
@@ -251,38 +250,58 @@
 
 .rich-tool-command {
   display: flex;
+  align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  min-height: 32px;
+  padding: 4px 6px 4px 11px;
   background: var(--surface-2);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
+  font: var(--code-text) / var(--code-leading) var(--font-mono);
   overflow: auto;
 }
 
-.rich-tool-open-terminal {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  flex: none;
-  padding: 0 4px;
+/* The command heads its result box: one border around the whole, hairlines between sections. */
+.command-result > .rich-tool-command {
   border: 0;
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: var(--text-xs);
-  cursor: pointer;
+  border-radius: 0;
 }
 
-.rich-tool-open-terminal:hover {
-  color: var(--text-primary);
+.command-result > .rich-tool-command:not(:last-child) {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.rich-tool-command-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.rich-tool-open-terminal,
+.rich-tool-command-copy {
+  --settings-control-height-sm: 24px;
+}
+
+/* The Open in Terminal slot on a command that has no terminal to open. */
+.rich-tool-action-slot {
+  flex: none;
+  width: 24px;
+  height: 24px;
+}
+
+.command-result-bar > .rich-tool-command-copy {
+  margin-left: auto;
 }
 
 .rich-tool-command span {
   color: var(--text-muted);
 }
 .rich-tool-command code {
+  min-width: 0;
+  font: inherit;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -304,10 +323,6 @@
   gap: 8px;
   padding: 4px 6px;
   border-bottom: 1px solid var(--border-subtle);
-}
-
-.rich-diff-toolbar .rich-tool-copy {
-  position: static;
 }
 
 .rich-diff-view-toggle {
@@ -393,35 +408,27 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--text-secondary);
-  font-size: var(--text-sm);
-  line-height: 1.55;
+  font-family: var(--font-mono);
+  font-size: var(--code-text);
+  line-height: var(--code-leading);
 }
 
-.rich-tool-output.is-terminal pre {
-  background: var(--surface-0);
+/* A command's box is one fill: header, exit code and streams are split only by hairlines. */
+.rich-tool-output.command-result {
+  background: var(--surface-2);
 }
 
-.rich-tool-copy {
+/* An output box with no command line to hold its Copy keeps it in its top-right corner, over a
+   fill of the box's own surface so the text under it does not show through. */
+.rich-tool-output > .rich-tool-command-copy {
   position: absolute;
   z-index: 2;
-  top: 5px;
-  right: 6px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 24px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  padding: 0 7px;
-  background: var(--surface-2);
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  cursor: pointer;
+  top: 4px;
+  right: 4px;
 }
 
-.rich-tool-copy:hover {
-  color: var(--text-primary);
-  background: var(--surface-3);
+.rich-tool-output > .rich-tool-command-copy:not(:hover, :focus-visible) {
+  background: var(--surface-1);
 }
 
 .rich-diff-lines {
@@ -599,12 +606,6 @@
 .rich-diff-footer button:hover {
   color: var(--text-primary);
 }
-.diff-additions {
-  color: var(--color-success);
-}
-.diff-deletions {
-  color: var(--color-error);
-}
 
 .rich-tool-diagnostics {
   margin-top: 6px;
@@ -646,11 +647,7 @@
   padding: 3px 6px 3px 11px;
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-muted);
-  font-size: var(--text-xs);
-}
-.command-result-bar .rich-tool-copy {
-  position: static;
-  margin-left: auto;
+  font-size: var(--code-text);
 }
 .command-result-exit {
   font-family: var(--font-mono);
@@ -666,14 +663,12 @@
 .command-result-stream + .command-result-stream {
   border-top: 1px solid var(--border-subtle);
 }
+/* stdout and stderr are both streams, not signals: one quiet label; the exit code alone carries
+   colour, when the command failed. */
 .command-result-label {
   padding: 6px 11px 0;
-  background: var(--surface-0);
   color: var(--text-muted);
-  font: var(--text-xs) / 1.4 var(--font-mono);
-}
-.command-result-stream.is-stderr .command-result-label {
-  color: var(--color-warning);
+  font: var(--code-text) / var(--code-leading) var(--font-mono);
 }
 .rich-tool-output.command-result pre {
   padding: 6px 11px 10px;
@@ -681,7 +676,7 @@
 .command-result-empty {
   padding: 8px 11px;
   color: var(--text-muted);
-  font-size: var(--text-sm);
+  font-size: var(--code-text);
 }
 
 .structured-code {

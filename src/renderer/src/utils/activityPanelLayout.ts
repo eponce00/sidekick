@@ -1,8 +1,22 @@
 export const ACTIVITY_PANEL_MIN_WIDTH = 280
 /** The narrow width the edge snaps to: a column beside the chat. */
 export const ACTIVITY_PANEL_NARROW_WIDTH = 320
-/** The width before the user has dragged it to one of their own. */
-export const ACTIVITY_PANEL_WIDE_WIDTH = 640
+/**
+ * Where the width the user dragged the inspector to is kept. Earlier versions wrote their default
+ * under another key on every launch, so nothing stored there was necessarily chosen.
+ */
+export const ACTIVITY_PANEL_WIDTH_KEY = 'sidePanelWidth'
+/** The bounds of the default width, which keeps the chat the primary surface. */
+export const ACTIVITY_PANEL_DEFAULT_MIN_WIDTH = 320
+export const ACTIVITY_PANEL_DEFAULT_MAX_WIDTH = 440
+
+/** The width before the user has dragged it to one of their own: about 28% of the window. */
+export function defaultActivityPanelWidth(viewportWidth: number): number {
+  return Math.max(
+    ACTIVITY_PANEL_DEFAULT_MIN_WIDTH,
+    Math.min(ACTIVITY_PANEL_DEFAULT_MAX_WIDTH, Math.round(viewportWidth * 0.28))
+  )
+}
 /** Let go narrower than this, the inspector folds to its rail of tabs. */
 export const ACTIVITY_PANEL_FOLD_WIDTH = 200
 /** Dragged this far past the widest it fits beside the chat, it takes the whole window. */
@@ -35,7 +49,9 @@ export function activityPanelMaximumWidth(viewportWidth: number): number {
 }
 
 export function clampActivityPanelWidth(width: number, viewportWidth: number): number {
-  const finite = Number.isFinite(width) ? Math.round(width) : ACTIVITY_PANEL_WIDE_WIDTH
+  const finite = Number.isFinite(width)
+    ? Math.round(width)
+    : defaultActivityPanelWidth(viewportWidth)
   return Math.max(
     ACTIVITY_PANEL_MIN_WIDTH,
     Math.min(activityPanelMaximumWidth(viewportWidth), finite)
@@ -43,21 +59,19 @@ export function clampActivityPanelWidth(width: number, viewportWidth: number): n
 }
 
 /**
- * The last width the user left the inspector at. Someone who used the narrow size of earlier
- * versions keeps that narrow width.
+ * The last width the user dragged the inspector to, or null while they have not, so the default
+ * keeps following the window. Someone who used the narrow size of earlier versions keeps that
+ * narrow width.
  */
 export function storedActivityPanelWidth(
   value: string | null,
   viewportWidth: number,
   storedSize: string | null = null
-): number {
+): number | null {
   if (storedSize === 'narrow')
     return clampActivityPanelWidth(ACTIVITY_PANEL_NARROW_WIDTH, viewportWidth)
-  const width = value === null ? ACTIVITY_PANEL_WIDE_WIDTH : Number(value)
-  return clampActivityPanelWidth(
-    Number.isFinite(width) ? width : ACTIVITY_PANEL_WIDE_WIDTH,
-    viewportWidth
-  )
+  const width = value === null ? NaN : Number(value)
+  return Number.isFinite(width) ? clampActivityPanelWidth(width, viewportWidth) : null
 }
 
 /**
@@ -117,8 +131,13 @@ export const PANEL_GLIDE_MS = 420
 
 export const SIDEBAR_WIDTH = 276
 export const SIDEBAR_RAIL_WIDTH = 48
-/** The chat width the sidebar folds to its rail to keep beside an open inspector. */
-export const MIN_SIDE_BY_SIDE_CONVERSATION_WIDTH = 440
+/** The inspector folded to its rail of app buttons. */
+export const ACTIVITY_PANEL_RAIL_WIDTH = 48
+/**
+ * The chat width the sidebar folds to its rail to keep beside an open inspector. At 640 a
+ * 900-wide window with the inspector open folds the sidebar rather than squeezing the chat.
+ */
+export const MIN_SIDE_BY_SIDE_CONVERSATION_WIDTH = 640
 /**
  * At this width and below, the inspector floats over the chat instead of sitting beside it:
  * the sidebar's rail, the narrowest chat, and the narrowest inspector no longer fit. Matches the
@@ -149,8 +168,19 @@ export function workspaceLayout(input: {
   panelSize?: ActivityPanelSize
 }): WorkspaceLayout {
   const unconstrained = activityPanelMaximumWidth(input.viewportWidth)
-  if (!input.panelOpen || input.viewportWidth <= ACTIVITY_PANEL_OVERLAY_MAX_VIEWPORT) {
+  if (input.viewportWidth <= ACTIVITY_PANEL_OVERLAY_MAX_VIEWPORT) {
     return { sidebarAutoCollapsed: false, panelMaxWidth: unconstrained }
+  }
+  // Folded, the inspector still keeps its rail, so a 900-wide window folds the sidebar too.
+  if (!input.panelOpen) {
+    return {
+      sidebarAutoCollapsed:
+        !input.sidebarCollapsed &&
+        !input.sidebarHeldOpen &&
+        input.viewportWidth - SIDEBAR_WIDTH - ACTIVITY_PANEL_RAIL_WIDTH <
+          MIN_SIDE_BY_SIDE_CONVERSATION_WIDTH,
+      panelMaxWidth: unconstrained
+    }
   }
   // Full size: everything but the sidebar's rail, and the chat steps aside.
   if (input.panelSize === 'full') {

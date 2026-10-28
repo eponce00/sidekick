@@ -238,10 +238,6 @@
 .browser-import-part:has(input:disabled) {
   cursor: default;
 }
-.browser-import-part input {
-  margin: 0;
-  accent-color: var(--accent);
-}
 .browser-import-part-name {
   color: var(--text-primary);
   font-size: var(--text-sm);

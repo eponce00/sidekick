@@ -4,7 +4,13 @@
   all: unset;
   display: block;
   position: absolute;
-  top: max(16px, calc(50% - 232px));
+  /* Its 251px frame's foot sits 74px below the heading's top, which leaves the drawing just above
+     the heading wherever the group is anchored (see .messages-container.is-empty), and never
+     closer than 16px to the top of a short window. */
+  bottom: min(
+    calc(100% - 16px - 251px),
+    calc(var(--welcome-anchor) + var(--welcome-group-height) - 74px)
+  );
   right: 0;
   /* The frame leaves room for the cape to stream left and hang below; the head is the same size.
      Only the drawing takes the pointer, not the empty room around it. */

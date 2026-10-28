@@ -36,7 +36,7 @@ import { SCHEDULE_TEMPLATES, type ScheduleTemplate } from '../utils/scheduleTemp
 import ConfirmDialog from './ConfirmDialog'
 import './SchedulesDialog.css'
 import { Select } from './Select'
-import { SettingsEmptyState } from './SettingsLayout'
+import { Checkbox, SettingsEmptyState } from './SettingsLayout'
 
 interface SchedulesDialogProps {
   isOpen: boolean
@@ -788,11 +788,7 @@ function ScheduleEditor({
           </p>
         </div>
         <label className="schedules-checkbox">
-          <input
-            type="checkbox"
-            checked={draft.catchUp}
-            onChange={(event) => set('catchUp', event.target.checked)}
-          />
+          <Checkbox checked={draft.catchUp} onChange={(checked) => set('catchUp', checked)} />
           <span>
             Run once when SideKick starts or wakes, if it was closed or asleep at the scheduled time
           </span>

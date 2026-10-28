@@ -13,7 +13,7 @@
   transition:
     width var(--duration-layout) var(--ease-out),
     min-width var(--duration-layout) var(--ease-out);
-  border-left: 1px solid var(--panel-border);
+  border-left: 1px solid var(--rail-border);
 }
 
 /* Let go of its edge, it settles where the phantom showed with a slight overshoot. */
@@ -146,10 +146,6 @@
   border-radius: 50%;
 }
 
-.browser-live-dot.is-waiting {
-  background: var(--color-warning);
-}
-
 .activity-collapsed-tabs {
   display: flex;
   flex-direction: column;
@@ -171,6 +167,7 @@
 }
 
 .activity-tab-vertical:hover {
+  --badge-ring: var(--surface-2);
   color: var(--text-primary);
   background-color: var(--surface-2);
 }

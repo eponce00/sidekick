@@ -24,6 +24,10 @@ import {
   type SchedulesChangedEvent
 } from '../../../shared/schedules'
 
+/** The capture script's own state for the dictation model mid-download. */
+const previewDictationDownloading =
+  new URLSearchParams(window.location.search).get('dictation') === 'downloading'
+
 const previewCommandLineStatus: CommandLineToolStatus = {
   mode: 'shell-script',
   installed: false,
@@ -1376,20 +1380,30 @@ export function installBrowserApiMock(): void {
       onState: () => () => undefined
     },
     voice: {
+      // Dictation is ready by default; `&dictation=downloading` previews the model mid-download.
       getState: async () => ({
         enabled: true,
         models: {
-          dictation: { status: 'downloading' as const, receivedBytes: 280e6, totalBytes: 671e6 },
+          dictation: previewDictationDownloading
+            ? { status: 'downloading' as const, receivedBytes: 280e6, totalBytes: 671e6 }
+            : { status: 'ready' as const, receivedBytes: 671e6, totalBytes: 671e6 },
           speech: { status: 'ready' as const, receivedBytes: 361e6, totalBytes: 361e6 }
         }
       }),
       onState: () => () => undefined,
       prioritize: async () => undefined,
-      startDictation: async () => ({
-        ok: false as const,
-        reason: 'downloading' as const,
-        message: 'Dictation is still being set up (41%).'
-      }),
+      startDictation: async () =>
+        previewDictationDownloading
+          ? {
+              ok: false as const,
+              reason: 'downloading' as const,
+              message: 'Dictation is still being set up (41%).'
+            }
+          : {
+              ok: false as const,
+              reason: 'unavailable' as const,
+              message: 'Dictation needs the desktop app.'
+            },
       pushDictationAudio: () => undefined,
       stopDictation: async () => undefined,
       cancelDictation: async () => undefined,

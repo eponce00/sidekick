@@ -4,6 +4,7 @@ import {
   ChevronRight,
   File,
   Folder,
+  FolderOpen,
   Loader2,
   MoreHorizontal,
   RefreshCw,
@@ -11,6 +12,7 @@ import {
   X
 } from 'lucide-react'
 import ConfirmDialog from './ConfirmDialog'
+import { SettingsEmptyState } from './SettingsLayout'
 import { WorkspaceFileViewer } from './WorkspaceFileViewer'
 import { trashQuestion, trashRefusal } from '../../../shared/workspaceTrash'
 import { workspacePermissionOperation } from '../../../shared/permissions'
@@ -25,6 +27,8 @@ export interface FilesPanelProps {
   isAgentBusy?: boolean
   /** A file someone asked to see, from anywhere in the app; changes open it in the viewer. */
   fileRequest?: { request: WorkspaceFileViewRequest; at: number } | null
+  /** Opens a project folder for the chat, offered while it has none. */
+  onOpenProject?: () => void
 }
 
 /** The project's files: a tree that follows the folder on disk, and a viewer over it. */
@@ -32,7 +36,8 @@ export function FilesPanel({
   workspaceFolder,
   chatFolder = false,
   isAgentBusy = false,
-  fileRequest = null
+  fileRequest = null,
+  onOpenProject
 }: FilesPanelProps): React.JSX.Element {
   const systemTrashName = window.api.app.platform === 'windows' ? 'Recycle Bin' : 'Trash'
   const [fileMap, setFileMap] = useState<Map<string, string[]>>(new Map())
@@ -225,7 +230,15 @@ export function FilesPanel({
                 )}
               </span>
               <span className="file-node-icon">
-                {isDir ? <Folder size={13} /> : <File size={13} />}
+                {isDir ? (
+                  isExpanded ? (
+                    <FolderOpen size={13} />
+                  ) : (
+                    <Folder size={13} />
+                  )
+                ) : (
+                  <File size={13} />
+                )}
               </span>
               <span className="file-node-name">{name}</span>
             </button>
@@ -280,23 +293,31 @@ ${viewedFile.filePath}`}
               showPathMenu('', true)
             }}
           >
-            <span className="file-explorer-root-name">{fileRootName || 'Workspace'}</span>
-            <button
-              className="file-explorer-action"
-              onClick={() => setFileRefreshKey((k) => k + 1)}
-              title="Refresh file tree"
-            >
-              <RefreshCw size={13} />
-            </button>
+            <span className="file-explorer-root-name section-heading">
+              {fileRootName || 'Workspace'}
+            </span>
+            {/* With no folder there is nothing to refresh or act on. */}
             {workspaceFolder && (
-              <button
-                className="file-explorer-action"
-                onClick={() => showPathMenu('', true)}
-                title={`More actions for the ${chatFolder ? 'chat' : 'project'} folder`}
-                aria-label={`More actions for the ${chatFolder ? 'chat' : 'project'} folder`}
-              >
-                <MoreHorizontal size={13} />
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="settings-ghost-action is-small is-icon"
+                  onClick={() => setFileRefreshKey((k) => k + 1)}
+                  title="Refresh file tree"
+                  aria-label="Refresh file tree"
+                >
+                  <RefreshCw size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="settings-ghost-action is-small is-icon"
+                  onClick={() => showPathMenu('', true)}
+                  title={`More actions for the ${chatFolder ? 'chat' : 'project'} folder`}
+                  aria-label={`More actions for the ${chatFolder ? 'chat' : 'project'} folder`}
+                >
+                  <MoreHorizontal size={14} />
+                </button>
+              </>
             )}
           </div>
           {fileActionError && (
@@ -323,9 +344,27 @@ ${viewedFile.filePath}`}
               <p className="hint">Files this chat makes appear here</p>
             </div>
           ) : fileMap.size === 0 ? (
-            <div className="activity-empty">
-              <p>No project folder</p>
-              <p className="hint">Open a project or move this chat into one</p>
+            <div className="files-panel-empty">
+              <SettingsEmptyState
+                compact
+                centered
+                icon={FolderOpen}
+                title="No project folder"
+                description="Open a folder to browse its files here."
+                action={
+                  onOpenProject && (
+                    <button
+                      type="button"
+                      className="settings-secondary-action"
+                      onClick={onOpenProject}
+                      disabled={isAgentBusy}
+                      title={isAgentBusy ? 'Stop the agent to open a project' : undefined}
+                    >
+                      Open project
+                    </button>
+                  )
+                }
+              />
             </div>
           ) : (
             <div className="file-tree">{renderFileTreeLevel('', 0)}</div>

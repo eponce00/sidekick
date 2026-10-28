@@ -86,7 +86,7 @@ import { composerDraftKey, useComposerDraft } from '../hooks/useComposerDraft'
 import { ReviewCommentSinkContext } from '../hooks/useReviewCommentSink'
 import { SubAgentNavigation, type SubAgentTarget } from './subAgentNavigation'
 import { SubAgentView } from './SubAgentView'
-import { WorkspaceBar, WorktreeChip } from './WorkspaceBar'
+import { ProjectChoiceChip, WorkspaceBar, WorktreeChip } from './WorkspaceBar'
 import { WorkspaceBusyDialog, type WorkspaceBusyChoice } from './WorkspaceBusyDialog'
 import { rememberWorkInChoice, storedWorkInChoice } from '../hooks/useManagedWorktrees'
 import type { ComposerDraft } from '../services/composerDrafts'
@@ -110,6 +110,8 @@ interface ChatPanelProps {
   conversationId: string | null
   conversationTitle: string | null
   welcomeSuggestions: readonly WelcomeSuggestion[]
+  /** The context meter, drawn among the composer's run controls. */
+  contextMeter?: React.ReactNode
   workspaceFolder: string | null
   projectName: string | null
   projectId?: string | null
@@ -179,6 +181,7 @@ function ChatPanel({
   conversationId,
   conversationTitle,
   welcomeSuggestions,
+  contextMeter,
   workspaceFolder,
   projectName,
   projectId = null,
@@ -1797,6 +1800,9 @@ function ChatPanel({
   )
 
   const isEmptyChat = messages.length === 0 && !familyRows.size
+  // Before the first message a chat can still choose where it works.
+  const canChooseWorkspace =
+    (Boolean(conversationId) || !projectId) && messages.length === 0 && !isLoading
   const panel = (
     <div className="chat-panel">
       {familyRole === 'worker' && familySelf && chatFamily && (
@@ -1825,18 +1831,30 @@ function ChatPanel({
             {pinnedModels.length === 0 && <p className="hint">Choose a model below to start</p>}
             {pinnedModels.length > 0 && (
               <div className="starter-prompts" aria-label="Suggested prompts">
-                {welcomeSuggestions.map((suggestion) => (
-                  <button
-                    key={`${suggestion.label}:${suggestion.prompt}`}
-                    type="button"
-                    className="starter-prompt"
-                    onClick={() => setInputValue(suggestion.prompt)}
-                    title={suggestion.label}
-                  >
-                    <span>{suggestion.label}</span>
-                    <ArrowUpRight size={14} aria-hidden="true" />
-                  </button>
-                ))}
+                {welcomeSuggestions.map((suggestion) => {
+                  // Only the quoted title gives way, so the verb always says what a click does.
+                  const quoted = /^(\S+) (“.*”)$/.exec(suggestion.label)
+                  return (
+                    <button
+                      key={`${suggestion.label}:${suggestion.prompt}`}
+                      type="button"
+                      className="starter-prompt"
+                      onClick={() => setInputValue(suggestion.prompt)}
+                      title={suggestion.fullLabel ?? suggestion.label}
+                    >
+                      {quoted ? (
+                        <span className="starter-prompt-label">
+                          {quoted[1]} <span className="starter-prompt-topic">{quoted[2]}</span>
+                        </span>
+                      ) : (
+                        <span className="starter-prompt-label">
+                          <span className="starter-prompt-topic">{suggestion.label}</span>
+                        </span>
+                      )}
+                      <ArrowUpRight size={14} aria-hidden="true" />
+                    </button>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -1854,7 +1872,9 @@ function ChatPanel({
                       key={msg.id}
                       ref={messageVirtualizer.measureElement}
                       data-index={virtualRow.index}
-                      className="virtual-message-row"
+                      className={`virtual-message-row${
+                        virtualRow.index === visibleMessages.length - 1 ? ' is-last' : ''
+                      }`}
                       style={{ transform: `translateY(${virtualRow.start}px)` }}
                     >
                       {virtualRow.index === 0 && renderFamilyRows(0)}
@@ -1886,8 +1906,6 @@ function ChatPanel({
                 />
               </div>
             )}
-            {/* One more gap of room below the last row. */}
-            <div aria-hidden="true" />
           </>
         )}
       </div>
@@ -1904,7 +1922,7 @@ function ChatPanel({
       <WorkspaceBar
         projectId={projectId}
         worktree={worktree}
-        canChoose={(Boolean(conversationId) || !projectId) && messages.length === 0 && !isLoading}
+        canChoose={canChooseWorkspace}
         workIn={workIn}
         baseRef={worktreeBase}
         error={workspaceError}
@@ -1915,16 +1933,6 @@ function ChatPanel({
         onBaseRefChange={setWorktreeBase}
         onManageWorktrees={() => onManageWorktrees?.()}
         onWorktreesAvailableChange={setWorktreesAvailable}
-        projectChoices={projectChoices}
-        onChooseProject={
-          onChooseProject &&
-          ((id) => {
-            setWorkspaceError(null)
-            onChooseProject(id).catch((error: unknown) =>
-              setWorkspaceError(error instanceof Error ? error.message : String(error))
-            )
-          })
-        }
       />
       <WorkspaceBusyDialog
         isOpen={Boolean(busyPrompt)}
@@ -1999,6 +2007,7 @@ function ChatPanel({
         onAddImageFiles={(files) => void addImageFiles(files)}
         onAddContextAttachments={() => void addContextAttachments()}
         onAddFileMention={addFileMention}
+        contextMeter={contextMeter}
         onAddPastedText={addPastedText}
         onInsertPastedText={insertPastedText}
         onRemoveImage={(id) => {
@@ -2053,6 +2062,16 @@ function ChatPanel({
         toolbarExtra={
           worktree ? (
             <WorktreeChip worktree={worktree} onManage={() => onManageWorktrees?.()} />
+          ) : canChooseWorkspace && !projectId && onChooseProject && projectChoices?.length ? (
+            <ProjectChoiceChip
+              projectChoices={projectChoices}
+              onChooseProject={(id) => {
+                setWorkspaceError(null)
+                onChooseProject(id).catch((error: unknown) =>
+                  setWorkspaceError(error instanceof Error ? error.message : String(error))
+                )
+              }}
+            />
           ) : null
         }
         workspaceMemoryAvailable={workspaceMemoryLoadedFor === workspaceFolder}

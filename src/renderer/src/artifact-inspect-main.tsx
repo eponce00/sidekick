@@ -1,4 +1,8 @@
 import { createRoot } from 'react-dom/client'
+import '@fontsource/inter/400.css'
+import '@fontsource/inter/500.css'
+import '@fontsource/inter/600.css'
+import '@fontsource/inter/700.css'
 import Artifact from './components/artifacts/Artifact'
 import { findArtifactLayoutProblems } from './utils/artifactLayoutCheck'
 import { MAX_ARTIFACT_FRAME_HEIGHT } from './utils/artifactFrameSize'

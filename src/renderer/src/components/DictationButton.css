@@ -15,7 +15,7 @@
   border: none;
   border-radius: 50%;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   cursor: pointer;
   transition:
     background 120ms ease,
@@ -32,15 +32,12 @@
   opacity: 0.7;
 }
 
-/* While the model downloads, a thin ring fills with its progress. */
-.dictation-button.is-setting-up::before {
+/* Until the model is ready, the shared 16px download meter rings a 12px glyph, centred in the
+   28px target like the context ring. It is its own layer, so the button's hover and pressed
+   states stay grey; a ready mic is the plain 16px glyph with no ring. */
+.dictation-button > .download-meter {
   position: absolute;
-  inset: 2px;
-  content: '';
-  border-radius: 50%;
-  background: conic-gradient(var(--accent) var(--dictation-progress), transparent 0);
-  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1.5px));
-  opacity: 0.7;
+  inset: 6px;
 }
 
 .dictation-button.is-listening {

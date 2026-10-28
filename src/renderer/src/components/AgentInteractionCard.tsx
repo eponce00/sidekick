@@ -211,12 +211,11 @@ function AnsweredQuestions({
           {value}
         </span>
         {expandable && (
-          <span
-            className={`agent-question-answered-chevron${expanded ? ' is-expanded' : ''}`}
+          <ChevronRight
+            size={12}
             aria-hidden="true"
-          >
-            <ChevronRight size={14} />
-          </span>
+            className={`work-row-chevron${expanded ? ' is-expanded' : ''}`}
+          />
         )}
       </button>
       {expandable && expanded && (
@@ -782,13 +781,18 @@ export default function AgentInteractionCard({
       ) : null}
       <div className="agent-question-footer">
         {questionIndex > 0 && (
-          <button type="button" onClick={() => setQuestionIndex((current) => current - 1)}>
+          <button
+            type="button"
+            className="settings-ghost-action is-small"
+            onClick={() => setQuestionIndex((current) => current - 1)}
+          >
             <ChevronLeft size={13} aria-hidden="true" /> Back
           </button>
         )}
         {currentQuestion && (
           <button
             type="button"
+            className={`settings-ghost-action is-small${currentQuestion.multiSelect ? '' : ' is-flush-end'}`}
             onClick={() =>
               commitAnswer(currentQuestion.id, (answer) => ({
                 ...answer,
@@ -815,7 +819,7 @@ export default function AgentInteractionCard({
         )}
         <button
           type="button"
-          className="agent-question-cancel"
+          className="settings-ghost-action is-small is-flush-start agent-question-cancel"
           title="Dismiss the question without answering"
           onClick={() => onResolve(interaction.id, {}, true)}
         >

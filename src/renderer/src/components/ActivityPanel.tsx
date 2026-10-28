@@ -14,7 +14,7 @@ import {
   PanelRight,
   PanelRightClose,
   FolderTree,
-  MonitorUp,
+  Globe,
   SquareTerminal,
   Workflow
 } from 'lucide-react'
@@ -102,6 +102,8 @@ interface ActivityPanelProps {
   onSettle?: () => void
   /** Opens another chat, from the Chats tab. */
   onOpenConversation?: (conversationId: string) => void
+  /** Opens a project folder for the chat, from the Files tab while it has none. */
+  onOpenProject?: () => void
   /** Opens Settings where the browser's own settings are. */
   onOpenBrowserSettings?: () => void
   /** Whether what the panel shows needs its width, or only the narrow column. */
@@ -126,6 +128,7 @@ function ActivityPanel({
   snapWidths = [ACTIVITY_PANEL_NARROW_WIDTH],
   onSettle,
   onOpenConversation,
+  onOpenProject,
   onOpenBrowserSettings,
   onNeedsRoomChange
 }: ActivityPanelProps): React.JSX.Element {
@@ -470,9 +473,10 @@ function ActivityPanel({
   const [terminalRequest, setTerminalRequest] = useState<{ id: string; at: number } | null>(null)
   const terminalSessions = useTerminalSessions(conversationId)
   const terminalIsLive = terminalSessions.some((session) => terminalSessionIsLive(session.state))
-  const terminalIsWaiting = terminalSessions.some(
+  const terminalWaitingCount = terminalSessions.filter(
     (session) => session.state === 'waiting_for_input'
-  )
+  ).length
+  const terminalIsWaiting = terminalWaitingCount > 0
 
   // "Open in Terminal" on a command in the chat shows it here.
   useEffect(
@@ -502,13 +506,13 @@ function ActivityPanel({
     if (!filesShown) setFileRequest(null)
   }
 
-  const familyWaiting = Boolean(
-    sessionFamily.family &&
-    [sessionFamily.family.manager, ...sessionFamily.family.workers].some(
-      (member) =>
-        (sessionFamily.statuses.get(member.conversationId)?.state ?? member.state) === 'waiting'
-    )
-  )
+  const familyWaitingCount = sessionFamily.family
+    ? [sessionFamily.family.manager, ...sessionFamily.family.workers].filter(
+        (member) =>
+          (sessionFamily.statuses.get(member.conversationId)?.state ?? member.state) === 'waiting'
+      ).length
+    : 0
+  const familyWaiting = familyWaitingCount > 0
   const panelApps: Partial<Record<PanelApp, PanelAppInfo>> = {
     ...(familyRole
       ? {
@@ -517,7 +521,9 @@ function ActivityPanel({
             description:
               familyRole === 'manager' ? 'The chats started here' : 'This chat and its family',
             icon: <Workflow size={15} />,
-            ...(familyWaiting ? { badge: 'waiting' as const } : {})
+            ...(familyWaiting
+              ? { badge: 'waiting' as const, waitingCount: familyWaitingCount }
+              : {})
           }
         }
       : {}),
@@ -529,7 +535,7 @@ function ActivityPanel({
     browser: {
       label: 'Browser',
       description: 'The browser you share with the agent',
-      icon: <MonitorUp size={15} />,
+      icon: <Globe size={15} />,
       ...(browserIsLive ? { badge: 'live' as const } : {})
     },
     terminal: {
@@ -537,7 +543,9 @@ function ActivityPanel({
       description: "Your terminals and the agent's commands",
       icon: <SquareTerminal size={15} />,
       ...(terminalIsLive
-        ? { badge: terminalIsWaiting ? ('waiting' as const) : ('live' as const) }
+        ? terminalIsWaiting
+          ? { badge: 'waiting' as const, waitingCount: terminalWaitingCount }
+          : { badge: 'live' as const }
         : {})
     }
   }
@@ -579,6 +587,7 @@ function ActivityPanel({
           chatFolder={chatFolder}
           isAgentBusy={isAgentBusy}
           fileRequest={fileRequest}
+          onOpenProject={onOpenProject}
         />
       )
     if (kind === 'terminal')
@@ -677,17 +686,22 @@ function ActivityPanel({
             />
           </div>
         ) : (
+          // An app waiting on the user carries the shared count badge, as its tab does.
           <div className="activity-collapsed-tabs">
             {familyRole && (
               <button
                 className="activity-tab-vertical"
                 onClick={() => openCollapsedTab('chats')}
                 title={familyRole === 'manager' ? 'Open Chats' : 'Open Details'}
-                aria-label={familyRole === 'manager' ? 'Open Chats' : 'Open Details'}
+                aria-label={`${familyRole === 'manager' ? 'Open Chats' : 'Open Details'}${
+                  familyWaiting ? `, ${familyWaitingCount} waiting for you` : ''
+                }`}
               >
                 <Workflow size={16} />
                 {familyWaiting && (
-                  <span className="browser-live-dot is-waiting" aria-hidden="true" />
+                  <span className="count-badge is-attention" aria-hidden="true">
+                    {familyWaitingCount}
+                  </span>
                 )}
               </button>
             )}
@@ -705,7 +719,7 @@ function ActivityPanel({
               title={browserIsLive ? 'Open Browser activity · Working' : 'Open Browser activity'}
               aria-label="Open Browser activity"
             >
-              <MonitorUp size={16} />
+              <Globe size={16} />
               {browserIsLive && <span className="browser-live-dot" aria-hidden="true" />}
             </button>
             <button
@@ -716,14 +730,17 @@ function ActivityPanel({
                   ? `Open Terminal · ${terminalIsWaiting ? 'Waiting for input' : 'Running'}`
                   : 'Open Terminal'
               }
-              aria-label="Open Terminal"
+              aria-label={`Open Terminal${
+                terminalIsWaiting ? `, ${terminalWaitingCount} waiting for you` : ''
+              }`}
             >
               <SquareTerminal size={16} />
-              {terminalIsLive && (
-                <span
-                  className={`browser-live-dot${terminalIsWaiting ? ' is-waiting' : ''}`}
-                  aria-hidden="true"
-                />
+              {terminalIsWaiting ? (
+                <span className="count-badge is-attention" aria-hidden="true">
+                  {terminalWaitingCount}
+                </span>
+              ) : (
+                terminalIsLive && <span className="browser-live-dot" aria-hidden="true" />
               )}
             </button>
           </div>

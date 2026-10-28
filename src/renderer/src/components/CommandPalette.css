@@ -53,10 +53,15 @@
   box-shadow: none;
 }
 
+/* Every row and group heading is 32px, so a list ten rows tall ends on a whole row rather than
+   cutting the last one in half above the footer. */
 .command-palette-list {
-  flex: 1;
+  flex: 0 1 auto;
+  max-height: calc(10 * 32px + 2 * var(--space-1));
   overflow-y: auto;
-  padding: var(--space-1) var(--space-2) var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  /* The row scrolled to stays clear of the footer's edge. */
+  scroll-padding-block: var(--space-1);
 }
 
 /* The quiet thumb the sidebar's list uses, not the platform's arrows. */
@@ -72,10 +77,11 @@
 }
 
 .command-palette-group-label {
-  padding: var(--space-2) var(--space-2) var(--space-1);
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-  font-weight: 600;
+  height: 32px;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 var(--space-2) var(--space-2);
+  box-sizing: border-box;
 }
 
 .command-palette-option {
@@ -85,13 +91,15 @@
   min-height: 32px;
   padding: 0 var(--space-2);
   border-radius: var(--radius-sm);
-  color: var(--text-primary);
+  color: var(--text-secondary);
   font-size: var(--text-sm);
   cursor: pointer;
 }
 
+/* As .app-menu draws a row: grey until it is the one the keys are on. */
 .command-palette-option[aria-selected='true'] {
-  background: var(--surface-hover);
+  color: var(--text-primary);
+  background: var(--surface-3);
 }
 
 .command-palette-option[aria-disabled='true'] {
@@ -99,9 +107,14 @@
   cursor: default;
 }
 
+/* The .app-menu-mark column, so an action looks the same here and in the menus. */
 .command-palette-icon {
-  flex: 0 0 auto;
-  color: var(--text-muted);
+  display: grid;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  color: inherit;
 }
 
 .command-palette-title {

@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Circle,
   ExternalLink,
+  Globe,
   LoaderCircle,
   MonitorUp,
   MousePointer2,
@@ -163,7 +164,7 @@ function BrowserActivityPanelSession({
         />
       ) : !activity.hasActivity ? (
         <div className="browser-activity-empty">
-          <MonitorUp size={24} />
+          <Globe size={24} />
           <strong>No browser activity yet</strong>
           <span>Pages the agent opens show here.</span>
         </div>
@@ -186,7 +187,7 @@ function BrowserActivityPanelSession({
                 />
               ) : (
                 <div className="browser-preview-empty">
-                  <MonitorUp size={22} />
+                  <Globe size={22} />
                   <span>
                     {activity.screenshot === failedScreenshot
                       ? 'Screenshot could not be displayed'

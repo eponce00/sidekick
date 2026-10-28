@@ -65,7 +65,9 @@ describe('ToolExecutionCard', () => {
     expect(streams[1].textContent).toContain('warning: "passive" mode refused')
     expect(container.textContent).not.toContain('\\n')
     await act(async () => {
-      ;(container.querySelector('.command-result-bar .rich-tool-copy') as HTMLButtonElement).click()
+      ;(
+        container.querySelector('.rich-tool-command button[aria-label="Copy"]') as HTMLButtonElement
+      ).click()
     })
     expect(copied).toEqual([`${stdout}\n\nwarning: "passive" mode refused`])
   })

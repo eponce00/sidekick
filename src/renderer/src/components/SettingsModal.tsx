@@ -20,7 +20,6 @@ import {
   RefreshCw,
   Repeat,
   Route,
-  Search,
   Server,
   Settings2,
   ShieldCheck,
@@ -61,6 +60,7 @@ import { useModalDialog } from '../hooks/useModalDialog'
 import { settingsSectionContributions, type SettingsSectionId } from '../services/uiContributions'
 import './SettingsModal.css'
 import { Select } from './Select'
+import { SearchField } from './SearchField'
 import { globalRunSlots, MAX_GLOBAL_RUN_SLOTS } from '../../../shared/runSlots'
 import { PERMISSION_MODE_LABELS } from '../../../shared/permissions'
 
@@ -137,7 +137,8 @@ function SettingsModal({
     kind: 'success' | 'error'
     message: string
   } | null>(null)
-  const dialogRef = useModalDialog<HTMLDivElement>(true, onClose)
+  // The title bar's theme and settings buttons stay usable beside Settings, so Tab reaches them.
+  const dialogRef = useModalDialog<HTMLDivElement>(true, onClose, '.title-bar-actions')
   const controlId = useId()
   const unsaved = useMemo(
     () => JSON.stringify(settings) !== JSON.stringify(initialSettings),
@@ -765,23 +766,23 @@ function SettingsModal({
         aria-labelledby="settings-modal-title"
         tabIndex={-1}
       >
+        {/* The title bar says Settings on screen; this names the dialog and heads its outline. */}
+        <h1 id="settings-modal-title" className="settings-modal-title">
+          Settings
+        </h1>
         <aside className="settings-sidebar">
           <button type="button" className="settings-back-button" onClick={onClose}>
             <ArrowLeft size={16} aria-hidden="true" />
             <span>Back to app</span>
           </button>
-          <label className="settings-search field-shell">
-            <Search size={14} aria-hidden="true" />
-            <input
-              value={navigationQuery}
-              onChange={(event) => setNavigationQuery(event.target.value)}
-              placeholder="Search settings…"
-              aria-label="Find settings sections"
-            />
-          </label>
-          <h1 id="settings-modal-title" className="settings-navigation-title">
-            Settings
-          </h1>
+          <SearchField
+            className="settings-search"
+            value={navigationQuery}
+            onChange={setNavigationQuery}
+            placeholder="Search settings"
+            aria-label="Find settings sections"
+          />
+          {/* One group needs no heading: the title bar already says Settings. */}
           <nav>
             {visibleNavigationItems.map((item) => {
               const Icon = item.icon
@@ -794,7 +795,8 @@ function SettingsModal({
                   aria-current={activeSection === item.id ? 'page' : undefined}
                   title={`${item.label} — ${item.description}`}
                 >
-                  <Icon size={16} aria-hidden="true" />
+                  {/* The sidebar tree's icon size, in its icon column. */}
+                  <Icon size={14} aria-hidden="true" />
                   <strong>{item.label}</strong>
                 </button>
               )
@@ -803,15 +805,6 @@ function SettingsModal({
               <div className="settings-search-empty">No matching section</div>
             )}
           </nav>
-          <div className="settings-sidebar-footer">
-            <AppVersionButton
-              onSelect={() => {
-                setNavigationQuery('')
-                setActiveSection('general')
-                setRevealUpdates(true)
-              }}
-            />
-          </div>
         </aside>
         <div className="settings-main">
           <main
@@ -821,30 +814,50 @@ function SettingsModal({
           >
             {renderSection()}
           </main>
-          <footer className="settings-footer">
-            {saveError ? (
-              <span className="settings-footer-status error" role="alert">
-                <CircleAlert size={14} aria-hidden="true" />
-                {saveError}
-              </span>
-            ) : (
-              <span className={`settings-footer-status${unsaved ? ' dirty' : ''}`}>
-                {unsaved ? 'Unsaved changes' : 'Changes apply after you save.'}
-              </span>
-            )}
-            <button type="button" className="settings-secondary-action" onClick={onClose}>
-              Cancel
-            </button>
-            <button
-              className="settings-primary-action"
-              type="button"
-              onClick={() => void handleSave()}
-              disabled={saving}
-            >
-              {saving ? 'Saving…' : 'Save changes'}
-            </button>
-          </footer>
         </div>
+        <footer className="settings-footer">
+          <div className="settings-footer-version">
+            <AppVersionButton
+              onSelect={() => {
+                setNavigationQuery('')
+                setActiveSection('general')
+                setRevealUpdates(true)
+              }}
+            />
+          </div>
+          <div className="settings-footer-page">
+            <div className="settings-footer-inner">
+              {saveError ? (
+                <span className="settings-footer-status error" role="alert">
+                  <CircleAlert size={14} aria-hidden="true" />
+                  {saveError}
+                </span>
+              ) : (
+                // Said only while there is something to save; the empty line keeps its place.
+                <span
+                  className={`settings-footer-status${unsaved ? ' dirty' : ''}`}
+                  aria-live="polite"
+                >
+                  {unsaved ? 'Unsaved changes' : ''}
+                </span>
+              )}
+              <button type="button" className="settings-ghost-action" onClick={onClose}>
+                Cancel
+              </button>
+              {/* The view's one accent fill appears only when there is something to save. */}
+              <button
+                className={
+                  unsaved || saving ? 'settings-primary-action' : 'settings-secondary-action'
+                }
+                type="button"
+                onClick={() => void handleSave()}
+                disabled={saving}
+              >
+                {saving ? 'Saving…' : 'Save changes'}
+              </button>
+            </div>
+          </div>
+        </footer>
       </div>
     </div>
   )

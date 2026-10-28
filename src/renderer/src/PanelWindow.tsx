@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import {
   Copy,
   FolderTree,
+  Globe,
   Minus,
-  MonitorUp,
   PictureInPicture,
   Square,
   SquareTerminal,
@@ -22,7 +22,7 @@ import './components/ActivityPanel.css'
 import './PanelWindow.css'
 
 const APPS = {
-  browser: { label: 'Browser', icon: <MonitorUp size={15} /> },
+  browser: { label: 'Browser', icon: <Globe size={15} /> },
   terminal: { label: 'Terminal', icon: <SquareTerminal size={15} /> },
   files: { label: 'Files', icon: <FolderTree size={15} /> }
 } as const

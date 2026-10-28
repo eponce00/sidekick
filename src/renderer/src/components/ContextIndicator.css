@@ -12,31 +12,56 @@
   display: block;
 }
 
+/* A 16px meter, the size of the composer's icons, in the run controls' 28px round hit target. */
+.context-ring,
 .context-unknown-mark {
   width: 28px;
   height: 28px;
   display: grid;
   place-items: center;
-  border: 1px solid var(--panel-border);
-  border-radius: var(--radius-md);
-  color: var(--text-muted);
-  background: var(--surface-2);
-  transition:
-    color var(--duration-fast) ease,
-    border-color var(--duration-fast) ease,
-    background var(--duration-fast) ease;
+  border-radius: var(--radius-full);
+  transition: background var(--duration-fast) ease;
 }
 
+.context-indicator:hover .context-ring,
 .context-indicator:hover .context-unknown-mark {
-  border-color: var(--border-strong);
-  color: var(--text-primary);
   background: var(--surface-3);
 }
 
+.context-ring:focus-visible,
+.context-unknown-mark:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Grey antialiasing: at 10px, subpixel text draws coloured fringes around the digits. macOS takes
+   the smoothing property; Chromium on Windows keeps subpixel text only on an opaque layer, so the
+   ring gets a transparent layer of its own. */
+.context-ring svg {
+  will-change: transform;
+}
+
+.context-ring text {
+  fill: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+.context-unknown-mark {
+  color: var(--text-secondary);
+}
+
+.context-indicator:hover .context-unknown-mark {
+  color: var(--text-primary);
+}
+
 /* ---- Compact context popover ---- */
+/* Opens upward from the composer's toolbar, like the model menu beside it. */
 .context-tooltip {
   position: absolute;
-  top: calc(100% + 8px);
+  bottom: calc(100% + 8px);
   right: 0;
   width: 252px;
   padding: 12px;
@@ -47,7 +72,7 @@
   backdrop-filter: blur(18px);
   z-index: 1000;
   pointer-events: none;
-  animation: motion-menu-down-in var(--duration-normal) var(--ease-out);
+  animation: motion-menu-in var(--duration-normal) var(--ease-out);
 }
 
 .context-tooltip.unknown {
@@ -96,11 +121,11 @@
 }
 
 .context-state.warning::before {
-  background: var(--color-warning);
+  background: var(--color-warning-mark);
 }
 
 .context-state.danger::before {
-  background: var(--color-error);
+  background: var(--color-error-mark);
 }
 
 .context-state.manual::before {
@@ -183,11 +208,11 @@
 }
 
 .context-threshold-line.warning i {
-  background: var(--color-warning);
+  background: var(--color-warning-mark);
 }
 
 .context-threshold-line.danger i {
-  background: var(--color-error);
+  background: var(--color-error-mark);
 }
 
 .context-threshold-line.manual i {
