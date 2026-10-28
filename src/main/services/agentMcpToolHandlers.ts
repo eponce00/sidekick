@@ -1,4 +1,4 @@
-import { toolExecutionSucceeded } from '../../shared/agentRuntime'
+import { toolExecutionFailed, toolExecutionSucceeded } from '../../shared/agentRuntime'
 import type { McpToolInfo } from '../../shared/types'
 import type { McpClientManager } from './mcpClientManager'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
@@ -34,9 +34,7 @@ export function mcpResultText(value: unknown): string {
   })
   if (!parts.length && result.structuredContent !== undefined)
     parts.push(JSON.stringify(result.structuredContent))
-  return [result.isError === true ? 'The tool reported an error.' : '', ...parts]
-    .filter(Boolean)
-    .join('\n')
+  return parts.filter(Boolean).join('\n')
 }
 
 export function registerMcpToolHandlers(
@@ -85,7 +83,19 @@ export function registerMcpToolHandlers(
       const data = await options.mcp.callTool(tool.serverId, tool.name, args, {
         signal: context.signal
       })
-      const shown = await options.outputs.apply(mcpResultText(data), { preview: 'head-tail' })
+      const text = mcpResultText(data)
+      const shown = await options.outputs.apply(text, { preview: 'head-tail' })
+      // A tool's own failure arrives as a result flagged isError, not as a protocol error.
+      if ((data as { isError?: unknown } | null)?.isError === true) {
+        return toolExecutionFailed({
+          title,
+          code: 'command_failed',
+          message: text.slice(0, 500) || `${tool.name} reported an error without a message.`,
+          data,
+          modelContent: `The tool reported an error.\n${shown.content}`,
+          output: shown.output
+        })
+      }
       return toolExecutionSucceeded({
         title,
         data,

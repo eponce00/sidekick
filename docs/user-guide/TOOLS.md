@@ -121,7 +121,9 @@ shell and everything it started; quitting SideKick ends them all.
   later run that calls one first is told to load the skill. Listing changes nothing; every create,
   change, pause, resume, and delete asks you first, even in Full access. See
   [Asking the agent](SCHEDULES.md#asking-the-agent).
-- User-configured MCP servers add their advertised tools after schema normalization.
+- User-configured MCP servers add their advertised tools after schema normalization. A call has
+  two minutes to answer, and stopping the run cancels it on the server. A result the server marks
+  as an error is a failed call. A local server that exited starts again for the next run.
 
 During Plan mode's planning phase, only bounded workspace reads, code intelligence, web tools,
 questions, skills, todos, waits, plan tools, and retained output are eligible. Commands, workspace
