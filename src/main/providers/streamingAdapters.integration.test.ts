@@ -175,7 +175,8 @@ describe('provider streaming adapters', () => {
     // OpenAI names error kinds, not statuses, in the same field.
     expect(await stream('{"error":{"message":"Bad key","code":"invalid_api_key"}}')).toEqual({
       ok: false,
-      error: 'Bad key'
+      error: 'Bad key',
+      code: 'invalid_api_key'
     })
   })
 
@@ -579,6 +580,51 @@ describe('provider streaming adapters', () => {
     expect(closed.some((entry) => entry.id === 'click-2')).toBe(false)
   })
 
+  it('closes a call only once its arguments are whole, and reads calls sent without an index', async () => {
+    const delta = (call: Record<string, unknown>): string =>
+      `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [call] } }] })}\n`
+    const read = async (calls: Record<string, unknown>[]): Promise<ProviderStreamChunk[]> => {
+      const chunks: ProviderStreamChunk[] = []
+      const response = streamingResponse([
+        ...calls.map(delta),
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\ndata: [DONE]\n'
+      ])
+      await streamOpenAICompatibleChat(
+        'https://provider.test/v1',
+        { model: 'fixture-model', messages: request.messages, tools: request.tools },
+        {},
+        (chunk) => chunks.push(chunk),
+        vi.fn(async () => response) as unknown as typeof fetch
+      )
+      return chunks
+    }
+    const named = (name: string, args: string) => ({ name, arguments: args })
+    // Every call's header before any arguments, and the name repeated in every delta.
+    const headersFirst = await read([
+      { index: 0, id: 'a', function: named('read', '') },
+      { index: 1, id: 'b', function: named('read', '') },
+      { index: 0, function: named('read', '{"path":"a.ts"}') },
+      { index: 1, function: named('read', '{"path":"b.ts"}') }
+    ])
+    expect(headersFirst.flatMap((chunk) => chunk.message?.closed_tool_calls ?? [])).toEqual([
+      expect.objectContaining({ id: 'a', function: named('read', '{"path":"a.ts"}') })
+    ])
+    // No index: a new id starts the next call.
+    const unindexed = await read([
+      { id: 'a', function: named('read', '{"path":') },
+      { function: { arguments: '"a.ts"}' } },
+      { id: 'b', function: named('read', '{"path":"b.ts"}') }
+    ])
+    for (const chunks of [headersFirst, unindexed]) {
+      expect(
+        chunks.filter((chunk) => chunk.message?.tool_calls).at(-1)?.message?.tool_calls
+      ).toEqual([
+        expect.objectContaining({ id: 'a', function: named('read', '{"path":"a.ts"}') }),
+        expect.objectContaining({ id: 'b', function: named('read', '{"path":"b.ts"}') })
+      ])
+    }
+  })
+
   it('recovers tool calls from a non-streaming response when a local stream is empty', async () => {
     const fetchImpl = vi
       .fn()
@@ -819,6 +865,34 @@ describe('provider streaming adapters', () => {
       prompt_eval_count: 30,
       eval_count: 12
     })
+  })
+
+  it('gives an Anthropic overload inside a stream the status of a refused request', async () => {
+    // The stream answered 200, so only the error's type says the server is busy.
+    const events = [
+      { type: 'message_start', message: { id: 'msg-1', usage: { input_tokens: 3 } } },
+      { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }
+    ]
+    const response = streamingResponse([
+      events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
+    ])
+    const result = await streamAnthropicChat(
+      {
+        id: 'anthropic',
+        name: 'Anthropic',
+        type: 'anthropic',
+        enabled: true,
+        baseUrl: 'https://api.anthropic.test/v1',
+        apiKey: 'hidden',
+        modelSource: 'discover',
+        models: []
+      },
+      { ...request, target: { ...request.target, providerKind: 'anthropic' } },
+      () => undefined,
+      vi.fn(async () => response) as unknown as typeof fetch
+    )
+
+    expect(result).toEqual({ ok: false, error: 'Overloaded', status: 529 })
   })
 
   it('converts OpenAI-style system, image, tool-use, and tool-result messages for Anthropic', () => {

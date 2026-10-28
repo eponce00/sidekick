@@ -37,6 +37,7 @@ import {
   providerContextWindowError,
   providerImageLimitError,
   providerOutputLimitError,
+  providerQuotaExhausted,
   providerStreamDropped
 } from '../../shared/providerErrors'
 import { resolveMaxOutputTokens } from '../../shared/contextBudget'
@@ -267,6 +268,11 @@ export const STREAM_DROP_RETRY_DELAY_MS = 3_000
  */
 export const PROVIDER_BUSY_RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 20_000, 40_000]
 const PROVIDER_BUSY_STATUSES = new Set([429, 503, 529])
+/**
+ * The longest wait a provider's Retry-After is followed for. A provider that asks for longer, such
+ * as a daily limit, will not be ready while the user watches, and the run fails at once.
+ */
+const PROVIDER_RETRY_AFTER_LIMIT_MS = 60_000
 
 export interface StartAgentKernelRunInput extends StartAgentRunInput {
   /** App-settings snapshot, never model/repository-discovered commands. Always requires approval. */
@@ -472,10 +478,11 @@ function uniqueToolCallIds(calls: readonly ProviderToolCall[]): ProviderToolCall
 
 function mergeToolCalls(existing: ProviderToolCall[], incoming: ProviderToolCall[]): void {
   for (const call of incoming) {
-    const index = existing.findIndex(
-      (candidate) =>
-        (call.id && candidate.id === call.id) ||
-        (call.index !== undefined && candidate.index === call.index)
+    // A stream's index names the call; two calls a server gave one id are still two calls.
+    const index = existing.findIndex((candidate) =>
+      call.index !== undefined && candidate.index !== undefined
+        ? candidate.index === call.index
+        : Boolean(call.id) && candidate.id === call.id
     )
     if (index >= 0) existing[index] = call
     else existing.push(call)
@@ -1408,6 +1415,9 @@ The user approved this exact plan revision. Act capabilities are now available a
     let outputLimitRetryAttempted = false
     let streamDropRetryAttempted = false
     let providerBusyRetries = 0
+    // Whether any turn of this run wrote text; until one does, an empty reply is asked again once.
+    let repliedWithText = false
+    let emptyReplyRetryAttempted = false
     // A reply that ran away is stopped and the model told once; a second one ends the run.
     let runawayStopped = false
     // Learned from a provider's image-count rejection and enforced on every
@@ -1768,6 +1778,10 @@ The user approved this exact plan revision. Act capabilities are now available a
           acceptingChunks = false
           flushDelta()
         }
+        sampled = {
+          ...sampled,
+          turn: { ...sampled.turn, toolCalls: uniqueToolCallIds(sampled.turn.toolCalls) }
+        }
         // A reply that arrived whole, or was not stopped while it streamed, is checked once.
         runaway ??=
           stopReply.signal.aborted || !sampled.result.ok
@@ -1880,14 +1894,21 @@ The user approved this exact plan revision. Act capabilities are now available a
             continue
           }
           const status = sampled.result.status
+          const retryAfterMs = (sampled.result.retryAfter ?? 0) * 1_000
           if (
             status !== undefined &&
             PROVIDER_BUSY_STATUSES.has(status) &&
-            providerBusyRetries < PROVIDER_BUSY_RETRY_DELAYS_MS.length
+            providerBusyRetries < PROVIDER_BUSY_RETRY_DELAYS_MS.length &&
+            retryAfterMs <= PROVIDER_RETRY_AFTER_LIMIT_MS &&
+            !providerQuotaExhausted(sampled.result)
           ) {
-            const delayMs = PROVIDER_BUSY_RETRY_DELAYS_MS[providerBusyRetries++]
+            const scheduledMs = PROVIDER_BUSY_RETRY_DELAYS_MS[providerBusyRetries++]
+            const delayMs = retryAfterMs > 0 ? retryAfterMs : scheduledMs
+            // An overloaded server can fail a reply it has begun; as for a dropped stream, what
+            // it streamed is not part of the reply.
             this.append(input.id, 'run.retrying', {
               reason: 'provider_unavailable',
+              discardsPartialTurn: true,
               status,
               attempt: providerBusyRetries,
               delayMs,
@@ -1900,17 +1921,14 @@ The user approved this exact plan revision. Act capabilities are now available a
             )
             continue
           }
-          throw new ProviderRequestError(providerError, sampled.result.status)
+          throw new ProviderRequestError(providerError, sampled.result.status, sampled.result.code)
         }
         providerBusyRetries = 0
         contextOverflowRetryAttempted = false
         imageLimitRetryAttempted = false
         outputLimitRetryAttempted = false
         streamDropRetryAttempted = false
-        const turn = {
-          ...sampled.turn,
-          toolCalls: uniqueToolCallIds(sampled.turn.toolCalls)
-        }
+        const turn = sampled.turn
         // Some servers (LM Studio among them) report a turn the output limit cut off as finished
         // normally, even `tool_calls`; a turn that used its whole allowance was cut off whatever
         // the reason says.
@@ -1946,6 +1964,7 @@ The user approved this exact plan revision. Act capabilities are now available a
         const projectedTurnContent =
           separateNextTurn && turn.content ? `\n\n${turn.content}` : turn.content
         separateNextTurn = false
+        if (turn.content.trim()) repliedWithText = true
 
         // A reply the output limit cut off while the model was still thinking produced nothing,
         // and is not an answer. As in Codex, the turn ends with that reason rather than completing
@@ -2156,6 +2175,22 @@ The user approved this exact plan revision. Act capabilities are now available a
           }
           // A message the user sent during this last turn deserves a reply of its own.
           if (this.hasPendingSteer(input.id)) continue
+          // A run that would end without having written any text, its last reply empty or only
+          // thinking, has no answer. As in Gemini CLI, that reply is asked for again once, and a
+          // second ends the run with the reason rather than completing empty.
+          if (!repliedWithText) {
+            const onlyThought = Boolean(turn.thinking.trim())
+            if (emptyReplyRetryAttempted) {
+              throw new Error(
+                `The model ended its reply ${onlyThought ? 'after only thinking, ' : ''}without an answer, twice. Ask it again, or choose another model.`
+              )
+            }
+            emptyReplyRetryAttempted = true
+            this.append(input.id, 'run.retrying', { reason: 'empty_reply', onlyThought })
+            // Providers refuse an assistant message with nothing in it.
+            messages = requestMessages
+            continue
+          }
           this.transition(input.id, 'completed')
           return {
             runId: input.id,
@@ -2282,8 +2317,10 @@ The user approved this exact plan revision. Act capabilities are now available a
             prepared.prepared.argumentSnapshotFailed
           ) ?? undefined
         for (let callIndex = 0; callIndex < preparedBatch.length; callIndex++) {
-          if (signal.aborted) break
           const item = preparedBatch[callIndex]
+          // A stop starts no more calls, but every call that ran together with others still
+          // records how it ended.
+          if (signal.aborted && !preExecuted.has(item.call.id)) continue
           const { prepared, call, title, safeArguments } = item
           const entry = getAgentToolEntry(currentCatalog(input), call.name)
           const concurrency = entry?.concurrency

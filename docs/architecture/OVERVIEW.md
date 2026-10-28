@@ -261,7 +261,13 @@ turn whose stream broke off (the connection closed, or the stream ended before t
 finished the reply) is asked again once per turn, three seconds later, with the same request: tools
 run only after their whole turn has arrived, so the broken turn ran none of its calls. Its
 `run.retrying` event (`stream_dropped`, `discardsPartialTurn`) makes the shared projection drop the
-partial text, thinking and tool previews it streamed.
+partial text, thinking and tool previews it streamed. A provider that is busy or limiting requests
+(429, 503, 529, including Anthropic's overloaded and rate-limit errors inside a stream) is asked
+again up to five times, after 2 to 40 seconds or the `Retry-After` it sent; its event
+(`provider_unavailable`) also discards the partial turn. A `Retry-After` over a minute, or a 429
+that names an exhausted quota or billing (`insufficient_quota`), fails at once. A run that would
+complete without having written any text, its last reply empty or only thinking, asks for that
+reply again once (`empty_reply`); a second such reply fails the run.
 
 The renderer bridge exposes run start, stop, event reads, recovery, and durable interaction resolution. For agent commands it exposes only the user's own terminal controls: list and read a conversation's commands, stop one, move one to the background, and type into one. The user's own shells have a separate `userTerminal` bridge, described under [User terminals](#user-terminals). It does not expose raw provider streaming, model-initiated command execution, workspace mutation, MCP execution, or web search. Shared `projectAgentRunEvents` is the only event-to-message projection for streamed text, thinking, tools, artifacts, permissions, questions, tool limits, compaction, usage, and terminal state.
 
