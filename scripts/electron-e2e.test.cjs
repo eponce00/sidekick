@@ -116,6 +116,12 @@ test(
   }
 )
 
+// A window under about 964px folds the sidebar to its rail; open it to reach the chat list.
+async function openSidebar(page) {
+  const expand = page.getByRole('button', { name: /^Expand sidebar/ })
+  if (await expand.isVisible()) await expand.click()
+}
+
 async function launchSideKick(profile) {
   const executablePath = process.env.SIDEKICK_E2E_EXECUTABLE
   assert.ok(
@@ -395,6 +401,7 @@ test(
       }
       await page.getByRole('button', { name: 'Back to app' }).click()
 
+      await openSidebar(page)
       await page.getByRole('textbox', { name: 'Search conversations' }).fill('New Conversation')
       await waitForVisible(
         page.getByText('New Conversation', { exact: true }).first(),
@@ -413,7 +420,11 @@ test(
         'persisted chat after restart'
       )
 
-      const persistedChat = page.getByText('New Conversation', { exact: true }).first()
+      await openSidebar(page)
+      const persistedChat = page
+        .locator('aside.sidebar')
+        .getByText('New Conversation', { exact: true })
+        .first()
       await persistedChat.click()
       await page.waitForFunction(
         (text) => [...document.querySelectorAll('textarea')].some((field) => field.value === text),
