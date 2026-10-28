@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { applyDatabaseSchema } from '../bootstrap/database'
 import type { AgentRunPhase } from '../../shared/agentRuntime'
 import type { StartConversationAgentRunInput } from '../../shared/agentRunApi'
