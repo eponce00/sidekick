@@ -6,7 +6,8 @@ import { stat } from 'node:fs/promises'
 import {
   OutsideProjectError,
   projectRelativePath,
-  resolveSecureWorkspacePath
+  resolveSecureWorkspacePath,
+  workspacePathKey
 } from '../utils/workspacePaths'
 import {
   normalizeAgentToolParameters,
@@ -994,8 +995,12 @@ export class AgentToolRuntime {
           instructions.content + metadata + result.files.join('\n')
         )
       }
-      // Keyed like change records, so ./a.ts, an absolute path and a.ts share one receipt.
-      readReceipts.set(projectRelativePath(this.requireWorkspace(input), path), result.version)
+      // Keyed like change records, so ./a.ts, an absolute path, src/../a.ts and (where names
+      // ignore case) A.ts share one receipt.
+      readReceipts.set(
+        workspacePathKey(projectRelativePath(this.requireWorkspace(input), path)),
+        result.version
+      )
       if (result.binary) {
         // A receipt without text: the agent may now delete or replace the file through the
         // mutation service, instead of falling back to the shell.
@@ -1011,8 +1016,14 @@ export class AgentToolRuntime {
         )
       }
       if (input.workspaceRoot) this.languageIntelligence.observeFile(input.workspaceRoot, path)
+      const lines =
+        result.totalLines === 0
+          ? 'empty'
+          : result.startLine > result.totalLines
+            ? `start_line ${result.startLine} is past the end; the file has ${result.totalLines} lines`
+            : `lines ${result.startLine}-${result.endLine} of ${result.totalLines}`
       const metadata =
-        `[File: ${path} | lines ${result.startLine}-${result.endLine} of ${result.totalLines}` +
+        `[File: ${path} | ${lines}` +
         ` | version ${result.version}${result.nextLine ? ` | next_line ${result.nextLine}` : ''}]\n`
       const continuation = result.nextLine
         ? `\n[Showing lines ${result.startLine}-${result.endLine} of ${result.totalLines}. ` +
@@ -1105,7 +1116,8 @@ export class AgentToolRuntime {
           /^Invalid (?:patch|Add File|Delete File|Update File|hunk)/i.test(result.error || '')
         return toolExecutionFailed({
           title,
-          code: patchSyntax ? 'invalid_arguments' : stale ? 'stale_read' : 'conflict',
+          code:
+            patchSyntax || correctable ? 'invalid_arguments' : stale ? 'stale_read' : 'conflict',
           message: result.error || 'Workspace mutation failed',
           retryable: true,
           recoveryAction:
@@ -1135,15 +1147,16 @@ export class AgentToolRuntime {
       }
       for (const file of result.files) {
         const previousPath = file.path.replaceAll('\\', '/')
-        if (file.action === 'delete' || file.action === 'move') readReceipts.delete(previousPath)
+        if (file.action === 'delete' || file.action === 'move')
+          readReceipts.delete(workspacePathKey(previousPath))
         const currentPath = (file.movePath || file.path).replaceAll('\\', '/')
         if (file.action !== 'delete') {
           const version = await this.workspaceReads.getFileVersion(
             this.requireWorkspace(input),
             currentPath
           )
-          if (version) readReceipts.set(currentPath, version)
-          else readReceipts.delete(currentPath)
+          if (version) readReceipts.set(workspacePathKey(currentPath), version)
+          else readReceipts.delete(workspacePathKey(currentPath))
         }
       }
       const changes: ToolWorkspaceChange[] = result.files.map((file) => ({

@@ -47,6 +47,21 @@ describe('readPage under the local-network rules', () => {
         response.writeHead(301, { location: `http://rebind.test:${port}/admin` }).end()
       } else if (request.url === '/forbidden') {
         response.writeHead(403).end()
+      } else if (request.url === '/windows-1252') {
+        response
+          .writeHead(200, { 'content-type': 'text/html; charset=windows-1252' })
+          .end(Buffer.from('<html><body><p>Café » menu</p></body></html>', 'latin1'))
+      } else if (request.url === '/shift-jis') {
+        // 日本 in Shift_JIS, named only by the page's meta tag.
+        response
+          .writeHead(200, { 'content-type': 'text/html' })
+          .end(
+            Buffer.concat([
+              Buffer.from('<html><head><meta charset="shift_jis"></head><body><p>'),
+              Buffer.from([0x93, 0xfa, 0x96, 0x7b]),
+              Buffer.from('</p></body></html>')
+            ])
+          )
       } else {
         response.writeHead(200, { 'content-type': 'text/plain' }).end('router settings')
       }
@@ -118,6 +133,13 @@ describe('readPage under the local-network rules', () => {
     expect(hits).toEqual(['/to-router', '/to-rebind'])
     expect(ask.approve).not.toHaveBeenCalled()
     expect(render.attempts).toBe(0)
+  })
+
+  it('decodes a page by the charset its header or its meta tag names', async () => {
+    const western = await readPage(`http://public.test:${port}/windows-1252`, undefined, network())
+    expect(western.content).toContain('Café » menu')
+    const japanese = await readPage(`http://public.test:${port}/shift-jis`, undefined, network())
+    expect(japanese.content).toContain('日本')
   })
 
   it('still renders a public page that turned the direct request away', async () => {

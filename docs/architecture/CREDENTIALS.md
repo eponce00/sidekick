@@ -116,7 +116,7 @@ a request that already sets that header, parameter or field in any letter case, 
 sets the body's type itself. The `timeout` argument is a deadline for the whole exchange, not only
 a quiet connection. A failed request is reported by its message alone, because an HTTP client error
 object carries the request. A response is decoded by its byte-order mark, then its declared
-charset, then as UTF-8.
+charset, then, for HTML or XML, the encoding the document declares, then as UTF-8.
 
 **Commands.** `shell` takes `secrets: { VARIABLE: "alias" }` (or `alias.username` /
 `alias.password` for a sign-in). `AgentToolRuntime.commandSecrets` refuses variables that change

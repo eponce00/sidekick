@@ -1,8 +1,13 @@
 import { promises as fs } from 'fs'
-import { dirname, isAbsolute, relative, resolve, sep } from 'path'
+import { dirname, isAbsolute, posix, relative, resolve, sep } from 'path'
 
 export interface SecureWorkspacePathOptions {
-  rejectSymlinks?: boolean
+  /**
+   * Refuse a symbolic link anywhere on the path and a target file with more than one hard link,
+   * for callers that write or hand on the target: either kind of link can name a file outside
+   * the project.
+   */
+  rejectLinks?: boolean
 }
 
 /**
@@ -40,8 +45,9 @@ async function nearestExistingPath(path: string): Promise<string> {
 
 /**
  * The project-relative spelling of a path. Models often copy the workspace root from the prompt
- * or prefix ./, so an absolute path inside the project and ./ prefixes name the same file as the
- * plain relative path; read receipts and change records are keyed by this spelling.
+ * or prefix ./, so an absolute path inside the project, ./ prefixes and `..` segments name the
+ * same file as the plain relative path; read receipts and change records are keyed by this
+ * spelling.
  */
 export function projectRelativePath(workspaceRoot: string, requestedPath: string): string {
   let path = requestedPath.trim()
@@ -52,7 +58,21 @@ export function projectRelativePath(workspaceRoot: string, requestedPath: string
     }
     path = rel
   }
-  return path.replaceAll('\\', '/').replace(/^(?:\.\/)+/, '')
+  path = path.replaceAll('\\', '/')
+  return path
+    ? posix
+        .normalize(path)
+        .replace(/^(?:\.\/)+/, '')
+        .replace(/^\.$/, '')
+    : path
+}
+
+/**
+ * The identity of a project path for lookups: case-insensitive where file systems usually are
+ * (Windows and macOS), so two spellings of one file share a read receipt.
+ */
+export function workspacePathKey(path: string): string {
+  return process.platform === 'linux' ? path : path.toLowerCase()
 }
 
 /**
@@ -79,13 +99,18 @@ export async function resolveSecureWorkspacePath(
   const realExisting = await fs.realpath(existing)
   assertInside(realRoot, realExisting)
 
-  if (options.rejectSymlinks) {
+  if (options.rejectLinks) {
     let segment = lexicalRoot
     for (const part of relative(lexicalRoot, candidate).split(sep).filter(Boolean)) {
       segment = resolve(segment, part)
       try {
-        if ((await fs.lstat(segment)).isSymbolicLink()) {
+        const stat = await fs.lstat(segment)
+        if (stat.isSymbolicLink()) {
           throw new Error(`Symbolic-link mutation paths are not supported: ${requestedPath}`)
+        }
+        // Another name for the same file may be anywhere on the volume.
+        if (segment === candidate && stat.isFile() && stat.nlink > 1) {
+          throw new Error(`Files with more than one hard link are not supported: ${requestedPath}`)
         }
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') break
