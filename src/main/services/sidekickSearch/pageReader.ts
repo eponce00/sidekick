@@ -12,9 +12,11 @@ import {
   getAdmitted,
   resolveAdmitted,
   webNetworkRefusal,
+  WebResponseLimit,
   type WebAdmission,
   type WebNetworkOptions
 } from '../webNetworkGuard'
+import { decodeWebText } from '../webResponseText'
 import { browserIdentity } from './browserIdentity'
 import { htmlToMarkdown } from './htmlMarkdown'
 import type { PageContent } from './types'
@@ -51,12 +53,12 @@ const STRUCTURED_TEXT_TYPES = ['json', 'text/plain', 'text/csv', 'text/markdown'
 export function structuredTextPage(
   url: URL,
   contentType: string,
-  body: unknown,
+  body: string,
   maxContentLength: number
 ): PageContent | null {
   const mediaType = contentType.split(';')[0].trim()
   if (!STRUCTURED_TEXT_TYPES.some((type) => mediaType.includes(type))) return null
-  let text = typeof body === 'string' ? body : JSON.stringify(body)
+  let text = body
   if (mediaType.includes('json')) {
     try {
       text = JSON.stringify(JSON.parse(text), null, 2)
@@ -404,7 +406,12 @@ async function renderPage(
       })(),
       new Promise<never>((_, reject) => {
         timeout = setTimeout(
-          () => reject(new Error('Rendered page timed out')),
+          () =>
+            reject(
+              new Error(
+                `The page did not finish loading within ${BROWSER_FETCH_TIMEOUT_MS / 1_000} seconds`
+              )
+            ),
           BROWSER_FETCH_TIMEOUT_MS
         )
       })
@@ -453,11 +460,12 @@ export async function readPage(
 
   const contentLimit = Math.max(1_000, Math.min(500_000, Math.trunc(maxContentLength)))
   try {
-    const { response } = await getAdmitted<string>(
+    const { response } = await getAdmitted<ArrayBuffer>(
       url,
       {
         timeout: DIRECT_FETCH_TIMEOUT_MS,
-        responseType: 'text',
+        // Bytes, decoded by the page's own charset: the HTTP client read all text as UTF-8.
+        responseType: 'arraybuffer',
         headers: {
           'User-Agent': browserIdentity(),
           Accept:
@@ -471,19 +479,26 @@ export async function readPage(
       admission
     )
     const contentType = String(response.headers['content-type'] || '').toLowerCase()
-    const structured = structuredTextPage(url, contentType, response.data, contentLimit)
+    const body = decodeWebText(Buffer.from(response.data), contentType)
+    const structured = structuredTextPage(url, contentType, body, contentLimit)
     if (structured) return structured
     if (contentType && !contentType.includes('html') && !contentType.includes('xml')) {
       return emptyPage(url.href, `Unsupported page content type: ${contentType.split(';')[0]}`)
     }
     return (
-      readablePage(url.href, response.data, contentLimit) ||
+      readablePage(url.href, body, contentLimit) ||
       renderPage(url.href, contentLimit, localOrigin, network)
     )
   } catch (error) {
-    // A refused address is not a failure to render around.
+    // A refused address is not a failure to render around, nor is a page too large to read.
     const refusal = webNetworkRefusal(error)
     if (refusal) return refusedPage(url.href, refusal.message)
+    if (error instanceof WebResponseLimit) {
+      // A slow server, or one that answers only browsers, may still load when rendered.
+      return error.limit === 'time'
+        ? renderPage(url.href, contentLimit, localOrigin, network)
+        : emptyPage(url.href, error.message)
+    }
     const status = axios.isAxiosError(error) ? error.response?.status : undefined
     const message = error instanceof Error ? error.message : 'Page request failed'
     return shouldRenderInBrowser(status, message)

@@ -40,7 +40,10 @@ export function pageFetchFailure(title: string, page: PageContent): ToolExecutio
       data: page
     })
   }
-  const unsupported = /^Unsupported page content type/i.test(reason)
+  // Asking again for a page larger than a read takes gets the same answer.
+  const unsupported = /^Unsupported page content type|^The response from \S+ is larger than/i.test(
+    reason
+  )
   const invalid = /^(?:Invalid (?:page )?URL|Only HTTP and HTTPS)/i.test(reason)
   return toolExecutionFailed({
     title,
@@ -185,7 +188,7 @@ export function registerWebToolHandlers(
       const handle = await outputs.save(digest.full)
       modelContent +=
         `\n\n[The page is longer than one read, so the parts that best match what you asked ` +
-        `for were kept. The whole page in this form is tool_output handle "${handle}"; read it` +
+        `for were kept. The whole page in this form is tool_output handle "${handle}"; read it ` +
         `with an offset, or fetch again asking for something else.]`
     }
     // Markdown, not JSON: escaped newlines made headings, lists and code hard to read.

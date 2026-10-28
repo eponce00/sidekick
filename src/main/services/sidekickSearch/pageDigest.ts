@@ -50,7 +50,41 @@ function terms(text: string): string[] {
 
 const SECTION_TOKENS = 600
 
-/** Splits at headings, and a long stretch without one at paragraph breaks. */
+/**
+ * Splits `text` into pieces within a section's size at the coarsest break that has them:
+ * paragraphs, then lines, then characters. Data such as an API's JSON has no paragraphs, and
+ * kept whole it was one part larger than any read, so only a "left out" marker reached the model.
+ */
+function pieces(text: string, breaks: string[] = ['\n\n', '\n']): string[] {
+  if (estimateTextTokens(text) <= SECTION_TOKENS) return [text]
+  const [separator, ...finer] = breaks
+  if (separator === undefined) {
+    const size = Math.max(1, Math.floor((text.length * SECTION_TOKENS) / estimateTextTokens(text)))
+    return Array.from({ length: Math.ceil(text.length / size) }, (_, index) =>
+      text.slice(index * size, (index + 1) * size)
+    )
+  }
+  const output: string[] = []
+  let piece = ''
+  for (const unit of text.split(separator)) {
+    const next = piece ? `${piece}${separator}${unit}` : unit
+    if (estimateTextTokens(next) <= SECTION_TOKENS) {
+      piece = next
+    } else if (piece && estimateTextTokens(unit) <= SECTION_TOKENS) {
+      output.push(piece)
+      piece = unit
+    } else {
+      // Split finer together with what leads into it, so a heading keeps the start of its data.
+      const split = pieces(next, finer)
+      piece = split.pop() ?? ''
+      output.push(...split)
+    }
+  }
+  if (piece) output.push(piece)
+  return output
+}
+
+/** Splits at headings, and a long stretch without one into pieces. */
 function sections(text: string): string[] {
   const byHeading: string[] = []
   let fence: string | null = null
@@ -69,22 +103,7 @@ function sections(text: string): string[] {
   }
   if (current.length) byHeading.push(current.join('\n'))
 
-  return byHeading.flatMap((section) => {
-    if (estimateTextTokens(section) <= SECTION_TOKENS) return [section]
-    const pieces: string[] = []
-    let piece = ''
-    for (const paragraph of section.split(/\n{2,}/)) {
-      const next = piece ? `${piece}\n\n${paragraph}` : paragraph
-      if (piece && estimateTextTokens(next) > SECTION_TOKENS) {
-        pieces.push(piece)
-        piece = paragraph
-      } else {
-        piece = next
-      }
-    }
-    if (piece) pieces.push(piece)
-    return pieces
-  })
+  return byHeading.flatMap((section) => pieces(section))
 }
 
 /**

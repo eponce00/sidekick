@@ -165,12 +165,11 @@ export function htmlToMarkdown(root: Node, baseUrl: string): string {
         const lines = items
           .map((item, index) => {
             const marker = tag === 'OL' ? `${index + 1}.` : '-'
-            const body = render(item)
-              .trim()
-              .replace(/\n{2,}/g, '\n')
+            const body = reflow(render(item).trim(), 0)
             if (!body) return ''
-            // A nested list is part of the item's body, so this indent is the nesting.
-            return `${marker} ${body.replace(/\n/g, '\n  ')}`
+            // A nested list or a code block is part of the item's body, so this indent is the
+            // nesting.
+            return `${marker} ${body.replace(/\n(?!\n)/g, '\n  ')}`
           })
           .filter(Boolean)
         return lines.length ? `\n\n${lines.join('\n')}\n\n` : ''
@@ -193,25 +192,44 @@ export function htmlToMarkdown(root: Node, baseUrl: string): string {
   return tidy(render(root))
 }
 
+/** A code fence's opening line, in a list item too: its backticks after any indent or marker. */
+const FENCE_OPENER = /^\s*(?:(?:[-*]|\d+\.)\s+)*(`{3,})/
+
+/**
+ * Cuts runs of blank lines outside code to at most `blankLines` and passes each other line
+ * outside code through `line`. Code keeps every space and blank line it had.
+ */
+function reflow(
+  markdown: string,
+  blankLines: number,
+  line: (text: string) => string = (text) => text
+): string {
+  let fence: string | null = null
+  let blanks = 0
+  const lines: string[] = []
+  for (const text of markdown.split('\n')) {
+    if (fence) {
+      if (text.trimStart().startsWith(fence)) fence = null
+      lines.push(text)
+      continue
+    }
+    fence = text.match(FENCE_OPENER)?.[1] ?? null
+    const kept = fence ? text.trimEnd() : line(text)
+    if (kept.trim()) {
+      blanks = 0
+      lines.push(kept)
+    } else if (++blanks <= blankLines) {
+      lines.push('')
+    }
+  }
+  return lines.join('\n')
+}
+
 /** Drops the stray spaces the HTML's own indentation leaves at line starts, except in code. */
 function tidy(markdown: string): string {
-  let fence: string | null = null
-  const lines = markdown.split('\n').map((line) => {
-    const opener = line.match(/^(`{3,})/)?.[1]
-    if (fence) {
-      if (line.startsWith(fence)) fence = null
-      return line
-    }
-    if (opener) {
-      fence = opener
-      return line
-    }
+  return reflow(markdown, 1, (line) => {
     const trimmed = line.trimEnd()
     // List nesting is meaningful indentation; anything else is markup whitespace.
     return /^\s*(?:[-*]|\d+\.)\s/.test(trimmed) ? trimmed : trimmed.trimStart()
-  })
-  return lines
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
+  }).trim()
 }
