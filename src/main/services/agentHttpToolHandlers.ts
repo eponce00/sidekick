@@ -8,6 +8,7 @@ import { aliasResponseTokens } from './credentialResponseTokens'
 import type { CredentialUseAudit, CredentialUses } from './credentialUses'
 import type { ToolOutputStore } from './toolOutputStore'
 import { requestAdmitted, webNetworkRefusal, type WebNetworkOptions } from './webNetworkGuard'
+import { decodeWebText } from './webResponseText'
 
 export type HttpSend = (
   url: URL,
@@ -63,22 +64,6 @@ function textual(contentType: string): boolean {
     /^text\//i.test(contentType) ||
     /(json|xml|javascript|x-www-form-urlencoded|yaml|csv)/i.test(contentType)
   )
-}
-
-/**
- * Decodes a response by its byte-order mark, then its declared charset, then as UTF-8. Text in an
- * encoding SideKick misreads would show a token in a form the redactor does not know.
- */
-function decodeBody(bytes: Buffer, contentType: string): string {
-  let charset = /charset\s*=\s*"?([\w.:-]+)/i.exec(contentType)?.[1] ?? 'utf-8'
-  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) charset = 'utf-8'
-  else if (bytes[0] === 0xff && bytes[1] === 0xfe) charset = 'utf-16le'
-  else if (bytes[0] === 0xfe && bytes[1] === 0xff) charset = 'utf-16be'
-  try {
-    return new TextDecoder(charset).decode(bytes)
-  } catch {
-    return new TextDecoder('utf-8').decode(bytes)
-  }
 }
 
 const sameName = (names: Iterable<string>, name: string): string | undefined =>
@@ -321,8 +306,9 @@ export function registerHttpToolHandlers(
     const responseHeaders = response.headers as Record<string, unknown>
     const contentType = String(responseHeaders['content-type'] ?? '')
     const bytes = Buffer.from(response.data ?? new ArrayBuffer(0))
+    // Text in an encoding SideKick misreads would show a token in a form the redactor does not know.
     let text = textual(contentType)
-      ? decodeBody(bytes, contentType)
+      ? decodeWebText(bytes, contentType)
       : `[${bytes.byteLength} bytes of ${contentType || 'binary content'}]`
     let location =
       responseHeaders.location !== undefined ? String(responseHeaders.location) : undefined

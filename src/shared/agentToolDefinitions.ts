@@ -58,6 +58,13 @@ export function normalizeAgentToolParameters(
   const resolving = new Set<string>()
 
   const normalize = (value: unknown, depth: number): Record<string, unknown> => {
+    const normalized = collect(value, depth)
+    if (!normalized.type && !normalized.anyOf && !normalized.oneOf) normalized.type = 'object'
+    return normalized
+  }
+
+  /** The supported keywords of one schema, without the default type a merged branch must not add. */
+  const collect = (value: unknown, depth: number): Record<string, unknown> => {
     if (depth > 20) return { type: 'object', description: 'Schema depth was bounded by SideKick.' }
     const source = schemaRecord(value)
     const reference = typeof source.$ref === 'string' ? source.$ref : ''
@@ -65,7 +72,7 @@ export function normalizeAgentToolParameters(
       const target = localDefinition(reference)
       if (target) {
         resolving.add(reference)
-        const resolved = normalize(target, depth + 1)
+        const resolved = collect(target, depth + 1)
         resolving.delete(reference)
         return resolved
       }
@@ -99,24 +106,43 @@ export function normalizeAgentToolParameters(
       }
     }
     if (source.items) normalized.items = normalize(source.items, depth + 1)
-    const properties = schemaRecord(source.properties)
-    if (Object.keys(properties).length) {
-      normalized.type = 'object'
-      normalized.properties = Object.fromEntries(
-        Object.entries(properties).map(([name, schema]) => [name, normalize(schema, depth + 1)])
-      )
-      if (Array.isArray(source.required)) {
-        normalized.required = source.required.filter(
-          (name): name is string => typeof name === 'string' && Object.hasOwn(properties, name)
-        )
-      }
-    }
+    const properties = new Map(
+      Object.entries(schemaRecord(source.properties)).map(([name, schema]) => [
+        name,
+        normalize(schema, depth + 1)
+      ])
+    )
+    const required = new Set(
+      Array.isArray(source.required)
+        ? source.required.filter((name): name is string => typeof name === 'string')
+        : []
+    )
     for (const keyword of ['anyOf', 'oneOf'] as const) {
       if (Array.isArray(source[keyword])) {
         normalized[keyword] = source[keyword].map((schema) => normalize(schema, depth + 1))
       }
     }
-    if (!normalized.type && !normalized.anyOf && !normalized.oneOf) normalized.type = 'object'
+    // A value must match every allOf branch, so the branches merge into this schema, which many
+    // model APIs read better than allOf. Its own keywords win over a branch's.
+    for (const branch of Array.isArray(source.allOf) ? source.allOf : []) {
+      const part = collect(branch, depth + 1)
+      for (const [name, schema] of Object.entries(schemaRecord(part.properties))) {
+        if (!properties.has(name)) properties.set(name, schema as Record<string, unknown>)
+      }
+      for (const name of Array.isArray(part.required) ? part.required : []) required.add(name)
+      for (const [key, keyword] of Object.entries(part)) {
+        if (key !== 'properties' && key !== 'required' && !Object.hasOwn(normalized, key)) {
+          normalized[key] = keyword
+        }
+      }
+    }
+    if (properties.size) {
+      normalized.type = 'object'
+      normalized.properties = Object.fromEntries(properties)
+      if (Array.isArray(source.required) || required.size) {
+        normalized.required = [...required].filter((name) => properties.has(name))
+      }
+    }
     return normalized
   }
 

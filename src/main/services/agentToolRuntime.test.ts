@@ -612,6 +612,17 @@ describe('AgentToolRuntime file receipts', () => {
     })
 
     await session.router.execute('read', { path: 'status.txt' }, context)
+    const pastEnd = (await session.router.execute(
+      'read',
+      { path: 'status.txt', start_line: 50 },
+      context
+    )) as ToolExecutionResult
+    expect(pastEnd.modelContent).toContain('start_line 50 is past the end; the file has 1 lines')
+    // A hunk the current file does not contain is input to correct, not a reason to re-read.
+    expect(await edit('imagined', 'after')).toMatchObject({
+      status: 'error',
+      error: { code: 'invalid_arguments', recoveryAction: 'correct_input' }
+    })
     await expect(
       session.router.execute(
         'shell',
