@@ -35,6 +35,13 @@ npm install</code></pre>
     expect(text).not.toContain('alert')
     expect(text).not.toContain('secret')
   })
+
+  it('keeps the indentation and blank lines of code, in a list item too', () => {
+    const code = 'def f():\n    return 1\n\n\n\nprint(f())'
+    const text = markdown(`<pre>${code}</pre><ol><li><p>Run:</p><pre>${code}</pre></li></ol>`)
+    expect(text).toContain(`\`\`\`\n${code}\n\`\`\``)
+    expect(text).toContain('1. Run:\n  ```\n  def f():\n      return 1\n\n\n\n  print(f())\n  ```')
+  })
 })
 
 describe('readablePage', () => {
@@ -119,5 +126,13 @@ describe('digestPage', () => {
     expect(digest.text).toContain('Updated: 2026-09-27')
     expect(digest.text).toMatch(/\[… \d+ parts? of the page left out\]/)
     expect(digest.full).toContain('## Licensing')
+  })
+
+  it('keeps the start of data larger than one read, which has no paragraphs to split at', () => {
+    const rows = Array.from({ length: 2_000 }, (_, id) => ({ id, name: `station ${id}` }))
+    const digest = digestPage(page(JSON.stringify(rows, null, 2)), 'stations', 2_000)
+    expect(digest.reduced).toBe(true)
+    expect(digest.text).toContain('"name": "station 0"')
+    expect(digest.text.length).toBeGreaterThan(4_000)
   })
 })
