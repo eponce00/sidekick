@@ -190,6 +190,10 @@ test(
         )
       }
       const baseUrl = `http://127.0.0.1:${server.address().port}/v1`
+      // SideKick makes a project only from a folder chosen in its folder picker.
+      await application.evaluate(({ dialog }, folder) => {
+        dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] })
+      }, workspace)
       const runId = await page.evaluate(
         async ({ baseUrl, workspace, isolation, interpreter }) => {
           const model = {
@@ -230,6 +234,7 @@ test(
             notificationsEnabled: false,
             toolCallLimit: 6
           })
+          await window.api.workspace.selectFolder()
           const project = await window.api.projects.create(workspace, 'Packaged skill fixture')
           const conversation = await window.api.conversations.create(
             'Packaged skill fixture',

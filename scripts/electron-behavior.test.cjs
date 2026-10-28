@@ -213,6 +213,10 @@ test(
         BrowserWindow.getAllWindows()[0]?.setSize(1400, 900)
       )
 
+      // SideKick makes a project only from a folder chosen in its folder picker.
+      await application.evaluate(({ dialog }, folder) => {
+        dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] })
+      }, workspace)
       const { projectId, pinned } = await page.evaluate(
         async ({ baseUrl, workspace, model, provider, ref, window: contextLength, replyLimit }) => {
           const limits = { contextLength, maxOutputTokens: replyLimit }
@@ -243,6 +247,7 @@ test(
             autoCompactThreshold: 0.8,
             notificationsEnabled: false
           })
+          await window.api.workspace.selectFolder()
           const project = await window.api.projects.create(workspace, 'behavior-fixture')
           return {
             projectId: project.id,

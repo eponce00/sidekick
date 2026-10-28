@@ -118,6 +118,10 @@ test(
         BrowserWindow.getAllWindows()[0]?.setSize(1400, 900)
       )
 
+      // SideKick makes a project only from a folder chosen in its folder picker.
+      await application.evaluate(({ dialog }, folder) => {
+        dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] })
+      }, workspace)
       const managerId = await page.evaluate(
         async ({ baseUrl, workspace, modelId }) => {
           await window.api.settings.save({
@@ -137,6 +141,7 @@ test(
             commandPermissionMode: 'full-access',
             notificationsEnabled: false
           })
+          await window.api.workspace.selectFolder()
           const project = await window.api.projects.create(workspace, 'family-fixture')
           const conversation = await window.api.conversations.create('Split the work', project.id)
           await window.api.conversations.saveMessage({

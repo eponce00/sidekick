@@ -87,6 +87,10 @@ test(
         return page
       }
       let page = await launch()
+      // SideKick makes a project only from a folder chosen in its folder picker.
+      await application.evaluate(({ dialog }, folder) => {
+        dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] })
+      }, workspace)
       const conversationId = await page.evaluate(
         async ({ baseUrl, workspace }) => {
           // No contextLength on either target or configuration: preparation must discover it.
@@ -123,6 +127,7 @@ test(
             ],
             notificationsEnabled: false
           })
+          await window.api.workspace.selectFolder()
           const project = await window.api.projects.create(workspace, 'Cancellation fixture')
           const conversation = await window.api.conversations.create(
             'Cancellation fixture',

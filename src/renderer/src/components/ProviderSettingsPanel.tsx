@@ -33,7 +33,11 @@ import {
   providerDefinitionForInstance,
   type ProviderDefinition
 } from '../../../shared/providerRegistry'
-import { createProviderInstance, mergeDiscoveredModels } from '../../../shared/providerInstances'
+import {
+  createProviderInstance,
+  mergeDiscoveredModels,
+  sameProviderBaseUrl
+} from '../../../shared/providerInstances'
 import { getModelDisplayInfo } from '../../../shared/modelDisplay'
 import { discoverProviderModels } from '../services/providers/providerDiscovery'
 import { ProviderIcon } from './ProviderIcon'
@@ -173,12 +177,24 @@ export function ProviderSettingsPanel({
     [instances]
   )
 
+  // A saved key is only sent to the base URL it was saved with, so a new address needs it again.
+  const savedKeyBaseUrls = useRef(
+    new Map(
+      instances.flatMap((instance) =>
+        instance.apiKeyConfigured ? [[instance.id, instance.baseUrl] as const] : []
+      )
+    )
+  )
   const updateSelected = (updates: Partial<ProviderInstance>): void => {
     if (!selected) return
     const invalidatesHealth = 'baseUrl' in updates || 'apiKey' in updates
-    const nextUpdates = invalidatesHealth
+    const nextUpdates: Partial<ProviderInstance> = invalidatesHealth
       ? { ...updates, health: unknownProviderHealth() }
       : updates
+    const savedKeyBaseUrl = savedKeyBaseUrls.current.get(selected.id)
+    if ('baseUrl' in updates && savedKeyBaseUrl !== undefined) {
+      nextUpdates.apiKeyConfigured = sameProviderBaseUrl(savedKeyBaseUrl, updates.baseUrl)
+    }
     onChange(
       instances.map((instance) =>
         instance.id === selected.id ? { ...instance, ...nextUpdates } : instance
