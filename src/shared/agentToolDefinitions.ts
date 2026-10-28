@@ -215,7 +215,7 @@ function deleteDefinition(): AgentToolDefinition {
     function: {
       name: 'delete_file',
       description:
-        'Delete a project file only when its intended final state is absent. Read it first. Never delete a file merely to work around a failed edit or before recreating the same path.',
+        'Delete a project file only when its intended final state is absent. It need not be read first. Never delete a file merely to work around a failed edit or before recreating the same path.',
       parameters: {
         type: 'object',
         required: ['file_path'],

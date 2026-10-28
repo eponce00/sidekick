@@ -515,6 +515,22 @@ describe('workspace mutation service', () => {
         expectedVersions: { 'receipt.txt': current.version }
       })
     ).toMatchObject({ ok: true, changed: true })
+
+    // Deleting copies no text from a read, so it needs none; a read made stale still refuses.
+    const remove = {
+      kind: 'delete' as const,
+      filePath: 'receipt.txt',
+      accessLevel: 'auto' as const
+    }
+    expect(
+      await executeWorkspaceMutation(root, remove, {
+        requireReadReceipt: true,
+        expectedVersions: { 'receipt.txt': receipt.version }
+      })
+    ).toMatchObject({ ok: false, error: expect.stringContaining('Stale read receipt') })
+    expect(
+      await executeWorkspaceMutation(root, remove, { requireReadReceipt: true })
+    ).toMatchObject({ ok: true, changed: true })
   })
 
   it('rejects no-op writes during preview and execution', async () => {

@@ -138,6 +138,10 @@ describe('WorkspaceReadService', () => {
       'src/a.ts'
     ])
     expect((await service.listFiles(root, { glob: 'src/**/*.ts' })).files).toEqual(['src/a.ts'])
+    // `read {"path": "src", "glob": "*.ts"}` matched from the project root and listed nothing.
+    expect((await service.listFiles(root, { subPath: 'src', glob: '*.ts' })).files).toEqual([
+      'src/a.ts'
+    ])
   })
 
   it('bounds regex search and honors cancellation', async () => {
