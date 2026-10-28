@@ -113,6 +113,9 @@ export interface ProviderStreamResult {
   error?: string
   generationId?: string
   status?: number
+  /** The provider's own name for the error, such as `insufficient_quota`. */
+  code?: string
+  /** Seconds the provider asked to wait before the next request. */
   retryAfter?: number
 }
 

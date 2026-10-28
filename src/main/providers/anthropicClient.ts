@@ -254,6 +254,15 @@ async function responseError(response: Response): Promise<string> {
   }
 }
 
+/**
+ * The HTTP status Anthropic gives each error type, for an error that arrives inside a stream that
+ * already answered 200; an overloaded server mid-reply is as busy as one that refused the request.
+ */
+const STREAM_ERROR_STATUS: Record<string, number> = {
+  overloaded_error: 529,
+  rate_limit_error: 429
+}
+
 function retryAfter(response: Response): number | undefined {
   const raw = response.headers.get('Retry-After')
   if (!raw) return undefined
@@ -304,6 +313,7 @@ export async function streamAnthropicChat(
     let finishReason = 'end_turn'
     let generationId: string | undefined
     let streamError: string | undefined
+    let streamErrorStatus: number | undefined
     let terminal = false
 
     const consume = (line: string): void => {
@@ -437,6 +447,7 @@ export async function streamAnthropicChat(
           break
         case 'error':
           streamError = event.error?.message || event.error?.type || 'Anthropic stream failed'
+          streamErrorStatus = STREAM_ERROR_STATUS[event.error?.type ?? '']
           break
       }
     }
@@ -454,7 +465,11 @@ export async function streamAnthropicChat(
     if (signal?.aborted) return { ok: false, error: 'aborted' }
     if (streamError) {
       emit({ done: true, done_reason: 'error', error: streamError })
-      return { ok: false, error: streamError }
+      return {
+        ok: false,
+        error: streamError,
+        ...(streamErrorStatus ? { status: streamErrorStatus } : {})
+      }
     }
     if (!terminal) return { ok: false, error: 'Anthropic stream ended before its terminal event' }
     emit({

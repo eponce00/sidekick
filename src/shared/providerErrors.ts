@@ -92,6 +92,17 @@ export function providerStreamDropped(message: string | null | undefined): boole
   )
 }
 
+const QUOTA_EXHAUSTED = /\b(?:insufficient_quota|billing_not_active)\b/
+
+/**
+ * Whether a 429 means the account is out of quota or billing rather than sending too fast. OpenAI
+ * answers both with 429; only its error code tells them apart, and a gateway may quote that code in
+ * its message. Waiting does not refill a quota.
+ */
+export function providerQuotaExhausted(result: { error?: string; code?: string }): boolean {
+  return QUOTA_EXHAUSTED.test(result.code ?? '') || QUOTA_EXHAUSTED.test(result.error ?? '')
+}
+
 /** Masks credentials a provider echoed back in an error before SideKick shows or keeps it. */
 export function redactProviderCredentials(message: string): string {
   return message
