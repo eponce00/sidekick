@@ -600,6 +600,9 @@ function verifyReadReceipts(
   for (const change of changes) {
     if (change.beforeBytes === undefined) continue
     const expected = receipts[workspacePathKey(displayPath(change.path))]
+    // A delete copies no text from a read, and workspace history can bring the file back, so
+    // reading a file only to remove it buys nothing. A read the file changed after still refuses.
+    if (!expected && change.action === 'delete') continue
     if (!expected) {
       throw new WorkspaceMutationPlanningError(
         `Read receipt required before changing ${change.path}; read the file and retry`,
@@ -627,7 +630,7 @@ async function readReceiptProblem(
   request: WorkspaceMutationRequest,
   options: WorkspaceMutationExecutionOptions
 ): Promise<Error | undefined> {
-  if (!options.requireReadReceipt) return undefined
+  if (!options.requireReadReceipt || request.kind === 'delete') return undefined
   for (const target of workspaceMutationTargetPaths(request)) {
     try {
       const relativePath = projectRelativePath(workspaceRoot, target)
