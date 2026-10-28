@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.24.0 — 2026-10-28
+
+- A new look, reworked over fourteen rounds of review against the Claude Code and Codex desktop
+  apps. The chat comes first: the side panel opens at about a quarter of the window instead of
+  640px, the sidebar folds before the chat gets narrow, and replies are 14px on one aligned column.
+  Your messages are right-aligned bubbles, work steps share one row with their status beside the
+  label, a folded work block shows when a step failed, and change cards, command boxes and the
+  Terminal header share one shape. Colour now means one thing each: accent for what is selected,
+  live or primary, orange for what needs you, green and red for added and deleted lines. The light
+  theme gets a white chat area between darker rails and a raised composer, and the dark theme wider
+  steps between surfaces.
+- Find the context meter beside the model it measures in the composer, "Full access" beside the +
+  button, a New chat row at the top of the sidebar, and the project in the title bar.
+- Load SideKick's typeface from the app itself. Inter used to be fetched from Google Fonts at every
+  launch; it now ships with SideKick, which no longer contacts Google's font servers.
+- Start the next message at once in a long chat. Two minutes after a reply, a chat close to its
+  context limit is summarized in the background, so the next message no longer waits for the
+  summary first. It uses the model only while no other reply needs it.
+- Delete a file without reading it first. The agent had to read every file in full before deleting
+  it; a file that changed after the agent read it is still refused.
+- List matching files when a read uses a pattern inside a folder: `*.ts` in `src` used to find
+  nothing.
+
 ## 0.23.0 — 2026-10-27
 
 - Keep files intact when the agent edits them. A binary file is no longer filled with replacement
