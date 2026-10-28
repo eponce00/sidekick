@@ -53,6 +53,7 @@ interface PlacementFixture {
   git?: boolean
   queuedRunIds?: Set<string>
   worktreesCreated?: string[]
+  worktreeError?: string
 }
 
 function harness(now: number, placement: PlacementFixture = {}): Harness {
@@ -80,6 +81,7 @@ function harness(now: number, placement: PlacementFixture = {}): Harness {
     worktrees: {
       isGitProject: async () => placement.git ?? false,
       create: async (projectId) => {
+        if (placement.worktreeError) throw new Error(placement.worktreeError)
         const id = `worktree-${(placement.worktreesCreated ??= []).length + 1}`
         db.prepare(
           `INSERT INTO managed_worktrees
@@ -487,6 +489,21 @@ describe('ScheduleService and a busy project folder', () => {
     })
     expect(h.starts).toHaveLength(0)
     expect(h.service.runs(schedule.id)[0]).toMatchObject({ outcome: 'skipped' })
+  })
+
+  it('records a due run that fails before its chat exists', async () => {
+    // The failure was dropped: no history entry, no log, nothing for the user to find.
+    const h = harness(at(16, 8), { occupants: busy, git: true, worktreeError: 'disk full' })
+    const schedule = h.service.create(daily())
+    h.clock.now = at(16, 9, 0, 1)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await h.service.tick()
+    expect(error).toHaveBeenCalled()
+    error.mockRestore()
+    expect(h.service.runs(schedule.id)).toMatchObject([
+      { outcome: 'failed', reason: 'Could not start: disk full' }
+    ])
+    expect(h.starts).toHaveLength(0)
   })
 
   it('skips while the previous run still waits for a free run slot', async () => {

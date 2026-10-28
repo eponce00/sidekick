@@ -87,7 +87,9 @@ page. An entry with websites (`sites`, sealed with the values) goes only to thos
 subdomains (`credentialSiteMatches`), in web requests and sign-ins; the save handler refuses a public
 suffix such as `com` or `github.io`, checked with `tldts`. Tokens a request returned are not bound to
 the entry's websites, since a sign-in endpoint often issues them for another service's API. `take` returns the values and records `used`, or records `refused` with the reason the tool
-returns to the model. Its audit target is the URL without its query string, so a value sent as a
+returns to the model. `http_request` defers the `used` event until the request goes out: a request
+it refuses after taking the values, such as a body that sets the credential's place itself or an
+address the network policy blocks, is recorded as `refused`. Its audit target is the URL without its query string, so a value sent as a
 parameter is never kept.
 
 **Approval.** A call that uses a credential is a sensitive action, which the

@@ -5,7 +5,7 @@ import { HTTP_REQUEST_METHODS, HTTP_REQUEST_TOOL } from '../../shared/httpReques
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
 import { browserNetworkApprovals, type BrowserNetworkPolicy } from './browserNetworkApprovals'
 import { aliasResponseTokens } from './credentialResponseTokens'
-import type { CredentialUses } from './credentialUses'
+import type { CredentialUseAudit, CredentialUses } from './credentialUses'
 import type { ToolOutputStore } from './toolOutputStore'
 import { requestAdmitted, webNetworkRefusal, type WebNetworkOptions } from './webNetworkGuard'
 import { decodeWebText } from './webResponseText'
@@ -181,6 +181,12 @@ export function registerHttpToolHandlers(
 
     const alias = typeof args.credential === 'string' ? args.credential.trim() : ''
     let usedAlias: string | null = null
+    // The use is audited once the request goes out; a refusal before that is audited as one.
+    let audit: CredentialUseAudit | undefined
+    const refuse = (message: string) => {
+      audit?.notSent(message)
+      return invalid(title, message)
+    }
     if (alias) {
       const uses = options.credentials?.()
       if (!uses) {
@@ -191,15 +197,18 @@ export function registerHttpToolHandlers(
           retryable: false
         })
       }
-      const taken = uses.take({
-        alias,
-        tool: HTTP_REQUEST_TOOL,
-        kind: 'web',
-        target: url.href,
-        conversationId: context.conversationId,
-        runId: context.runId,
-        toolCallId: context.toolCallId
-      })
+      const taken = uses.take(
+        {
+          alias,
+          tool: HTTP_REQUEST_TOOL,
+          kind: 'web',
+          target: url.href,
+          conversationId: context.conversationId,
+          runId: context.runId,
+          toolCallId: context.toolCallId
+        },
+        { deferUse: true }
+      )
       if (!taken.ok) {
         return toolExecutionFailed({
           title,
@@ -210,16 +219,17 @@ export function registerHttpToolHandlers(
           recoveryAction: 'change_strategy'
         })
       }
+      audit = taken.audit
       const placement: CredentialSend | string = taken.derived
         ? { as: 'header', name: 'Authorization', prefix: 'Bearer ' }
         : credentialSendFor(args.credential_as, taken.summary.kind)
-      if (typeof placement === 'string') return invalid(title, placement)
+      if (typeof placement === 'string') return refuse(placement)
       const refusal = place(placement, taken.values, url, headers, body)
-      if (refusal) return invalid(title, refusal)
+      if (refusal) return refuse(refusal)
       usedAlias = alias.replace(/~\d+$/, '')
     }
     if ((method === 'GET' || method === 'HEAD') && body.kind !== 'none') {
-      return invalid(title, `${method} requests carry no body`)
+      return refuse(`${method} requests carry no body`)
     }
 
     const data =
@@ -231,7 +241,7 @@ export function registerHttpToolHandlers(
             ? new URLSearchParams(body.form).toString()
             : undefined
     if (data !== undefined && Buffer.byteLength(data) > MAX_REQUEST_BODY) {
-      return invalid(title, 'The request body is larger than 1 MB')
+      return refuse('The request body is larger than 1 MB')
     }
     const lower = Object.keys(headers).map((key) => key.toLowerCase())
     if (body.kind === 'json' && !lower.includes('content-type')) {
@@ -262,6 +272,7 @@ export function registerHttpToolHandlers(
     } catch (error) {
       const refusal = webNetworkRefusal(error)
       if (refusal) {
+        audit?.notSent(refusal.message)
         return toolExecutionFailed({
           title,
           code: 'permission_denied',
@@ -271,6 +282,8 @@ export function registerHttpToolHandlers(
           recoveryAction: 'change_strategy'
         })
       }
+      // The request was on its way when it failed.
+      audit?.sent()
       if (!context.signal.aborted && (error as { code?: unknown })?.code === 'ERR_CANCELED') {
         return toolExecutionFailed({
           title,
@@ -288,6 +301,7 @@ export function registerHttpToolHandlers(
         retryable: !context.signal.aborted
       })
     }
+    audit?.sent()
 
     const responseHeaders = response.headers as Record<string, unknown>
     const contentType = String(responseHeaders['content-type'] ?? '')

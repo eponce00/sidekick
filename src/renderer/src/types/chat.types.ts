@@ -76,6 +76,8 @@ export interface ContentSegment {
     originalTokens: number
     newTokens: number
     messagesCompacted: number
+    /** Tool results shortened instead of summarizing history. */
+    resultsCut?: number
     contextLength?: number
     contextReliable?: boolean
     /** The exact model-facing historical-context payload is stored in content. */

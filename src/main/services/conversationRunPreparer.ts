@@ -413,6 +413,25 @@ function ledgerReplies(
           ? (payload.result as Record<string, unknown>)
           : {}
       const name = String(payload.name || '')
+      // A project hook or an attached file's read: no model turn announced the call.
+      if (payload.calledBySideKick === true) {
+        history.push({
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: String(payload.toolCallId || ''),
+              function: {
+                name,
+                arguments:
+                  payload.arguments && typeof payload.arguments === 'object'
+                    ? (payload.arguments as Record<string, unknown>)
+                    : {}
+              }
+            }
+          ]
+        })
+      }
       const artifact = (
         result.data as { artifact?: { title?: unknown; code?: unknown } } | undefined
       )?.artifact

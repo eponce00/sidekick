@@ -111,6 +111,8 @@ export interface CompanionApiDependencies {
   setChatModel: (conversationId: string, modelId: string) => void
   /** A chat's saved messages changed outside the window, which should load them again. */
   messagesChanged: (conversationId: string) => void
+  /** A chat's later messages were taken out to answer again; what its replies read is forgotten. */
+  historyRewound: (conversationId: string) => void
   /** A chat's queued messages changed, for the window's composer and every phone. */
   queueChanged: (conversationId: string) => void
   /** A reduced copy of an image for a phone screen. */
@@ -845,6 +847,7 @@ export class CompanionApi {
         .prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
         .run(this.now(), conversationId)
     })()
+    this.deps.historyRewound(conversationId)
     this.deps.messagesChanged(conversationId)
     const runId = randomUUID()
     await this.deps.startRun({

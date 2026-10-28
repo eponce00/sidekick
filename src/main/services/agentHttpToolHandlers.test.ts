@@ -177,7 +177,7 @@ describe('http_request', () => {
   })
 
   it('refuses to let the model set where the value goes itself', async () => {
-    const { call, transport } = setup()
+    const { call, transport, record } = setup()
     const result = await call({
       method: 'GET',
       url: 'https://api.example.com/',
@@ -187,6 +187,11 @@ describe('http_request', () => {
     expect(result.status).toBe('error')
     expect(result.error?.message).toContain('Leave out the Authorization header')
     expect(transport).not.toHaveBeenCalled()
+    // Audited as used, though nothing was sent.
+    expect(record.mock.calls.map(([kind]) => kind)).toEqual(['refused'])
+
+    await call({ method: 'GET', url: 'https://api.example.com/', credential: 'api-key' })
+    expect(record.mock.calls.map(([kind]) => kind)).toEqual(['refused', 'used'])
   })
 
   // A server that reads the model's copy of a field and echoes it would answer with the value.

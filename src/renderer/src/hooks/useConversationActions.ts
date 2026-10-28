@@ -107,56 +107,53 @@ export function useConversationActions(options: ConversationActionsOptions): {
 
   /**
    * Returns the project's files to how they were before the message at this index: back to the
-   * last earlier History point, or, with none, to before the first one after it.
+   * last earlier History point, or, with none, to before the first one after it. Resolves to why
+   * the files could not be restored, or null when they were or there was nothing to restore.
    */
-  const restoreFilesBefore = async (targetIndex: number): Promise<void> => {
-    if (options.workspaceFolder) {
-      const priorHash = options.messages
-        .slice(0, targetIndex)
-        .reverse()
-        .find(
-          (candidate) =>
-            candidate.checkpointHash &&
-            candidate.checkpointWorkspaceRoot === options.workspaceFolder
-        )?.checkpointHash
-      if (priorHash) {
-        try {
-          const authorization = await authorizeCheckpointMutation('hard-reset', priorHash)
-          if (authorization) {
-            const result = await window.api.workspace.hardResetCheckpoint(
-              options.workspaceFolder,
-              priorHash,
+  const restoreFilesBefore = async (targetIndex: number): Promise<string | null> => {
+    const workspaceFolder = options.workspaceFolder
+    if (!workspaceFolder) return null
+    const here = (candidate: Message): boolean =>
+      Boolean(candidate.checkpointHash) && candidate.checkpointWorkspaceRoot === workspaceFolder
+    const priorHash = options.messages.slice(0, targetIndex).reverse().find(here)?.checkpointHash
+    const hash = priorHash ?? options.messages.slice(targetIndex + 1).find(here)?.checkpointHash
+    if (!hash) return null
+    const action = priorHash ? 'hard-reset' : 'rewind'
+    try {
+      const authorization = await authorizeCheckpointMutation(action, hash)
+      if (!authorization) return 'Restoring the files was not approved.'
+      const result =
+        action === 'hard-reset'
+          ? await window.api.workspace.hardResetCheckpoint(workspaceFolder, hash, authorization)
+          : await window.api.workspace.rewindToBeforeCheckpoint(
+              workspaceFolder,
+              hash,
               authorization
             )
-            if (!result.ok) console.warn('[Rewind] Checkpoint hard-reset failed:', result.error)
-          }
-        } catch (error) {
-          console.warn('[Rewind] Checkpoint hard-reset failed:', error)
-        }
-      } else {
-        const ownHash = options.messages
-          .slice(targetIndex + 1)
-          .find(
-            (candidate) =>
-              candidate.checkpointHash &&
-              candidate.checkpointWorkspaceRoot === options.workspaceFolder
-          )?.checkpointHash
-        if (ownHash) {
-          try {
-            const authorization = await authorizeCheckpointMutation('rewind', ownHash)
-            if (!authorization) throw new Error('Checkpoint rewind denied')
-            const result = await window.api.workspace.rewindToBeforeCheckpoint(
-              options.workspaceFolder,
-              ownHash,
-              authorization
-            )
-            if (!result.ok) console.warn('[Rewind] rewindToBeforeCheckpoint failed:', result.error)
-          } catch (error) {
-            console.warn('[Rewind] rewindToBeforeCheckpoint threw:', error)
-          }
-        }
-      }
+      return result.ok ? null : result.error || 'The files could not be restored.'
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
     }
+  }
+
+  /**
+   * A rewind that cannot finish leaves the chat as it was and says why in it. Deleting the
+   * messages anyway, or answering again, would leave the chat, the stored history and the
+   * project's files disagreeing.
+   */
+  const reportRewindFailure = (summary: string, error: unknown): void => {
+    console.error('[Rewind]', summary, error)
+    setReplacingMessageId(null)
+    options.setMessages((current) => [
+      ...current,
+      {
+        id: crypto.randomUUID(),
+        role: 'agent',
+        noticeTone: 'error',
+        content: `${summary} ${error instanceof Error ? error.message : String(error)}`,
+        timestamp: Date.now()
+      }
+    ])
   }
 
   const rewindingRef = useRef(false)
@@ -186,8 +183,6 @@ export function useConversationActions(options: ConversationActionsOptions): {
     const targetIndex = options.messages.findIndex((candidate) => candidate.id === message.id)
     if (targetIndex < 0) return
 
-    await restoreFilesBefore(targetIndex)
-
     const trimmedContent = edit?.content.trim() ?? ''
     if (edit && !trimmedContent && !edit.images.length && !edit.attachments.length) return
     const updatedMessage: Message = edit
@@ -207,22 +202,16 @@ export function useConversationActions(options: ConversationActionsOptions): {
 
     // A failed rewind must not start a new run. The stored history still holds
     // the messages this rewind meant to replace, so answering on top of them
-    // interleaves the stale and new turns the next time the chat is loaded.
-    // Leave the visible transcript in place and report the failure rather than
-    // letting the run silently diverge from what is stored.
-    const abortRewind = (summary: string, error: unknown): void => {
-      console.error('[Rewind]', summary, error)
-      setReplacingMessageId(null)
-      options.setMessages((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          role: 'agent',
-          noticeTone: 'error',
-          content: `${summary} ${error instanceof Error ? error.message : String(error)}`,
-          timestamp: Date.now()
-        }
-      ])
+    // interleaves the stale and new turns the next time the chat is loaded; with
+    // the files left as they were, it would work on changes the chat no longer
+    // shows. Leave the visible transcript in place and report the failure.
+    const restoreError = await restoreFilesBefore(targetIndex)
+    if (restoreError) {
+      reportRewindFailure(
+        'Your files could not be restored, so the messages were kept and no new reply was started:',
+        restoreError
+      )
+      return
     }
 
     if (edit) {
@@ -240,14 +229,17 @@ export function useConversationActions(options: ConversationActionsOptions): {
           timestamp: message.timestamp
         })
       } catch (error) {
-        abortRewind('Your edit could not be saved, so no new reply was started:', error)
+        reportRewindFailure('Your edit could not be saved, so no new reply was started:', error)
         return
       }
     }
     try {
       await window.api.conversations.deleteMessagesAfter(options.conversationId, message.timestamp)
     } catch (error) {
-      abortRewind('The replaced messages could not be cleared, so no new reply was started:', error)
+      reportRewindFailure(
+        'The replaced messages could not be cleared, so no new reply was started:',
+        error
+      )
       return
     }
     await latestOptionsRef.current.beforeMessagesLeave?.(message, edit ? 'edit' : 'retry')
@@ -274,7 +266,11 @@ export function useConversationActions(options: ConversationActionsOptions): {
     if (!options.conversationId || options.isRunActive?.()) return
     const targetIndex = options.messages.findIndex((candidate) => candidate.id === message.id)
     if (targetIndex < 0) return
-    if (restoreFiles) await restoreFilesBefore(targetIndex)
+    const restoreError = restoreFiles ? await restoreFilesBefore(targetIndex) : null
+    if (restoreError) {
+      reportRewindFailure('Your files could not be restored, so nothing was rewound:', restoreError)
+      return
+    }
     const previous = options.messages[targetIndex - 1]
     try {
       await window.api.conversations.deleteMessagesAfter(
@@ -282,7 +278,7 @@ export function useConversationActions(options: ConversationActionsOptions): {
         previous ? previous.timestamp : message.timestamp - 1
       )
     } catch (error) {
-      console.error('[Rewind] The rewound messages could not be cleared:', error)
+      reportRewindFailure('The rewound messages could not be cleared:', error)
       return
     }
     // The message heads back into the box while it and what follows leave the chat.

@@ -359,6 +359,51 @@ function parseArrayString(value: unknown): unknown {
 }
 
 /**
+ * A list item given as text where the schema asks for an object with one required text field
+ * becomes that field, as `ask_user` options written as plain labels: refused, the question was a
+ * round lost. Walks only the schema's own properties and items.
+ */
+function wrapTextItems(schema: unknown, value: unknown, path: string, repairs: string[]): unknown {
+  if (!schema || typeof schema !== 'object') return value
+  const { type, items, properties } = schema as Record<string, unknown>
+  if (type === 'array' && Array.isArray(value)) {
+    const item = items && typeof items === 'object' ? (items as Record<string, unknown>) : {}
+    const required = Array.isArray(item.required) ? item.required : []
+    const itemProperties = (item.properties ?? {}) as Record<string, { type?: unknown }>
+    const field =
+      item.type === 'object' &&
+      required.length === 1 &&
+      itemProperties[String(required[0])]?.type === 'string'
+        ? String(required[0])
+        : undefined
+    let changed = false
+    const next = value.map((entry, index) => {
+      const entryPath = `${path}[${index}]`
+      let wrapped: unknown
+      if (field && typeof entry === 'string') {
+        repairs.push(`${entryPath}: text → ${field}`)
+        wrapped = { [field]: entry }
+      } else {
+        wrapped = wrapTextItems(items, entry, entryPath, repairs)
+      }
+      if (wrapped !== entry) changed = true
+      return wrapped
+    })
+    return changed ? next : value
+  }
+  if (!properties || typeof properties !== 'object') return value
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  let next: Record<string, unknown> | undefined
+  for (const [name, property] of Object.entries(properties)) {
+    const current = (value as Record<string, unknown>)[name]
+    if (current === undefined) continue
+    const wrapped = wrapTextItems(property, current, path ? `${path}.${name}` : name, repairs)
+    if (wrapped !== current) (next ??= { ...(value as Record<string, unknown>) })[name] = wrapped
+  }
+  return next ?? value
+}
+
+/**
  * Argument names models bring from other agent harnesses, by the SideKick argument that means the
  * same thing, compared like canonicalArgumentKey: Claude Code's and Gemini CLI's file_path and
  * absolute_path, OpenCode's filePath, Cursor's target_file, Codex's workdir and Claude Code's
@@ -459,7 +504,13 @@ export function normalizeAgentToolArguments(
       repairs.push(`${name}: parsed JSON array`)
     }
   }
-  return { arguments: normalized, repairs }
+  return {
+    arguments: wrapTextItems(tool.function.parameters, normalized, '', repairs) as Record<
+      string,
+      unknown
+    >,
+    repairs
+  }
 }
 
 export function prepareAgentToolCall(

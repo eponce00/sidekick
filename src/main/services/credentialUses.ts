@@ -59,8 +59,16 @@ export type CredentialTake =
       values: CredentialValues
       /** A token an earlier response returned, which goes as a bearer token. */
       derived?: true
+      /** With `deferUse`: records whether the value left, once the caller knows. */
+      audit?: CredentialUseAudit
     }
   | { ok: false; message: string }
+
+/** A deferred use's outcome: the value went out, or the call refused before sending it. */
+export interface CredentialUseAudit {
+  sent(): void
+  notSent(reason: string): void
+}
 
 /** The vault calls this service relies on. */
 export interface CredentialStore {
@@ -366,8 +374,12 @@ export class CredentialUses {
     if (key) this.permits.add(key)
   }
 
-  /** The values for an approved use about to happen, checked again now; records the outcome. */
-  take(request: CredentialUseRequest): CredentialTake {
+  /**
+   * The values for an approved use about to happen, checked again now; records the outcome. A
+   * caller that may still refuse before the value leaves, such as a web request checking its
+   * body, passes `deferUse` and reports the outcome through the returned `audit`.
+   */
+  take(request: CredentialUseRequest, options: { deferUse?: boolean } = {}): CredentialTake {
     const key = permitKey(request)
     const permitted = key !== undefined && this.permits.delete(key)
     const checked: ReturnType<CredentialUses['check']> = permitted
@@ -384,27 +396,30 @@ export class CredentialUses {
       }
       return { ok: false, message: checked.message }
     }
-    if (checked.derived) {
-      this.store.record('used', checked.credential, {
-        ...details,
-        detail: `Returned token ${request.alias}`
-      })
-      return {
-        ok: true,
-        summary: checked.credential,
-        values: { secret: checked.derived.value },
-        derived: true
-      }
+    const credential = checked.credential
+    const resolved = checked.derived ? undefined : this.store.resolve(credential.alias)
+    if (!checked.derived && !resolved) {
+      return { ok: false, message: `${credential.alias} has no value on this computer.` }
     }
-    const resolved = this.store.resolve(checked.credential.alias)
-    if (!resolved) {
-      return { ok: false, message: `${checked.credential.alias} has no value on this computer.` }
+    const detail = checked.derived
+      ? `Returned token ${request.alias}`
+      : request.variable
+        ? `In ${request.variable}`
+        : undefined
+    const audit: CredentialUseAudit = {
+      sent: () =>
+        this.store.record('used', credential, { ...details, ...(detail ? { detail } : {}) }),
+      notSent: (reason) => this.store.record('refused', credential, { ...details, detail: reason })
     }
-    this.store.record('used', checked.credential, {
-      ...details,
-      ...(request.variable ? { detail: `In ${request.variable}` } : {})
-    })
-    return { ok: true, summary: checked.credential, values: resolved.values }
+    if (!options.deferUse) audit.sent()
+    return {
+      ok: true,
+      summary: credential,
+      ...(checked.derived
+        ? { values: { secret: checked.derived.value }, derived: true as const }
+        : { values: resolved!.values }),
+      ...(options.deferUse ? { audit } : {})
+    }
   }
 
   /** The user said no to a use. */

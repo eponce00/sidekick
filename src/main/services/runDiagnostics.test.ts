@@ -41,6 +41,7 @@ it('exports only bounded, allowlisted aggregates, never raw run or tool data', (
       )
     }
     compaction('secret-id-104', { strategy: 'model' })
+    compaction('secret-id-104', { strategy: 'cut_tool_results', resultsCut: 3 })
     compaction('secret-id-104', { strategy: 'deterministic', fallbackReason: 'timeout' })
     compaction('secret-id-103', { strategy: 'deterministic', fallbackReason: 'timeout' })
     compaction('secret-id-103', { strategy: 'deterministic', fallbackReason: 'private reason' })
@@ -59,6 +60,7 @@ it('exports only bounded, allowlisted aggregates, never raw run or tool data', (
       compactions: {
         model: 1,
         deterministic: 4,
+        cutToolResults: 1,
         fallbackReasons: { timeout: 2, unknown: 1, unrecorded: 1 }
       }
     })

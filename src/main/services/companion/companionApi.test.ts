@@ -75,6 +75,7 @@ function setup(overrides: Partial<CompanionApiDependencies> = {}) {
     ),
     setChatModel: vi.fn(),
     messagesChanged: vi.fn(),
+    historyRewound: vi.fn(),
     queueChanged: vi.fn(),
     shrinkImage: vi.fn(async (image) => ({ ...image, dataUrl: 'data:image/jpeg;base64,small' })),
     readArtifact: vi.fn(async () => null),

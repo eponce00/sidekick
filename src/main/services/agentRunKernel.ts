@@ -1346,6 +1346,25 @@ The user approved this exact plan revision. Act capabilities are now available a
     this.append(input.id, 'run.retrying', { reason: 'runaway_tool_calls', ...stopped })
   }
 
+  /**
+   * Records a call SideKick made for the model before its first turn, such as a project hook or a
+   * file the user attached. No model turn announces it, so the call itself is recorded with its
+   * result; without it the next reply's history held a result with no call, which was dropped.
+   */
+  private appendCallBySideKick(
+    runId: string,
+    call: AgentToolCall,
+    result: ToolExecutionResult
+  ): void {
+    this.append(runId, 'tool.completed', {
+      toolCallId: call.id,
+      name: call.name,
+      arguments: call.arguments,
+      calledBySideKick: true,
+      result
+    })
+  }
+
   private async compactContext(
     input: StartAgentKernelRunInput,
     contextManager: AgentKernelContextManager | undefined,
@@ -1544,9 +1563,15 @@ The user approved this exact plan revision. Act capabilities are now available a
             ((args, context) =>
               input.toolRouter.execute('shell', args, context)) as AgentToolExecutor
           )
-          this.append(input.id, 'tool.completed', { toolCallId: call.id, name: call.name, result })
-          if (result.status !== 'success')
+          if (result.status !== 'success') {
+            this.append(input.id, 'tool.completed', {
+              toolCallId: call.id,
+              name: call.name,
+              result
+            })
             throw new Error(`${title} failed; inspect its output before retrying`)
+          }
+          this.appendCallBySideKick(input.id, call, result)
           messages.push(
             {
               role: 'assistant',
@@ -1600,7 +1625,7 @@ The user approved this exact plan revision. Act capabilities are now available a
           },
           ((args, context) => input.toolRouter.execute('read', args, context)) as AgentToolExecutor
         )
-        this.append(input.id, 'tool.completed', { toolCallId: call.id, name: call.name, result })
+        this.appendCallBySideKick(input.id, call, result)
         messages.push(
           {
             role: 'assistant',

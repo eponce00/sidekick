@@ -110,7 +110,7 @@ lines are reported with their line numbers. Paths may be project-relative, `./` 
 share one read receipt, and a rename that changes only letter case renames the file in place.
 `AgentToolRuntime` requires
 a version receipt for every existing target, from a read or write earlier in the same chat and
-project (the latest 50 chats are kept), and a file whose content changed since is stale, the kernel resolves permission policy, and the
+project (the latest 50 chats are kept, and a rewind, retry or edit forgets the chat's), and a file whose content changed since is stale, the kernel resolves permission policy, and the
 transactional mutation service commits only after validating the complete plan. Model results
 contain a bounded truthful diff summary; the UI starts the activity row as soon as tool input
 streams and only shows success after `ok` and `changed` are both true.

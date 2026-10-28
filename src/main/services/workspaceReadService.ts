@@ -90,12 +90,16 @@ function abortIfNeeded(signal?: AbortSignal): void {
 }
 
 function globToRegex(pattern: string): RegExp {
+  // `**/` is any number of folders, none included: `**/*` matched only files inside a folder, so
+  // a project with its files at the top listed nothing.
   const escaped = pattern
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*\//g, '\uE001')
     .replace(/\*\*/g, '\uE000')
     .replace(/\*/g, '[^/]*')
-    .replace(/\uE000/g, '.*')
     .replace(/\?/g, '[^/]')
+    .replace(/\uE001/g, '(?:.*/)?')
+    .replace(/\uE000/g, '.*')
   return new RegExp(`^${escaped}$`)
 }
 

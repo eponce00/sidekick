@@ -721,6 +721,14 @@ describe('AgentToolRuntime file receipts', () => {
       expect(await (await reply('run-4', 'chat')).edit('edited by the user', 'five')).toMatchObject(
         { error: { code: 'stale_read' } }
       )
+
+      // A rewind takes the replies that read the file out of the chat.
+      const fifth = await reply('run-5', 'chat')
+      await fifth.read()
+      runtime.forgetConversation('chat')
+      expect(await (await reply('run-6', 'chat')).edit('edited by the user', 'six')).toMatchObject({
+        error: { code: 'stale_read', message: expect.stringContaining('Read receipt required') }
+      })
     } finally {
       await runtime.close()
       db.close()
