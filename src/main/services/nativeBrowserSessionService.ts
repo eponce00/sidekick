@@ -2750,7 +2750,7 @@ export class NativeBrowserSessionService {
         dirname(resolve(input.workspaceRoot, input.destination))
       )
       const destination = await resolveSecureWorkspacePath(input.workspaceRoot, input.destination, {
-        rejectSymlinks: true
+        rejectLinks: true
       })
       const tab = this.getTab(session)
       await this.assertAutomatedMutationAllowed(tab, signal)
@@ -3892,7 +3892,7 @@ export class NativeBrowserSessionService {
       let bytes = 0
       for (const path of input.paths) {
         const file = await resolveSecureWorkspacePath(input.workspaceRoot, path, {
-          rejectSymlinks: true
+          rejectLinks: true
         })
         const info = await fs.stat(file)
         if (!info.isFile()) throw new Error('Uploads must be regular files')

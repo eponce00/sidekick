@@ -227,8 +227,8 @@ applies to `web_fetch`, so the agent cannot read a device you have not allowed b
 see [Addresses on your network](SEARCH.md#addresses-on-your-network).
 
 `browser_upload` selects up to eight project-relative regular files (25 MiB total)
-on an observed file input, then verifies the actual selection. Symlinks and paths
-outside the project are rejected. Selection can immediately expose files to the site
+on an observed file input, then verifies the actual selection. Symlinks, files with
+more than one hard link, and paths outside the project are rejected. Selection can immediately expose files to the site
 if its JavaScript auto-uploads; it is not inherently a local-only action.
 
 `browser_download` saves a direct HTTPS resource using the conversation browser's
