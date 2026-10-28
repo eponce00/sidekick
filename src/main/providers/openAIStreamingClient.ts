@@ -43,17 +43,25 @@ interface OpenAIStreamEvent {
   }>
 }
 
-async function responseError(response: Response): Promise<string> {
+/** The provider's own name for an error, such as OpenAI's `insufficient_quota`; never a status. */
+function errorCode(error: { code?: unknown; type?: unknown }): string | undefined {
+  return [error.code, error.type].find(
+    (value): value is string => typeof value === 'string' && !/^\d+$/.test(value)
+  )
+}
+
+async function responseError(response: Response): Promise<{ error: string; code?: string }> {
   const fallback = `HTTP ${response.status}`
   try {
     const raw = (await response.json()) as {
-      error?: string | { message?: string }
+      error?: string | { message?: string; code?: unknown; type?: unknown }
       message?: string
     }
-    if (typeof raw.error === 'string') return raw.error
-    return raw.error?.message || raw.message || fallback
+    if (typeof raw.error === 'string') return { error: raw.error }
+    const code = raw.error ? errorCode(raw.error) : undefined
+    return { error: raw.error?.message || raw.message || fallback, ...(code ? { code } : {}) }
   } catch {
-    return fallback
+    return { error: fallback }
   }
 }
 
@@ -73,6 +81,15 @@ function retryAfter(response: Response): number | undefined {
   return Number.isFinite(timestamp)
     ? Math.max(0, Math.ceil((timestamp - Date.now()) / 1_000))
     : undefined
+}
+
+function isWholeJsonObject(value: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return Boolean(parsed) && typeof parsed === 'object' && !Array.isArray(parsed)
+  } catch {
+    return false
+  }
 }
 
 function reasoningText(value: unknown): string {
@@ -168,7 +185,7 @@ export async function streamOpenAICompatibleChat(
     if (!response.ok) {
       return {
         ok: false,
-        error: await responseError(response),
+        ...(await responseError(response)),
         status: response.status,
         retryAfter: retryAfter(response)
       }
@@ -186,6 +203,43 @@ export async function streamOpenAICompatibleChat(
     >()
     const toolPreviews = new ToolCallPreviews()
     const closedToolCalls = new Set<number>()
+    // The id the server gave each call, to tell a delta that starts a call from one that goes on.
+    const sourceToolCallIds = new Map<number, string>()
+    let lastToolCallIndex: number | undefined
+    const toolCallIndex = (raw: { index?: number; id?: string }): number => {
+      if (typeof raw.index === 'number') return raw.index
+      // Without an index, a delta with a new id starts the next call; any other goes on the last.
+      if (
+        lastToolCallIndex !== undefined &&
+        (!raw.id || raw.id === sourceToolCallIds.get(lastToolCallIndex))
+      )
+        return lastToolCallIndex
+      return toolCalls.size ? Math.max(...toolCalls.keys()) + 1 : 0
+    }
+    // A call is finished once the model has started a later one and its arguments are whole. A
+    // server may send every call's header before any arguments, so a later call alone is not enough.
+    const closeFinishedToolCalls = (): void => {
+      const latest = Math.max(...toolCalls.keys())
+      const finished = [...toolCalls.entries()].filter(
+        ([index, call]) =>
+          index < latest &&
+          !closedToolCalls.has(index) &&
+          call.function.name &&
+          isWholeJsonObject(call.function.arguments)
+      )
+      if (!finished.length) return
+      for (const [index] of finished) closedToolCalls.add(index)
+      emit({
+        message: {
+          closed_tool_calls: finished.map(([index, call]) => ({
+            ...call,
+            index,
+            function: { ...call.function }
+          }))
+        },
+        done: false
+      })
+    }
     let buffer = ''
     let promptTokens = 0
     let cachedPromptTokens: number | undefined
@@ -196,7 +250,8 @@ export async function streamOpenAICompatibleChat(
     let generationId: string | undefined
     let reportedModel: string | undefined
     let streamError: string | undefined
-    let streamErrorCode: number | undefined
+    let streamErrorStatusCode: number | undefined
+    let streamErrorName: string | undefined
     let gotContent = false
     let gotThinking = false
     let streamDone = false
@@ -222,7 +277,8 @@ export async function streamOpenAICompatibleChat(
       if (typeof json.model === 'string') reportedModel = json.model
       if (json.error) {
         streamError = json.error.message || json.error.type || 'Provider stream failed'
-        streamErrorCode = streamErrorStatus(json.error.code)
+        streamErrorStatusCode = streamErrorStatus(json.error.code)
+        streamErrorName = errorCode(json.error)
         return
       }
       if (typeof json.id === 'string' && !generationId) generationId = json.id
@@ -250,33 +306,25 @@ export async function streamOpenAICompatibleChat(
       }
       if (Array.isArray(delta.tool_calls)) {
         for (const raw of delta.tool_calls) {
-          const index = raw.index ?? 0
-          if (!toolCalls.has(index)) {
-            // The model went on to a new call, so the calls before it are finished.
-            const finished = [...toolCalls.entries()].filter(
-              ([earlier, call]) => !closedToolCalls.has(earlier) && call.function.name
-            )
-            for (const [earlier] of finished) closedToolCalls.add(earlier)
-            if (finished.length)
-              emit({
-                message: {
-                  closed_tool_calls: finished.map(([earlier, call]) => ({
-                    ...call,
-                    index: earlier,
-                    function: { ...call.function }
-                  }))
-                },
-                done: false
-              })
-          }
+          const index = toolCallIndex(raw)
+          lastToolCallIndex = index
           const existing = toolCalls.get(index) || {
             id: raw.id || `call_${Date.now()}_${index}`,
             type: raw.type || 'function',
             function: { name: '', arguments: '' }
           }
-          if (raw.id) existing.id = raw.id
+          if (raw.id) {
+            existing.id = raw.id
+            sourceToolCallIds.set(index, raw.id)
+          }
           if (raw.type) existing.type = raw.type
-          if (raw.function?.name) existing.function.name += raw.function.name
+          // Most servers send the name once; some repeat it whole in every delta.
+          const name = raw.function?.name
+          if (name) {
+            existing.function.name = name.startsWith(existing.function.name)
+              ? name
+              : existing.function.name + name
+          }
           if (raw.function?.arguments) existing.function.arguments += raw.function.arguments
           toolCalls.set(index, existing)
 
@@ -301,6 +349,7 @@ export async function streamOpenAICompatibleChat(
             })
           }
         }
+        closeFinishedToolCalls()
       }
       if (typeof choice.finish_reason === 'string' && choice.finish_reason) {
         finishReason = choice.finish_reason
@@ -370,7 +419,8 @@ export async function streamOpenAICompatibleChat(
       return {
         ok: false,
         error: streamError,
-        ...(streamErrorCode ? { status: streamErrorCode } : {})
+        ...(streamErrorStatusCode ? { status: streamErrorStatusCode } : {}),
+        ...(streamErrorName ? { code: streamErrorName } : {})
       }
     }
     const requestedTools = Array.isArray(requestBody.tools) && requestBody.tools.length > 0

@@ -6,10 +6,12 @@ import { projectAgentRunEvents } from '../../shared/agentEventProjection'
 import { ProviderSetupError } from '../../shared/providerErrors'
 import type { ProviderChatRequest, ProviderStreamChunk } from '../../shared/providerRuntime'
 import { applyDatabaseSchema } from '../bootstrap/database'
+import { streamProviderChat } from '../providers/providerRuntime'
 import {
   AgentRunKernel,
   PROVIDER_BUSY_RETRY_DELAYS_MS,
   STREAM_DROP_RETRY_DELAY_MS,
+  sampleProviderTurn,
   type AgentKernelProviderSampler,
   type AgentKernelModelTurn,
   type StartAgentKernelRunInput
@@ -23,6 +25,11 @@ import type { CredentialSummary } from '../../shared/credentials'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+vi.mock('../providers/providerRuntime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../providers/providerRuntime')>()),
+  streamProviderChat: vi.fn()
+}))
 
 function sampledTurn(
   turn: Partial<AgentKernelModelTurn>,
@@ -3793,6 +3800,73 @@ describe('AgentRunKernel', () => {
     await expect(first).resolves.toMatchObject({ phase: 'cancelled' })
     await expect(second).resolves.toMatchObject({ phase: 'cancelled' })
   })
+  it('records how every call of a parallel batch ended when the run is stopped during it', async () => {
+    const call = (id: string) => ({
+      id,
+      function: { name: 'tool_output', arguments: { handle: id } }
+    })
+    const sampler = sampledTurn({
+      toolCalls: [call('out-1'), call('out-2'), call('out-3')],
+      usage: { promptTokens: 10, completionTokens: 5, doneReason: 'tool_calls' }
+    })
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const router = {
+      execute: vi.fn(async () => {
+        kernel.stop('run-1')
+        return { content: 'stored output' }
+      })
+    }
+
+    await expect(kernel.start(input(router))).resolves.toMatchObject({ phase: 'cancelled' })
+    const ids = (type: string): unknown[] =>
+      store
+        .listEvents('run-1')
+        .filter((event) => event.type === type)
+        .map(({ payload }) => payload.toolCallId)
+    expect(ids('tool.running')).toEqual(['out-1', 'out-2', 'out-3'])
+    expect(ids('tool.completed')).toEqual(['out-1', 'out-2', 'out-3'])
+  })
+
+  it('asks again once for a reply that only thought, then fails rather than complete empty', async () => {
+    const thoughtOnly = sampledTurn({ thinking: 'Let me think about it.' })
+    const recovered = vi.fn(sequence(thoughtOnly, sampledTurn({ content: 'The answer.' })))
+    await expect(
+      new AgentRunKernel(store, undefined, recovered).start(input())
+    ).resolves.toMatchObject({ phase: 'completed', finalResponse: 'The answer.' })
+    expect(recovered.mock.calls[1][0].messages).toEqual(recovered.mock.calls[0][0].messages)
+
+    const empty = vi.fn(sequence(thoughtOnly, sampledTurn({})))
+    const failed = await new AgentRunKernel(store, undefined, empty).start({
+      ...input(),
+      id: 'run-2'
+    })
+    expect(failed).toMatchObject({ phase: 'failed' })
+    expect(failed.error).toContain('without an answer')
+    expect(empty).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps two streamed calls that share an id as two calls', async () => {
+    vi.mocked(streamProviderChat).mockImplementationOnce(async (_request, emit) => {
+      const read = (index: number, path: string) => ({
+        id: 'same',
+        index,
+        function: { name: 'read', arguments: { file_path: path } }
+      })
+      emit({ message: { tool_calls: [read(0, 'a.ts')] } })
+      emit({ message: { tool_calls: [read(0, 'a.ts'), read(1, 'b.ts')] }, done: true })
+      return { ok: true }
+    })
+    const { turn } = await sampleProviderTurn(
+      { ...input().request, messages: [] } as ProviderChatRequest,
+      new AbortController().signal,
+      () => undefined
+    )
+    expect(turn.toolCalls.map((call) => call.function.arguments)).toEqual([
+      { file_path: 'a.ts' },
+      { file_path: 'b.ts' }
+    ])
+  })
+
   describe('a stream that breaks off', () => {
     const DROPPED =
       'Lost the connection to the model server at 127.0.0.1:1234 while it was replying; the server stopped or restarted. (UND_ERR_SOCKET)'
@@ -3892,9 +3966,53 @@ describe('AgentRunKernel', () => {
           .filter(({ type }) => type === 'run.retrying')
           .map(({ payload }) => payload)
       ).toEqual([
-        expect.objectContaining({ reason: 'provider_unavailable', status: 429, attempt: 1 }),
+        expect.objectContaining({
+          reason: 'provider_unavailable',
+          status: 429,
+          attempt: 1,
+          // An overload can end a reply that had begun streaming; its text is not shown twice.
+          discardsPartialTurn: true
+        }),
         expect.objectContaining({ reason: 'provider_unavailable', status: 429, attempt: 2 })
       ])
+    })
+
+    it('waits as long as the provider asks, and fails at once when waiting cannot help', async () => {
+      const refused = (result: Record<string, unknown>): AgentKernelProviderSampler =>
+        vi.fn(async () => ({
+          result: { ok: false, status: 429, ...result },
+          turn: {
+            content: '',
+            thinking: '',
+            thinkingBlocks: [],
+            toolCalls: [],
+            usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+          }
+        }))
+      const answer = sampledTurn({ content: 'Whole answer.' })
+      const asked = vi.fn(sequence(refused({ error: 'slow down', retryAfter: 7 }), answer))
+      const running = new AgentRunKernel(store, undefined, asked).start(input())
+      await vi.advanceTimersByTimeAsync(7_000)
+      await expect(running).resolves.toMatchObject({ phase: 'completed' })
+      expect(
+        store.listEvents('run-1').find(({ type }) => type === 'run.retrying')?.payload
+      ).toMatchObject({ delayMs: 7_000 })
+
+      for (const [id, result] of [
+        ['run-quota', { error: 'You exceeded your current quota.', code: 'insufficient_quota' }],
+        ['run-daily', { error: 'Daily limit reached', retryAfter: 3_600 }]
+      ] as const) {
+        const sampler = vi.fn(sequence(refused(result), answer))
+        const outcome = await new AgentRunKernel(store, undefined, sampler).start({
+          ...input(),
+          id
+        })
+        expect(outcome.phase).toBe('failed')
+        expect(sampler).toHaveBeenCalledTimes(1)
+        expect(store.get(id)?.error?.code).toBe(
+          id === 'run-quota' ? 'permission_denied' : 'transient'
+        )
+      }
     })
 
     it('fails as before when the second try breaks off too', async () => {
