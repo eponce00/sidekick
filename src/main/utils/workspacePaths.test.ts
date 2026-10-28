@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'fs/promises'
+import { link, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join, relative, resolve, sep } from 'path'
 import {
@@ -88,6 +88,18 @@ describe('workspace path containment', () => {
     await symlink(join(parent, 'elsewhere'), join(root, 'link'), 'junction')
     await expect(resolveSecureWorkspacePath(root, 'link/secret.txt')).rejects.toBeInstanceOf(
       OutsideProjectError
+    )
+  })
+
+  it('refuses a file with another hard link only where the target is written', async () => {
+    const { parent, root } = await workspace()
+    await link(join(parent, 'outside.txt'), join(root, 'linked.txt'))
+    await expect(
+      resolveSecureWorkspacePath(root, 'linked.txt', { rejectLinks: true })
+    ).rejects.toThrow('hard link')
+    expect(await resolveSecureWorkspacePath(root, 'linked.txt')).toBe(join(root, 'linked.txt'))
+    expect(await resolveSecureWorkspacePath(root, 'src/a.ts', { rejectLinks: true })).toBe(
+      join(root, 'src', 'a.ts')
     )
   })
 

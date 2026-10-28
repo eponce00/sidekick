@@ -1,5 +1,5 @@
 import { promises as fs } from 'fs'
-import { dirname, resolve } from 'path'
+import { basename, dirname, resolve } from 'path'
 import {
   workspaceMutationTargetPaths,
   type WorkspaceFileChange,
@@ -7,15 +7,27 @@ import {
   type WorkspaceMutationRequest,
   type WorkspaceMutationResult
 } from '../../shared/workspaceMutations'
-import { applyCanonicalUpdate, parseCanonicalPatch } from '../utils/canonicalPatch'
+import {
+  applyCanonicalUpdate,
+  PatchApplicationError,
+  parseCanonicalPatch
+} from '../utils/canonicalPatch'
 import { createWorkspaceFileChange } from '../utils/workspaceDiff'
 import { credentialRedactor } from './credentialRedaction'
 import { workspaceFileVersion } from '../utils/workspaceFileVersion'
 import {
   OutsideProjectError,
   projectRelativePath,
-  resolveSecureWorkspacePath
+  resolveSecureWorkspacePath,
+  workspacePathKey
 } from '../utils/workspacePaths'
+import {
+  DEFAULT_TEXT_FORMAT,
+  decodeWorkspaceText,
+  encodeWorkspaceText,
+  type WorkspaceText,
+  type WorkspaceTextFormat
+} from '../utils/workspaceText'
 import {
   describeMatchLocations,
   findLineBlockSpans,
@@ -37,9 +49,21 @@ interface PlannedChange {
   absolutePath: string
   movePath?: string
   absoluteMovePath?: string
+  /** The move changes only letter case, on a file system where both spellings name the file. */
+  renameInPlace?: boolean
+  /** Text for the diff; a file that is not text shows its bytes read as UTF-8. */
   before?: string
   after?: string
+  /** The file's bytes when planned; present exactly when the file existed. */
+  beforeBytes?: Buffer
+  afterBytes?: Buffer
   beforeVersion?: string
+}
+
+/** An existing file: its bytes, and its text when it is text the tools can edit losslessly. */
+interface FileContent {
+  bytes: Buffer
+  text?: WorkspaceText
 }
 
 class WorkspaceMutationPlanningError extends Error {
@@ -53,7 +77,10 @@ class WorkspaceMutationPlanningError extends Error {
 }
 
 export interface WorkspaceMutationExecutionOptions {
-  /** Versions returned by the canonical read tool during this agent run. */
+  /**
+   * Versions returned by the canonical read tool during this agent run, keyed by
+   * `workspacePathKey` of the project-relative path.
+   */
   expectedVersions?: Readonly<Record<string, string>>
   /** Require a matching receipt before changing or deleting an existing file. */
   requireReadReceipt?: boolean
@@ -62,7 +89,7 @@ export interface WorkspaceMutationExecutionOptions {
 interface FileSnapshot {
   path: string
   existed: boolean
-  content?: string
+  content?: Buffer
   mode?: number
 }
 
@@ -92,21 +119,46 @@ async function withWorkspaceLock<T>(
 
 async function secureWorkspacePath(workspaceRoot: string, filePath: string): Promise<string> {
   if (!filePath.trim()) throw new Error('file_path is required')
-  return resolveSecureWorkspacePath(workspaceRoot, filePath, { rejectSymlinks: true })
+  return resolveSecureWorkspacePath(workspaceRoot, filePath, { rejectLinks: true })
 }
 
 function displayPath(filePath: string): string {
   return filePath.replaceAll('\\', '/')
 }
 
-async function readOptional(path: string): Promise<string | undefined> {
+async function readOptional(path: string): Promise<FileContent | undefined> {
   try {
     const stat = await fs.stat(path)
     if (!stat.isFile()) throw new Error(`Path is not a regular file: ${path}`)
-    return await fs.readFile(path, 'utf8')
+    const bytes = await fs.readFile(path)
+    return { bytes, text: decodeWorkspaceText(bytes) }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
     throw error
+  }
+}
+
+/** The text of an existing file a text edit will change, refusing what it would corrupt. */
+function editableText(path: string, file: FileContent): WorkspaceText {
+  if (file.text) return file.text
+  throw new Error(
+    `Edit rejected: ${path} is not UTF-8 or UTF-16 text, so a text edit would corrupt it; no file changes were made. Change it with a command that understands its format, or replace it whole with write.`
+  )
+}
+
+/** Planned text for a file: its diff text and the bytes that will be written. */
+function planned(text: string, format: WorkspaceTextFormat): { after: string; afterBytes: Buffer } {
+  return { after: text, afterBytes: encodeWorkspaceText(text, format) }
+}
+
+/** The fields describing an existing file before the change. */
+function existing(
+  file: FileContent
+): Pick<PlannedChange, 'before' | 'beforeBytes'> & { format: WorkspaceTextFormat } {
+  return {
+    before: file.text?.text ?? file.bytes.toString('utf8'),
+    beforeBytes: file.bytes,
+    format: file.text?.format ?? DEFAULT_TEXT_FORMAT
   }
 }
 
@@ -354,28 +406,35 @@ async function planSingleFileMutation(
   const relativePath = projectRelativePath(workspaceRoot, request.filePath)
   const absolutePath = await secureWorkspacePath(workspaceRoot, relativePath)
   const path = displayPath(relativePath)
-  const before = await readOptional(absolutePath)
+  const current = await readOptional(absolutePath)
   const beforeVersion = await currentVersion(absolutePath)
 
   if (request.kind === 'delete') {
-    if (before === undefined) throw new Error(`Cannot delete missing file: ${path}`)
-    return [{ action: 'delete', path, absolutePath, before, beforeVersion }]
+    if (current === undefined) throw new Error(`Cannot delete missing file: ${path}`)
+    const { before, beforeBytes } = existing(current)
+    return [{ action: 'delete', path, absolutePath, before, beforeBytes, beforeVersion }]
   }
 
   if (request.kind === 'write') {
-    // Rewriting an existing file keeps its line-ending convention; models emit LF.
+    // Rewriting an existing text file keeps its encoding, byte order mark and line-ending
+    // convention; models emit LF. A file that is not text is replaced as new UTF-8 text.
+    const previous = current && existing(current)
     const content =
-      before !== undefined && !request.content.includes('\r\n')
-        ? withLineEnding(request.content, dominantLineEnding(before))
+      current?.text && !request.content.includes('\r\n')
+        ? withLineEnding(request.content, dominantLineEnding(current.text.text))
         : request.content
-    if (before === content) throw new Error(`Write rejected: ${path} already has identical content`)
+    const next = planned(content, previous?.format ?? DEFAULT_TEXT_FORMAT)
+    if (current?.bytes.equals(next.afterBytes)) {
+      throw new Error(`Write rejected: ${path} already has identical content`)
+    }
     return [
       {
-        action: before === undefined ? 'add' : 'update',
+        action: current === undefined ? 'add' : 'update',
         path,
         absolutePath,
-        before,
-        after: content,
+        before: previous?.before,
+        beforeBytes: previous?.beforeBytes,
+        ...next,
         beforeVersion
       }
     ]
@@ -384,17 +443,29 @@ async function planSingleFileMutation(
   if (request.oldText === request.newText) {
     throw new Error('Edit rejected: old_string and new_string are identical')
   }
-  if (before === undefined) {
+  if (current === undefined) {
     if (request.oldText !== '') throw new Error(`Cannot edit missing file: ${path}`)
-    return [{ action: 'add', path, absolutePath, after: request.newText }]
+    return [{ action: 'add', path, absolutePath, ...planned(request.newText, DEFAULT_TEXT_FORMAT) }]
   }
+  const { text: before, format } = editableText(path, current)
+  const update = (after: string): PlannedChange[] => [
+    {
+      action: 'update',
+      path,
+      absolutePath,
+      before,
+      beforeBytes: current.bytes,
+      ...planned(after, format),
+      beforeVersion
+    }
+  ]
   if (request.oldText === '') {
     if (before !== '') {
       throw new Error(
         `Edit rejected: old_string may be empty only when creating a missing or empty file: ${path}`
       )
     }
-    return [{ action: 'update', path, absolutePath, before, after: request.newText, beforeVersion }]
+    return update(request.newText)
   }
 
   const replacement = adaptReplacementLineEndings(before, request.oldText, request.newText)
@@ -403,7 +474,7 @@ async function planSingleFileMutation(
     const after = tolerantReplacement(path, before, request)
     if (after === before)
       throw new Error(`Edit rejected: replacement produced no change in ${path}`)
-    return [{ action: 'update', path, absolutePath, before, after, beforeVersion }]
+    return update(after)
   }
   if (occurrences > 1 && !request.replaceAll) {
     throw multipleMatchesError(
@@ -417,7 +488,25 @@ async function planSingleFileMutation(
     ? before.split(replacement.oldText).join(replacement.newText)
     : before.replace(replacement.oldText, () => replacement.newText)
   if (after === before) throw new Error(`Edit rejected: replacement produced no change in ${path}`)
-  return [{ action: 'update', path, absolutePath, before, after, beforeVersion }]
+  return update(after)
+}
+
+/** Two paths that name one existing file, as two spellings do where names ignore case. */
+async function sameFile(left: string, right: string): Promise<boolean> {
+  const [a, b] = await Promise.all([left, right].map((path) => fs.stat(path, { bigint: true })))
+  return a.dev === b.dev && a.ino === b.ino
+}
+
+/** A patch that cannot be located in the file is a correctable input, like an edit's old_string. */
+function patchApplicationFailure(error: unknown): unknown {
+  if (!(error instanceof PatchApplicationError)) return error
+  return new WorkspaceMutationPlanningError(error.message, {
+    code: error.code,
+    recovery:
+      error.code === 'multiple_matches'
+        ? 'Add surrounding unchanged lines to the hunk so it matches one place, then send one corrected patch.'
+        : 'Copy the hunk context and removed lines exactly from the current file text (read the range again if needed), then send one corrected patch.'
+  })
 }
 
 async function planCanonicalPatch(
@@ -428,7 +517,7 @@ async function planCanonicalPatch(
   const changes: PlannedChange[] = []
   const touchedAbsolutePaths = new Set<string>()
   const claimPath = (absolutePath: string): void => {
-    const key = process.platform === 'linux' ? absolutePath : absolutePath.toLocaleLowerCase()
+    const key = workspacePathKey(absolutePath)
     if (touchedAbsolutePaths.has(key)) {
       throw new Error(`Patch rejected: resolved path is modified more than once: ${absolutePath}`)
     }
@@ -439,40 +528,64 @@ async function planCanonicalPatch(
     const absolutePath = await secureWorkspacePath(workspaceRoot, relativePath)
     claimPath(absolutePath)
     const path = displayPath(relativePath)
-    const before = await readOptional(absolutePath)
+    const current = await readOptional(absolutePath)
     const beforeVersion = await currentVersion(absolutePath)
     if (operation.type === 'add') {
-      if (before !== undefined) throw new Error(`Patch rejected: Add File already exists: ${path}`)
-      changes.push({ action: 'add', path, absolutePath, after: operation.content })
+      if (current !== undefined) throw new Error(`Patch rejected: Add File already exists: ${path}`)
+      changes.push({
+        action: 'add',
+        path,
+        absolutePath,
+        ...planned(operation.content, DEFAULT_TEXT_FORMAT)
+      })
       continue
     }
     if (operation.type === 'delete') {
-      if (before === undefined) throw new Error(`Patch rejected: Delete File is missing: ${path}`)
-      changes.push({ action: 'delete', path, absolutePath, before, beforeVersion })
+      if (current === undefined) throw new Error(`Patch rejected: Delete File is missing: ${path}`)
+      const { before, beforeBytes } = existing(current)
+      changes.push({ action: 'delete', path, absolutePath, before, beforeBytes, beforeVersion })
       continue
     }
-    if (before === undefined) throw new Error(`Patch rejected: Update File is missing: ${path}`)
-    const after = applyCanonicalUpdate(before, operation)
+    if (current === undefined) throw new Error(`Patch rejected: Update File is missing: ${path}`)
+    const { text: before, format } = editableText(path, current)
+    let after: string
+    try {
+      after = applyCanonicalUpdate(before, operation)
+    } catch (error) {
+      throw patchApplicationFailure(error)
+    }
+    const change = {
+      path,
+      absolutePath,
+      before,
+      beforeBytes: current.bytes,
+      ...planned(after, format),
+      beforeVersion
+    }
     if (operation.movePath) {
       const relativeMovePath = projectRelativePath(workspaceRoot, operation.movePath)
       const absoluteMovePath = await secureWorkspacePath(workspaceRoot, relativeMovePath)
-      claimPath(absoluteMovePath)
+      // Where names ignore case, a rename that changes only case names the same file.
+      const renameInPlace =
+        absoluteMovePath !== absolutePath &&
+        workspacePathKey(absoluteMovePath) === workspacePathKey(absolutePath)
+      if (!renameInPlace) claimPath(absoluteMovePath)
       const movePath = displayPath(relativeMovePath)
-      if ((await readOptional(absoluteMovePath)) !== undefined) {
+      if (
+        (await readOptional(absoluteMovePath)) !== undefined &&
+        !(renameInPlace && (await sameFile(absolutePath, absoluteMovePath)))
+      ) {
         throw new Error(`Patch rejected: Move destination already exists: ${movePath}`)
       }
       changes.push({
+        ...change,
         action: 'move',
-        path,
-        absolutePath,
         movePath,
         absoluteMovePath,
-        before,
-        after,
-        beforeVersion
+        ...(renameInPlace ? { renameInPlace } : {})
       })
     } else {
-      changes.push({ action: 'update', path, absolutePath, before, after, beforeVersion })
+      changes.push({ ...change, action: 'update' })
     }
   }
   return changes
@@ -485,8 +598,8 @@ function verifyReadReceipts(
   if (!options.requireReadReceipt) return
   const receipts = options.expectedVersions ?? {}
   for (const change of changes) {
-    if (change.before === undefined) continue
-    const expected = receipts[displayPath(change.path)]
+    if (change.beforeBytes === undefined) continue
+    const expected = receipts[workspacePathKey(displayPath(change.path))]
     if (!expected) {
       throw new WorkspaceMutationPlanningError(
         `Read receipt required before changing ${change.path}; read the file and retry`,
@@ -527,7 +640,7 @@ async function readReceiptProblem(
             action: 'update',
             path: displayPath(relativePath),
             absolutePath,
-            before: '',
+            beforeBytes: Buffer.alloc(0),
             beforeVersion
           }
         ],
@@ -624,7 +737,8 @@ function failure(error: unknown): WorkspaceMutationResult {
 async function snapshot(path: string): Promise<FileSnapshot> {
   try {
     const stat = await fs.stat(path)
-    return { path, existed: true, content: await fs.readFile(path, 'utf8'), mode: stat.mode }
+    // Bytes, not text: a rollback must give back a file that is not UTF-8 unchanged.
+    return { path, existed: true, content: await fs.readFile(path), mode: stat.mode }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { path, existed: false }
     throw error
@@ -635,12 +749,17 @@ async function restoreSnapshots(snapshots: FileSnapshot[]): Promise<void> {
   for (const item of [...snapshots].reverse()) {
     if (item.existed) {
       await fs.mkdir(dirname(item.path), { recursive: true })
-      await fs.writeFile(item.path, item.content ?? '', 'utf8')
+      await fs.writeFile(item.path, item.content ?? Buffer.alloc(0))
       if (item.mode !== undefined) await fs.chmod(item.path, item.mode)
     } else {
       await fs.rm(item.path, { force: true })
     }
   }
+}
+
+async function hasBytes(path: string, expected: Buffer | undefined): Promise<boolean> {
+  const file = await readOptional(path)
+  return file !== undefined && expected !== undefined && file.bytes.equals(expected)
 }
 
 async function verifyChange(change: PlannedChange): Promise<void> {
@@ -651,15 +770,19 @@ async function verifyChange(change: PlannedChange): Promise<void> {
     return
   }
   if (change.action === 'move') {
-    if ((await readOptional(change.absolutePath)) !== undefined) {
+    const destination = change.absoluteMovePath!
+    const sourceGone = change.renameInPlace
+      ? (await fs.readdir(dirname(destination))).includes(basename(destination))
+      : (await readOptional(change.absolutePath)) === undefined
+    if (!sourceGone) {
       throw new Error(`Verification failed: move source still exists: ${change.path}`)
     }
-    if ((await readOptional(change.absoluteMovePath!)) !== change.after) {
+    if (!(await hasBytes(destination, change.afterBytes))) {
       throw new Error(`Verification failed: move destination content differs: ${change.movePath}`)
     }
     return
   }
-  if ((await readOptional(change.absolutePath)) !== change.after) {
+  if (!(await hasBytes(change.absolutePath, change.afterBytes))) {
     throw new Error(`Verification failed: written content differs for ${change.path}`)
   }
 }
@@ -674,15 +797,23 @@ async function applyPlan(changes: PlannedChange[]): Promise<void> {
   const snapshotsByPath = new Map(snapshots.map((item) => [item.path, item]))
   for (const change of changes) {
     const source = snapshotsByPath.get(change.absolutePath)!
-    if (source.content !== change.before) {
+    const unchanged = source.content
+      ? change.beforeBytes?.equals(source.content) === true
+      : change.beforeBytes === undefined
+    if (!unchanged) {
       throw new Error(`Mutation became stale before commit: ${change.path}; re-read the file`)
     }
-    if (change.absoluteMovePath && snapshotsByPath.get(change.absoluteMovePath)?.existed) {
+    if (
+      change.absoluteMovePath &&
+      !change.renameInPlace &&
+      snapshotsByPath.get(change.absoluteMovePath)?.existed
+    ) {
       throw new Error(`Mutation became stale before commit: ${change.movePath} now exists`)
     }
   }
   const createdDirectories = new Set<string>()
   const modifiedPaths = new Set<string>()
+  const renamed: PlannedChange[] = []
   const ensureParent = async (path: string): Promise<void> => {
     const missing: string[] = []
     let current = dirname(path)
@@ -706,13 +837,18 @@ async function applyPlan(changes: PlannedChange[]): Promise<void> {
       if (change.action === 'delete') {
         modifiedPaths.add(change.absolutePath)
         await fs.unlink(change.absolutePath)
+      } else if (change.renameInPlace) {
+        modifiedPaths.add(change.absolutePath)
+        await fs.writeFile(change.absolutePath, change.afterBytes!)
+        await fs.rename(change.absolutePath, change.absoluteMovePath!)
+        renamed.push(change)
       } else if (change.action === 'move') {
         await ensureParent(change.absoluteMovePath!)
         const source = await fs.stat(change.absolutePath)
         const destination = await fs.open(change.absoluteMovePath!, 'wx', source.mode & 0o777)
         modifiedPaths.add(change.absoluteMovePath!)
         try {
-          await destination.writeFile(change.after!, 'utf8')
+          await destination.writeFile(change.afterBytes!)
           await destination.sync()
         } finally {
           await destination.close()
@@ -724,7 +860,7 @@ async function applyPlan(changes: PlannedChange[]): Promise<void> {
         const file = await fs.open(change.absolutePath, 'wx')
         modifiedPaths.add(change.absolutePath)
         try {
-          await file.writeFile(change.after!, 'utf8')
+          await file.writeFile(change.afterBytes!)
           await file.sync()
         } finally {
           await file.close()
@@ -732,12 +868,15 @@ async function applyPlan(changes: PlannedChange[]): Promise<void> {
       } else {
         await ensureParent(change.absolutePath)
         modifiedPaths.add(change.absolutePath)
-        await fs.writeFile(change.absolutePath, change.after!, 'utf8')
+        await fs.writeFile(change.absolutePath, change.afterBytes!)
       }
     }
     for (const change of changes) await verifyChange(change)
   } catch (error) {
     try {
+      for (const change of renamed.reverse()) {
+        await fs.rename(change.absoluteMovePath!, change.absolutePath)
+      }
       await restoreSnapshots(snapshots.filter((item) => modifiedPaths.has(item.path)))
       for (const directory of [...createdDirectories].sort((a, b) => b.length - a.length)) {
         try {

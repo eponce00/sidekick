@@ -98,9 +98,17 @@ punctuation (curly quotes, dashes, non-breaking spaces), invisible marks such as
 selectors, or read-tool `N: ` line prefixes (`src/main/utils/tolerantMatch.ts`). Such a match must
 still be unique, and text the model did not change is written back from the file, so a copy typed
 with ASCII quotes never rewrites the file's typography. Each line keeps its own ending, so a mixed
-CRLF/LF file is not converted, and `write` keeps the line endings of the file it replaces. A miss
-reports the closest current lines with their line numbers. Paths may be project-relative, `./`
-prefixed, or absolute inside the project; all spellings share one read receipt. `AgentToolRuntime` requires
+CRLF/LF file is not converted, and `write` keeps the line endings of the file it replaces. The
+read tool and the mutation service decode files the same way (`src/main/utils/workspaceText.ts`):
+UTF-8, or UTF-16LE when a byte order mark says so. A byte order mark and lone-CR line breaks are
+not part of the text and are restored on every write, so `read`, `edit` and `apply_patch` see the
+same lines. A file that is not valid text in its encoding is refused by text edits instead of
+being rewritten with replacement characters; `write` and delete may still replace or remove it. A
+miss or ambiguous hunk is input for the model to correct, not a stale read; the closest current
+lines are reported with their line numbers. Paths may be project-relative, `./` prefixed, contain
+`..`, or be absolute inside the project; all spellings, and on Windows and macOS every letter case,
+share one read receipt, and a rename that changes only letter case renames the file in place.
+`AgentToolRuntime` requires
 a version receipt for every existing target, from a read or write earlier in the same chat and
 project (the latest 50 chats are kept), and a file whose content changed since is stale, the kernel resolves permission policy, and the
 transactional mutation service commits only after validating the complete plan. Model results
@@ -109,7 +117,9 @@ streams and only shows success after `ok` and `changed` are both true.
 
 The same canonical path resolver protects reads, searches, shell-open actions, direct mutations,
 and attachment imports between chats. It rejects lexical traversal and symlink escapes; mutation paths
-also reject internal symlink aliases so snapshots and rollback always refer to one concrete file.
+also reject internal symlink aliases and files with more than one hard link, so snapshots and
+rollback always refer to one concrete file in the project. Snapshots hold bytes, so a rollback
+restores a file that is not text exactly.
 Recursive search and listing never follow symlink entries.
 
 Each configured model exposes exactly one editing contract. Automatic selection uses the upstream
