@@ -15,8 +15,13 @@ test('restricts Vitest discovery to owned source tests, never generated or priva
     root
   )
   assert.ok(loaded, 'Vitest must have an explicit discovery configuration')
-  const include = loaded.config.test.include
+  const projects = loaded.config.test.projects
+  const include = projects.find(({ test }) => test.name === 'unit').test.include
   assert.deepEqual(include, ['src/**/*.{test,spec}.?(c|m)[jt]s?(x)'])
+  // The other projects name files of their own, all inside the same boundary.
+  for (const { test } of projects) {
+    for (const pattern of test.include) assert.ok(pattern.startsWith('src/'), pattern)
+  }
   const matches = require('picomatch')(include)
   for (const owned of [
     'src/main/services/agentRunRecovery.test.ts',
