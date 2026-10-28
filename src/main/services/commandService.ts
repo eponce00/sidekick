@@ -420,11 +420,15 @@ export class CommandService {
       : result
     if (result.terminal) {
       const text = ((await this.terminals.lines(id)) ?? []).join('\n')
-      const truncated = text.length > MAX_RENDERED_OUTPUT
+      const cut = text.length > MAX_RENDERED_OUTPUT
+      // The raw stream's size says nothing here: a repainted progress bar is long and complete,
+      // while the terminal's history keeps only its last lines of a long output.
+      const truncated = cut || this.terminals.droppedLines(id)
       completed = {
         ...completed,
-        stdout: truncated ? text.slice(-MAX_RENDERED_OUTPUT) : text,
-        truncated: completed.truncated || truncated
+        stdout: cut ? text.slice(-MAX_RENDERED_OUTPUT) : text,
+        truncated,
+        outputPath: truncated ? this.outputPath(id) : undefined
       }
     }
     return completed
@@ -608,7 +612,9 @@ export class CommandService {
 
   /** Types into a running command, as at its terminal. */
   write(id: string, data: string): boolean {
-    return this.runner.write(id, data)
+    const written = this.runner.write(id, data)
+    if (written) this.terminals.inputSent(id)
+    return written
   }
 
   cancelRun(runId: string): void {

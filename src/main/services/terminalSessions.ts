@@ -44,6 +44,8 @@ interface SessionRecord {
   /** Live until the command ends, then replaced by its final lines. */
   screen?: TerminalScreen
   finalLines?: string[]
+  /** Whether the start of the output scrolled out of the terminal's history. */
+  droppedLines?: boolean
   /** Rendered lines the agent has already read. */
   agentReadLines: number
   tailTimer?: NodeJS.Timeout
@@ -118,6 +120,15 @@ export class TerminalSessionStore {
     this.watchForPrompt(record)
   }
 
+  /**
+   * Input reached the command, so the question it showed is answered. Left waiting until the
+   * program printed again, a wait after the answer returned at once.
+   */
+  inputSent(id: string): void {
+    const record = this.sessions.get(id)
+    if (record?.summary.state === 'waiting_for_input') this.setState(record, 'running')
+  }
+
   /** Marks a foreground command as running on after its tool call returned. */
   moveToBackground(id: string): void {
     const record = this.sessions.get(id)
@@ -140,6 +151,7 @@ export class TerminalSessionStore {
     if (record.screen) {
       await record.screen.settled()
       record.finalLines = record.screen.lines()
+      record.droppedLines = record.screen.droppedLines
       record.screen.dispose()
       record.screen = undefined
     }
@@ -186,10 +198,12 @@ export class TerminalSessionStore {
     return record.finalLines ?? record.screen?.lines() ?? []
   }
 
-  /**
-   * What the agent reads of a command: by default what it printed since the agent last looked,
-   * or its latest lines, optionally only those matching a pattern.
-   */
+  /** Whether the lines no longer start where the output did. */
+  droppedLines(id: string): boolean {
+    const record = this.sessions.get(id)
+    return Boolean(record?.droppedLines ?? record?.screen?.droppedLines)
+  }
+
   /** Lines the agent has not read yet, without marking them read. */
   async unreadLines(id: string): Promise<string[]> {
     const record = this.sessions.get(id)
@@ -198,6 +212,10 @@ export class TerminalSessionStore {
     return all.slice(record.agentReadLines > all.length ? 0 : record.agentReadLines)
   }
 
+  /**
+   * What the agent reads of a command: by default what it printed since the agent last looked,
+   * or its latest lines, optionally only those matching a pattern.
+   */
   async readForModel(
     id: string,
     options: { mode?: 'new' | 'tail'; maxLines?: number; pattern?: RegExp } = {}
