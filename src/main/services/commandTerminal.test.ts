@@ -73,6 +73,21 @@ describe('TerminalScreen', () => {
     screen.dispose()
   })
 
+  it('takes many small writes quickly, and says when the start scrolled away', async () => {
+    // Each write waited for a timer tick, so a terminal's line-at-a-time output took minutes.
+    const screen = new TerminalScreen({ newlineIsLineBreak: true })
+    const startedAt = Date.now()
+    for (let line = 0; line < 3_000; line++) void screen.write(`line ${line}\n`)
+    await screen.settled()
+    expect(Date.now() - startedAt).toBeLessThan(1_500)
+    expect(screen.droppedLines).toBe(false)
+    for (let line = 3_000; line < 6_000; line++) void screen.write(`line ${line}\n`)
+    await screen.settled()
+    expect(screen.droppedLines).toBe(true)
+    expect(screen.lines().at(-1)).toBe('line 5999')
+    screen.dispose()
+  })
+
   it('tells a question from output that paused mid-line', () => {
     for (const line of ['Ok to proceed? (y)', 'Password:', '>>>', 'Overwrite [Y/n]', 'Press Enter'])
       expect(looksLikePrompt(line)).toBe(true)
@@ -155,6 +170,8 @@ describe.each([false, true])('CommandService in a terminal: %s', (terminal) => {
 
     const session = service.terminals.get(result.id)!
     expect(service.write(result.id, session.pty ? 'y\r' : 'y\n')).toBe(true)
+    // Answered, it is no longer waiting, even before it prints again.
+    expect(service.terminals.get(result.id)?.state).toBe('running')
     const task = await until(() =>
       service.listBackground({ conversationId: 'chat' }).find((item) => item.status !== 'running')
     )
