@@ -100,9 +100,9 @@ describe('commandOutputForModel', () => {
     const shown = bounded.content.split('\n[…')[0]
     const lastShown = Number(/block (\d{5})/.exec(shown.split('\n').at(-1) ?? '')?.[1])
     const rest = await outputs.read(handle, offset, 1_024)
-    expect(rest.content.startsWith(`200 RETR block ${String(lastShown + 1).padStart(5, '0')}`)).toBe(
-      true
-    )
+    expect(
+      rest.content.startsWith(`200 RETR block ${String(lastShown + 1).padStart(5, '0')}`)
+    ).toBe(true)
   })
 
   it('does not call output complete when SideKick kept only part of what was printed', async () => {
@@ -118,5 +118,18 @@ describe('commandOutputForModel', () => {
       'The command printed more than 256 KB; SideKick kept only the first 256 KB.'
     )
     expect(bounded.content).not.toContain("The command's own output was complete")
+    // A terminal keeps only its last lines; the agent is told where all of it is.
+    const terminal = await commandOutputForModel(outputs, {
+      success: true,
+      exitCode: 0,
+      stdout: 'line 94999\nline 95000',
+      stderr: '',
+      terminal: true,
+      truncated: true,
+      outputPath: 'C:\\SideKick\\command-outputs\\task.log'
+    })
+    expect(terminal.content).toContain(
+      'SideKick kept only its last lines. All of it is in C:\\SideKick\\command-outputs\\task.log;'
+    )
   })
 })

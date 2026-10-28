@@ -133,28 +133,25 @@ export function loadPty(): Promise<PtyModule | null> {
 }
 
 /**
- * The PowerShell wrapper that turns the command's outcome into the process exit code. It saves
- * the code for the launcher, which sets it with SetShouldExit: `exit` quit before PowerShell drew
- * buffered tables, so `Select-Object` or a parsed JSON object printed nothing. Invoke-WebRequest
- * without -UseBasicParsing stops at a security prompt in Windows PowerShell.
+ * The command, then the lines that turn its outcome into the process exit code. It saves the code
+ * for the launcher, which sets it with SetShouldExit: `exit` quit before PowerShell drew buffered
+ * tables, so `Select-Object` or a parsed JSON object printed nothing. The command comes first so
+ * the line and column PowerShell gives for an error are the command's own.
+ *
+ * A native program's stderr redirected with `2>&1` is an error record in Windows PowerShell, which
+ * sets `$?` false; when such a record is the last error, the program's exit code decides.
  */
 function windowsScript(command: string): string {
-  return `& {
-      $PSDefaultParameterValues['Invoke-WebRequest:UseBasicParsing'] = $true
-      $global:LASTEXITCODE = $null
-      # Stays 1 if the command ends the block early with an error.
-      $global:SideKickExitCode = 1
-      ${command}
-      $sidekickSucceeded = $?
-      $sidekickExitCode = $global:LASTEXITCODE
-      $global:SideKickExitCode = if ($null -ne $sidekickExitCode -and $sidekickExitCode -ne 0) {
-        [int]$sidekickExitCode
-      } elseif (-not $sidekickSucceeded) {
-        1
-      } else {
-        0
-      }
-    }`
+  return `${command}
+$sidekickSucceeded = $?
+$sidekickExitCode = $global:LASTEXITCODE
+$global:SideKickExitCode = if ($null -ne $sidekickExitCode -and $sidekickExitCode -ne 0) {
+  [int]$sidekickExitCode
+} elseif ($sidekickSucceeded -or ($null -ne $sidekickExitCode -and $Error.Count -gt 0 -and $Error[0].FullyQualifiedErrorId -eq 'NativeCommandError')) {
+  0
+} else {
+  1
+}`
 }
 
 /**
@@ -165,12 +162,21 @@ function windowsScript(command: string): string {
  * do -ExecutionPolicy Bypass, so the file is read into a script block instead of run with -File.
  * Windows PowerShell's `curl` and `wget` are aliases of Invoke-WebRequest, which takes none of
  * curl's arguments; models mean curl.exe. The aliases are in every scope, so only removing them
- * here, before the script block, reaches the command.
+ * here, before the script block, reaches the command. Invoke-WebRequest without -UseBasicParsing
+ * stops at a security prompt in Windows PowerShell.
+ *
+ * Write-Error names the script block that called it, which printed the whole wrapper with every
+ * error; called through a proxy function, it names itself and points at the command's line. The
+ * proxy takes a moment to build, and only a call written in the command itself names the wrapper.
+ *
+ * Over pipes, Windows PowerShell writes and reads in the console's OEM code page, which turned
+ * "é" and emoji into replacement characters; Python writes the ANSI code page to a pipe, or fails
+ * on characters it lacks. A terminal shows its own text, so there both are left as they are.
  */
 function windowsScriptLaunch(
   outputPath: string,
   command: string,
-  reportExitCodeOnStderr: boolean
+  pipes: boolean
 ): { args: string[]; scriptPath: string } {
   const scriptPath = `${outputPath}.ps1`
   writeFileSync(scriptPath, windowsScript(command), 'utf8')
@@ -180,8 +186,18 @@ function windowsScriptLaunch(
     args: [
       '-Command',
       'Remove-Item Alias:curl, Alias:wget -Force -ErrorAction SilentlyContinue; ' +
+        (pipes
+          ? 'try { [Console]::OutputEncoding = $OutputEncoding = [Text.UTF8Encoding]::new($false) } catch {}; ' +
+            "if (-not $env:PYTHONIOENCODING) { $env:PYTHONIOENCODING = 'utf-8' }; "
+          : '') +
+        "$PSDefaultParameterValues['Invoke-WebRequest:UseBasicParsing'] = $true; " +
+        (/write-error/i.test(command)
+          ? 'Set-Item function:Write-Error ([ScriptBlock]::Create([Management.Automation.ProxyCommand]::Create([Management.Automation.CommandMetadata]::new((Get-Command Microsoft.PowerShell.Utility\\Write-Error))))); '
+          : '') +
+        // Stays 1 if the command ends the script block early with an error.
+        '$global:LASTEXITCODE = $null; $global:SideKickExitCode = 1; ' +
         `& ([ScriptBlock]::Create([IO.File]::ReadAllText('${literal}', [Text.Encoding]::UTF8))); ` +
-        (reportExitCodeOnStderr
+        (pipes
           ? `[Console]::Error.WriteLine('${WINDOWS_EXIT_MARKER}' + [int]$global:SideKickExitCode); `
           : '') +
         '$host.SetShouldExit([int]$global:SideKickExitCode)'
