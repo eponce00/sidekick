@@ -3,6 +3,7 @@ import { promises as fs } from 'fs'
 import { basename, resolve } from 'path'
 import { getDb } from './state'
 import { ProjectStore } from '../services/projectStore'
+import { assertPickedFolder } from './workspaceUtils'
 import type { MoveConversationInput } from '../../shared/projects'
 
 async function normalizeProjectFolder(folderPath: string): Promise<string> {
@@ -17,7 +18,9 @@ export function registerProjectHandlers(): void {
 
   ipcMain.handle('projects:list', async () => store.list())
 
+  // A project folder becomes a trusted workspace, so only one the user picked can become one.
   ipcMain.handle('projects:create', async (_, folderPath: string, name?: string) => {
+    assertPickedFolder(folderPath)
     const normalizedPath = await normalizeProjectFolder(folderPath)
     return store.create(normalizedPath, name?.trim() || basename(normalizedPath) || normalizedPath)
   })

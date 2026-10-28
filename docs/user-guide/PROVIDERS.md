@@ -31,7 +31,9 @@ credential or the resolved endpoint for a normal model request.
 Provider-instance credentials are encrypted with Electron `safeStorage`. Settings exposed to the
 renderer contain only `apiKeyConfigured`; a newly typed replacement key crosses the settings bridge
 once and is removed from renderer state after the save completes. The main runtime resolves and
-decrypts the matching secret immediately before a provider request.
+decrypts the matching secret immediately before a provider request. A saved key is only sent to the
+base URL it was saved with: after changing a provider's base URL in Settings, enter its key again
+to test or save it there.
 
 Saving a new or replacement credential requires an available OS-protected
 keychain/password manager. SideKick refuses to save it if that service is locked

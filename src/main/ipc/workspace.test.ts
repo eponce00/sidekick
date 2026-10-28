@@ -90,6 +90,8 @@ vi.mock('./state', () => ({
 vi.mock('./workspaceUtils', () => ({
   getStoredWorkspace: () => workspaceState.root,
   resolveKnownWorkspace: (passedRoot?: string) => passedRoot || workspaceState.root,
+  rememberPickedFolder: vi.fn(),
+  setStoredWorkspace: vi.fn(),
   assertInsideWorkspace: (target: string, root: string) => {
     const rel = relative(root, target)
     if (rel.startsWith('..')) throw new Error('Path escapes workspace')

@@ -6,6 +6,7 @@ import {
 import type { ProviderInstance, ProviderSettings } from '../../shared/settings'
 import type { ProviderTarget } from '../../shared/providerRuntime'
 import { ProviderSetupError } from '../../shared/providerErrors'
+import { sameProviderBaseUrl } from '../../shared/providerInstances'
 import { loadStoredSettings } from '../ipc/settings'
 
 function settings(): ProviderSettings {
@@ -32,7 +33,14 @@ function assertEndpoint(value: string): string {
 function withPersistedSecret(draft: ProviderInstance, current: ProviderSettings): ProviderInstance {
   if (draft.apiKey?.trim() || !draft.apiKeyConfigured) return draft
   const stored = current.providerInstances?.find((instance) => instance.id === draft.id)
-  return stored?.apiKey ? { ...draft, apiKey: stored.apiKey } : draft
+  if (!stored?.apiKey) return draft
+  // A saved key goes only to the address it was saved with.
+  if (!sameProviderBaseUrl(stored.baseUrl, draft.baseUrl)) {
+    throw new ProviderSetupError(
+      `Enter the API key for ${draft.name} again to use it with a different base URL`
+    )
+  }
+  return { ...draft, apiKey: stored.apiKey }
 }
 
 export function assertProviderModelAllowed(instance: ProviderInstance, model: string): void {

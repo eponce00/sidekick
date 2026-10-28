@@ -120,7 +120,7 @@ so the agent can find them.
 Stored credentials are taken out of a result and an error before they are quoted, so escaping
 cannot hide a value. The result then passes through the tool output bounds and the credential
 redaction that apply to all tool results, which also matches the JSON forms other writers produce:
-`<`, `>` and `&` as `\u` escapes, non-ASCII escaped, and JSON quoted inside JSON.
+`<`, `>` and `&` as `\u` escapes, non-ASCII escaped, `/` escaped, and JSON quoted inside JSON.
 
 ## Browser panel
 

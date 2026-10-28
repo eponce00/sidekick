@@ -338,6 +338,28 @@ describe('provider secret persistence', () => {
     })
   })
 
+  it('keeps a saved key only while the provider keeps the base URL it was saved with', () => {
+    const existing = {
+      providerInstances: [{ id: 'private', baseUrl: 'https://provider.test/v1' }],
+      __encryptedProviderSecrets: { private: encoded('existing-key') }
+    }
+    const save = (instance: Record<string, unknown>) =>
+      (
+        protectSettings(
+          { providerInstances: [{ id: 'private', ...instance }] },
+          existing
+        ) as Record<string, unknown>
+      ).__encryptedProviderSecrets
+
+    expect(save({ baseUrl: 'https://provider.test/v1/' })).toEqual({
+      private: encoded('existing-key')
+    })
+    expect(save({ baseUrl: 'https://elsewhere.test/v1' })).toEqual({})
+    expect(save({ baseUrl: 'https://elsewhere.test/v1', apiKey: 'new-key' })).toEqual({
+      private: encoded('new-key')
+    })
+  })
+
   it('replaces, explicitly clears, and removes provider secrets', () => {
     const existing = {
       __encryptedProviderSecrets: {
