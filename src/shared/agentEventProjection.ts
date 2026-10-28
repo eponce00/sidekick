@@ -56,6 +56,8 @@ export type ProjectedContentSegment =
         originalTokens: number
         newTokens: number
         messagesCompacted: number
+        /** Tool results shortened instead of summarizing history; set only for that strategy. */
+        resultsCut?: number
         /** Window the budget used; absent on older events. */
         contextLength?: number
         /** False when the provider never reported a limit and a default was assumed. */
@@ -660,6 +662,9 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
           originalTokens: Number(event.payload.originalTokens || 0),
           newTokens: Number(event.payload.summaryTokens || 0),
           messagesCompacted: Number(event.payload.messagesCompacted || 0),
+          ...(event.payload.strategy === 'cut_tool_results'
+            ? { resultsCut: Number(event.payload.resultsCut || 0) }
+            : {}),
           ...(Number(event.payload.contextLength) > 0
             ? { contextLength: Number(event.payload.contextLength) }
             : {}),

@@ -432,6 +432,21 @@ describe('argument names from other harnesses', () => {
     })
   })
 
+  it('takes ask_user options written as plain labels', () => {
+    // "options[0] must be object" lost the model a round.
+    const askUser = getAgentToolEntry({ surface: 'conversation' }, 'ask_user')!.definition
+    const normalized = normalizeAgentToolArguments(askUser, {
+      questions: [{ question: 'Which theme?', options: ['Light', { label: 'Dark' }] }]
+    })
+    expect(normalized).toEqual({
+      arguments: {
+        questions: [{ question: 'Which theme?', options: [{ label: 'Light' }, { label: 'Dark' }] }]
+      },
+      repairs: ['questions[0].options[0]: text → label']
+    })
+    expect(validateAgentToolArguments(askUser, normalized.arguments)).toEqual([])
+  })
+
   it('does not choose between two spellings of one argument', () => {
     const normalized = normalizeAgentToolArguments(read, { file_path: 'a.ts', filePath: 'b.ts' })
     expect(normalized).toEqual({ arguments: { file_path: 'a.ts', filePath: 'b.ts' }, repairs: [] })

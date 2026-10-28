@@ -515,6 +515,18 @@ export class AgentToolRuntime {
     return receipts
   }
 
+  /**
+   * Drops what a chat's replies read or wrote. A rewind, retry or edit takes those replies out of
+   * the history, so the next reply must read a file again before changing it even when the file's
+   * content is unchanged.
+   */
+  forgetConversation(conversationId: string): void {
+    const prefix = `${conversationId}|`
+    for (const key of [...this.conversationReceipts.keys()]) {
+      if (key.startsWith(prefix)) this.conversationReceipts.delete(key)
+    }
+  }
+
   async createSession(input: AgentToolRuntimeSessionInput): Promise<AgentToolRuntimeSession> {
     const activeSkillIds = new Set(input.persistentSkillIds ?? [])
     const officeSession = this.officeHelpers?.session(input.workspaceRoot)

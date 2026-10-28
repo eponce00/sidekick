@@ -125,6 +125,8 @@ describe('AgentContextManager', () => {
 
     expect(result.compacted).toBe(true)
     expect(complete).not.toHaveBeenCalled()
+    // Nothing was summarized or recorded, so it is not counted as a summary.
+    expect(result.details).not.toHaveProperty('count')
     expect(estimateProviderRequestTokens(result.messages, [])).toBeLessThan(24_576 - 4_096)
     const results = result.messages.filter((message) => message.role === 'tool')
     expect(results.map((message) => message.tool_call_id)).toEqual(reads)

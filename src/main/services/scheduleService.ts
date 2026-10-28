@@ -426,28 +426,41 @@ export class ScheduleService {
       let conversationId: string
       let note: string | undefined
       let runNumber: number
-      if (continued && this.launcher.appendPrompt) {
-        runNumber = this.store.claimRunNumber(schedule.id, now)
-        conversationId = continued
-        this.launcher.appendPrompt(schedule, conversationId)
-      } else {
-        const placement = this.launcher.placeRun
-          ? await this.launcher.placeRun(schedule)
-          : { projectId: schedule.projectId }
-        if ('skip' in placement) return skip(placement.skip)
-        runNumber = this.store.claimRunNumber(schedule.id, now)
-        try {
-          conversationId = this.launcher.createConversation(
-            schedule,
-            runNumber,
-            placement.projectId,
-            placement.worktreeId ?? null
-          )
-        } catch (error) {
-          await placement.discard?.().catch(() => undefined)
-          throw error
+      try {
+        if (continued && this.launcher.appendPrompt) {
+          runNumber = this.store.claimRunNumber(schedule.id, now)
+          conversationId = continued
+          this.launcher.appendPrompt(schedule, conversationId)
+        } else {
+          const placement = this.launcher.placeRun
+            ? await this.launcher.placeRun(schedule)
+            : { projectId: schedule.projectId }
+          if ('skip' in placement) return skip(placement.skip)
+          runNumber = this.store.claimRunNumber(schedule.id, now)
+          try {
+            conversationId = this.launcher.createConversation(
+              schedule,
+              runNumber,
+              placement.projectId,
+              placement.worktreeId ?? null
+            )
+          } catch (error) {
+            await placement.discard?.().catch(() => undefined)
+            throw error
+          }
+          note = placement.note
         }
-        note = placement.note
+      } catch (error) {
+        // No chat holds the run yet to say why, and a due run's failure reached no one: the
+        // schedule's history records it.
+        console.error('[Schedules] A run could not start:', error)
+        const message = error instanceof Error ? error.message : String(error)
+        const run = this.store.recordRun(
+          { ...base, outcome: 'failed', reason: `Could not start: ${message}` },
+          now
+        )
+        this.changed()
+        return run
       }
       const agentRunId = randomUUID()
       const reason = [occurrence.reason, freshReason, note].filter(Boolean).join(' ')

@@ -198,6 +198,42 @@ describe('useConversationActions', () => {
       expect(rewindToBeforeCheckpoint).toHaveBeenCalledTimes(restoreFiles ? 1 : 0)
     }
   )
+
+  it('keeps the messages and starts no reply when the files could not be restored', async () => {
+    // A retry deleted the reply and answered again over the files it had changed.
+    await act(async () => root.unmount())
+    rewindToBeforeCheckpoint.mockResolvedValueOnce({ ok: false, error: 'History is busy' } as never)
+    function RetryHarness(): null {
+      const [messages, setMessages] = useState<Message[]>([
+        researchRequest,
+        { ...researchResponse, checkpointHash: 'abcdef123456', checkpointWorkspaceRoot: 'C:\\p' }
+      ])
+      const value = useConversationActions({
+        messages,
+        setMessages,
+        conversationId: 'conversation-1',
+        selectedModel: 'model-1',
+        workspaceFolder: 'C:\\p',
+        rerunStream
+      })
+      useEffect(() => {
+        controller = value
+      }, [value])
+      useEffect(() => {
+        latestMessages = messages
+      }, [messages])
+      return null
+    }
+    root = createRoot(container)
+    await act(async () => root.render(<RetryHarness />))
+
+    act(() => controller.retryMessage(researchResponse))
+
+    await vi.waitFor(() => expect(latestMessages.at(-1)?.content).toContain('History is busy'))
+    expect(latestMessages).toHaveLength(3)
+    expect(deleteMessagesAfter).not.toHaveBeenCalled()
+    expect(rerunStream).not.toHaveBeenCalled()
+  })
 })
 
 describe('useConversationActions with a persistent goal', () => {

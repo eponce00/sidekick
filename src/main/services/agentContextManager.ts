@@ -474,7 +474,8 @@ export class AgentContextManager implements AgentKernelContextManager {
     const latest = fitToolResults(conversation.slice(split), room)
     const recent = latest.messages
     if (latest.cut && estimateConversationTokens(compactedMessages) < SMALL_HISTORY_TOKENS) {
-      this.compactionCount++
+      // Nothing is summarized, so nothing is recorded for the chat and `count` stays the number
+      // of summaries; the consecutive limit still applies, so cutting cannot loop.
       this.compactionsSinceSuccessfulSample++
       return {
         messages: [...system, ...projectInstructions, ...compactedMessages, ...recent],
@@ -483,8 +484,7 @@ export class AgentContextManager implements AgentKernelContextManager {
           strategy: 'cut_tool_results',
           resultsCut: latest.cut,
           originalTokens: latest.beforeTokens,
-          summaryTokens: latest.afterTokens,
-          count: this.compactionCount
+          summaryTokens: latest.afterTokens
         }
       }
     }

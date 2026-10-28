@@ -309,8 +309,10 @@ function CompactionSummarySegment({
       <summary>
         <AlignLeft className="summary-icon" size={12} aria-hidden="true" />
         <span className="summary-text">
-          Context compacted · {summary.messagesCompacted.toLocaleString()} messages · {savedPercent}
-          % saved
+          {summary.resultsCut !== undefined
+            ? `Context fitted · ${summary.resultsCut.toLocaleString()} tool ${summary.resultsCut === 1 ? 'result' : 'results'} shortened`
+            : `Context compacted · ${summary.messagesCompacted.toLocaleString()} messages`}{' '}
+          · {savedPercent}% saved
           {windowLabel && (
             <span
               className={`summary-window${assumedWindow ? ' is-assumed' : ''}`}

@@ -24,7 +24,8 @@ its timer, and the run; the renderer only edits schedules and shows them. User b
 
 Times are wall-clock times in the computer's time zone, built from local date parts, so a daily
 run keeps its time across daylight-saving changes. A time skipped by a spring-forward change runs
-at the time JavaScript shifts it to; a time repeated by a fall-back change runs once.
+at the time JavaScript shifts it to; a time repeated by a fall-back change runs once. An hourly
+run is found minute by minute in real time, so it also runs in the hour a fall-back repeats.
 
 The service keeps one timer, set for the earliest due schedule and never longer than a minute,
 and also checks on `powerMonitor` resume and unlock. Each pass compares stored due times with the
@@ -77,7 +78,8 @@ its approvals because the user, not the schedule, decides what an agent may do.
 A schedule whose model is no longer enabled, or whose project was removed, pauses itself with a
 reason rather than running with a fallback. A run whose start fails for another reason, such as an
 unreachable provider, is recorded as failed, leaves an error notice in its chat, and keeps the
-schedule's next time.
+schedule's next time. One that fails before its chat exists, such as a worktree that could not be
+created, is recorded as failed with the reason and logged.
 
 ## Agent tools
 

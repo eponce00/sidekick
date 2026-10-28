@@ -21,6 +21,7 @@ import { setupCreatedWorktree } from './worktreeSetup'
 import { getManagedWorktrees } from './worktrees'
 import type { ManagedWorktreeSummary } from '../../shared/worktrees'
 import { refreshSessionStatuses, sessionStatusService } from './sessionStatus'
+import { existingAgentRuntimeCoordinator } from './agentRuns'
 import { isConversationModelId } from '../services/conversationModelStore'
 import { createConversation } from '../services/conversationCreation'
 import { deleteConversation, setConversationPinned } from '../services/conversationActions'
@@ -631,6 +632,7 @@ export function registerDatabaseHandlers(): void {
       const stmt = db.prepare('DELETE FROM messages WHERE conversation_id = ? AND timestamp > ?')
       stmt.run(conversationId, timestamp)
       compactions.invalidateAfterTimestamp(conversationId, timestamp)
+      existingAgentRuntimeCoordinator()?.tools.forgetConversation(conversationId)
 
       const updateStmt = db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
       updateStmt.run(Date.now(), conversationId)

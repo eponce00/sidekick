@@ -15,6 +15,8 @@ import {
   type StartAgentKernelRunInput
 } from './agentRunKernel'
 import { AgentRunStore } from './agentRunStore'
+import { durableProviderHistory, type MessageRow } from './conversationRunPreparer'
+import { validateProviderTranscript } from '../../shared/providerTranscript'
 import { CommandService } from './commandService'
 import { CredentialUses, credentialApprovalFor, credentialRequestsFor } from './credentialUses'
 import type { CredentialSummary } from '../../shared/credentials'
@@ -124,6 +126,7 @@ describe('AgentRunKernel', () => {
     const result = await kernel.start({
       ...input(router),
       workspaceRoot: '/project',
+      outputMessageId: 'reply-1',
       preloadReads: ['site/index.html', 'site/index.html', 'notes.md']
     })
 
@@ -145,6 +148,16 @@ describe('AgentRunKernel', () => {
         .filter((event) => event.type === 'tool.completed')
         .map((event) => event.payload.name)
     ).toEqual(['read', 'read'])
+    // The next reply's history holds them too: the calls were dropped as results without calls.
+    const history = validateProviderTranscript(
+      durableProviderHistory(
+        db,
+        'thread-1',
+        [{ id: 'reply-1', role: 'agent', content: 'Tightened it.', timestamp: 2 } as MessageRow],
+        { providerKind: 'ollama', model: 'test-model' }
+      )
+    ).messages
+    expect(history.filter((message) => message.role === 'tool')).toHaveLength(2)
   })
 
   it('executes a synchronously approved hook once despite a throwing resolution observer', async () => {

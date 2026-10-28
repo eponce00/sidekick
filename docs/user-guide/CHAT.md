@@ -23,6 +23,8 @@
   model this can take a minute or more, and nothing is written meanwhile. A **Context compacted**
   row marks the point in the reply. A finished summary is kept even if you then stop the reply,
   retry it or edit your message, so the next reply does not summarize the same messages again.
+  When the latest tool results alone outgrow a small window and there is little earlier history,
+  SideKick shortens those results instead, and a **Context fitted** row says how many.
 - **Waiting on you:** a conversation that needs an approval or an answer is marked in the sidebar,
   counted on the taskbar or dock icon and listed in the tray menu, and announced by a notification
   when SideKick is not in front. A failed reply is announced the same way. See
@@ -229,6 +231,11 @@ Git's `.git` folders cannot be moved this way.
   then send: the message and what followed are replaced and SideKick answers again from there, the
   same way a rewind does. **Esc** or **Cancel** puts back what the box held before.
 - **Retry** rewinds to the message and asks again at once.
+- When the files cannot be restored, for example because one was changed since or the restore was
+  not approved, a rewind, retry or edit keeps every message, starts no new reply, and says why in
+  the chat.
+- A reply after a rewind, retry or edit reads a file again before changing it, even one an earlier
+  reply read, since that reply is no longer in the chat.
 
 ## After an interruption
 

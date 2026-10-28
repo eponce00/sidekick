@@ -26,6 +26,21 @@ describe('nextScheduleOccurrence', () => {
     expect(nextScheduleOccurrence(hourly, at(2026, 10, 16, 23, 30))).toBe(at(2026, 10, 17, 0, 15))
   })
 
+  it('runs hourly in the hour repeated when the clocks go back', () => {
+    // Built from wall-clock hours, 1:30 resolved to its first occurrence both times, skipping one.
+    const zone = process.env.TZ
+    process.env.TZ = 'America/New_York'
+    try {
+      const firstOneThirty = Date.UTC(2026, 10, 1, 5, 30)
+      expect(new Date(firstOneThirty).getHours()).toBe(1)
+      const hourly = timing({ cadence: 'hourly', minute: 30 })
+      expect(nextScheduleOccurrence(hourly, firstOneThirty)).toBe(Date.UTC(2026, 10, 1, 6, 30))
+    } finally {
+      if (zone === undefined) delete process.env.TZ
+      else process.env.TZ = zone
+    }
+  })
+
   it('is strictly after the given instant, so a run that just started is not due again', () => {
     const daily = timing({ hour: 9, minute: 0 })
     expect(nextScheduleOccurrence(daily, at(2026, 10, 16, 9, 0))).toBe(at(2026, 10, 17, 9, 0))
