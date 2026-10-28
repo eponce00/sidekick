@@ -154,7 +154,7 @@ export function BrowserMenu({
           )}
           {(['Phone', 'Tablet', 'Laptop', 'Desktop'] as const).map((group) => (
             <div key={group} role="group" aria-label={group}>
-              <div className="app-menu-heading" role="presentation">
+              <div className="app-menu-heading section-heading" role="presentation">
                 {group}
               </div>
               {BROWSER_DEVICE_PRESETS.filter((preset) => preset.group === group).map((preset) =>

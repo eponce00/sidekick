@@ -24,7 +24,9 @@ import {
   Wrench,
   X
 } from 'lucide-react'
+import { useState } from 'react'
 import type { ToolExecution } from '../types/chat.types'
+import { prefersReducedMotion } from '../utils/messageMotion'
 import {
   getCompactToolTitle,
   getToolApprovalLabel,
@@ -93,6 +95,15 @@ function ToolStatusIcon({ status }: { status: ToolExecution['status'] }): React.
   }
 }
 
+/** The failed step's mark, for a folded work block's header to show that a step inside failed. */
+export function FailureMark(): React.JSX.Element {
+  return (
+    <span className="tool-call-state is-failed">
+      <ToolStatusIcon status="error" />
+    </span>
+  )
+}
+
 interface ToolCallRowProps {
   tool: ToolExecution
   onSelect?: () => void
@@ -111,6 +122,16 @@ export default function ToolCallRow({
   const statusLabel = getToolStatusLabel(tool.status)
   const approvalLabel = getToolApprovalLabel(tool)
   const interactive = Boolean(onSelect)
+  // A success mark is shown only to confirm a step that finishes while it is on screen, then it
+  // leaves, so a done step's chevron sits right after its label. Set while rendering, so the mark
+  // is there on the very frame the status turns to success.
+  const [seenStatus, setSeenStatus] = useState(tool.status)
+  const [confirming, setConfirming] = useState(false)
+  if (seenStatus !== tool.status) {
+    setSeenStatus(tool.status)
+    setConfirming(tool.status === 'success' && !prefersReducedMotion())
+  }
+  const showState = tool.status !== 'success' || confirming
   const hoverDetail = [
     compactTitle !== tool.title ? tool.title : '',
     tool.error ?? '',
@@ -144,17 +165,22 @@ export default function ToolCallRow({
           {approvalLabel}
         </span>
       )}
-      <span className="tool-call-state" title={statusLabel} aria-hidden="true">
-        <ToolStatusIcon status={tool.status} />
+      <span className="work-row-marks" aria-hidden="true">
+        {showState && (
+          <span
+            className="tool-call-state"
+            title={statusLabel}
+            onAnimationEnd={(event) => {
+              if (event.animationName === 'tool-call-success-confirm') setConfirming(false)
+            }}
+          >
+            <ToolStatusIcon status={tool.status} />
+          </span>
+        )}
+        {expandable && (
+          <ChevronRight size={12} className={`work-row-chevron${expanded ? ' is-expanded' : ''}`} />
+        )}
       </span>
-      {expandable ? (
-        <span
-          className={`tool-call-chevron ${expanded ? 'tool-call-chevron-expanded' : ''}`}
-          aria-hidden="true"
-        >
-          <ChevronRight size={ICON_SIZE} />
-        </span>
-      ) : null}
     </button>
   )
 }

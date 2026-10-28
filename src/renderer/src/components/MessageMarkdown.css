@@ -470,3 +470,60 @@ img[data-twemoji],
     transition: none;
   }
 }
+
+/* File references render as one chip whether the model wrote the path in prose or in backticks,
+   and only once the file is known to exist; an unresolved mention stays plain text. In running
+   text the chip is inline content on the line's own pitch: no border, a hairline of padding,
+   and nothing taller than the text around it. */
+.message-content :is(code.markdown-inline-file, a.markdown-file-reference) {
+  display: inline;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  /* The sentence's own colour and weight; the grey icon alone marks it as a file. */
+  color: var(--content-color);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  font-weight: 400;
+  line-height: inherit;
+  vertical-align: baseline;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  transition: background var(--duration-fast);
+}
+
+/* Before a full stop or a closing bracket, or after an opening bracket or quote, the chip's
+   padding on that side shrinks, so the mark sits as close as it does beside plain text. */
+.message-content :is(code, a.markdown-file-reference).is-before-punctuation {
+  padding-inline-end: 2px;
+}
+
+.message-content :is(code, a.markdown-file-reference).is-after-opening {
+  padding-inline-start: 2px;
+}
+
+.message-content :is(.markdown-inline-file, .markdown-file-reference) svg {
+  width: 0.9em;
+  height: 0.9em;
+  margin-right: 3px;
+  vertical-align: -0.1em;
+  color: var(--text-muted);
+}
+
+.message-content :is(.markdown-inline-file, .markdown-file-reference):hover {
+  background: var(--surface-3);
+}
+
+.message-content :is(.markdown-inline-file, .markdown-file-reference).is-open-error {
+  color: var(--color-error);
+  background: var(--color-error-subtle);
+}
+
+/* A chip's or link's icon and the first word of its label break as one. */
+.message-content .markdown-icon-lead {
+  white-space: nowrap;
+}

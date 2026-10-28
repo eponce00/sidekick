@@ -24,6 +24,7 @@ import {
 } from '../../../shared/browserLibrary'
 import { useModalDialog } from '../hooks/useModalDialog'
 import { Select } from './Select'
+import { Checkbox } from './SettingsLayout'
 import './BrowserLibrary.css'
 
 /** The main process's own message, without Electron's prefix. */
@@ -396,12 +397,11 @@ export function BrowserImportDialog({
                     const Icon = part === 'bookmarks' ? Bookmark : History
                     return (
                       <label key={part} className="browser-import-part">
-                        <input
-                          type="checkbox"
+                        <Checkbox
                           checked={parts[part]}
                           disabled={busy || !preview || total === 0 || Boolean(problem)}
-                          onChange={(event) =>
-                            setParts((current) => ({ ...current, [part]: event.target.checked }))
+                          onChange={(checked) =>
+                            setParts((current) => ({ ...current, [part]: checked }))
                           }
                         />
                         <Icon size={14} aria-hidden="true" />

@@ -1,7 +1,6 @@
 import { Children, useState, useRef, memo, useMemo } from 'react'
 import {
   AlignLeft,
-  Brain,
   Check,
   ChevronDown,
   ChevronRight,
@@ -13,6 +12,7 @@ import {
   FolderOpen,
   GitFork,
   Info,
+  Lightbulb,
   ListChecks,
   Loader2,
   MessageSquareText,
@@ -31,7 +31,7 @@ import {
 } from '../utils/segmentGrouping'
 import Artifact from './artifacts/Artifact'
 import { artifactSlots } from '../utils/artifactSlots'
-import ToolCallRow from './ToolCallRow'
+import ToolCallRow, { FailureMark } from './ToolCallRow'
 import { ToolExecutionCard } from './ToolExecutionCard'
 import { TurnChangeReview } from './TurnChangeReview'
 import { changedFilesFromSegments } from '../utils/turnChanges'
@@ -236,9 +236,8 @@ function SteerSegment({
   }
   return (
     <div className="steer-segment" role="group" aria-label="Your message, sent while working">
+      {/* Right-aligned like the bubble under it, so the actions lead into the label. */}
       <div className="steer-segment-label">
-        <CornerDownRight size={11} aria-hidden="true" />
-        <span>You, while it worked</span>
         {steer.content && (
           <span className="steer-segment-actions">
             <button
@@ -253,6 +252,8 @@ function SteerSegment({
             <ReadAloudButton messageId={`steer-${steer.id}`} text={steer.content} />
           </span>
         )}
+        <CornerDownRight size={11} aria-hidden="true" />
+        <span>You, while it worked</span>
       </div>
       {steer.content && <div className="steer-segment-content">{steer.content}</div>}
       {Boolean(steer.images?.length) && (
@@ -605,18 +606,18 @@ function ThinkingText({
 }
 
 function thinkingPreview(content: string): string {
-  // Only the opening is shown; normalizing whole reasoning blocks on every
-  // render was measurable across the hundreds in a long run.
+  // Only the opening is shown; normalizing whole reasoning blocks on every render was measurable
+  // across the hundreds in a long run. The row clamps it (--work-thought-max) with its own
+  // ellipsis, so the tooltip, which takes the same text, runs past the visible line.
   const normalized = content.slice(0, 400).replace(/\s+/g, ' ').trim()
-  if (!normalized) return 'Thinking'
-  return normalized.length > 96 ? `${normalized.slice(0, 95).trimEnd()}…` : normalized
+  return normalized || 'Thinking'
 }
 
-/** The composer's reasoning toggle uses the same brain, so the two read as one feature. */
+/** A lightbulb: at 14px the brain's outline read as the web-fetch globe beside it. */
 function ThinkingIcon(): React.JSX.Element {
   return (
     <span className="thinking-step-icon">
-      <Brain size={14} role="img" aria-label="Thinking" />
+      <Lightbulb size={14} role="img" aria-label="Thinking" />
     </span>
   )
 }
@@ -673,6 +674,12 @@ function AgentWorkDisclosure({
   const [showEarlier, setShowEarlier] = useState(false)
 
   const toolCount = segments?.filter((segment) => segment.type === 'tool').length ?? 0
+  // Folded, the header says a step inside failed; opened, the step's own mark says it.
+  const anyFailed =
+    !isLoading &&
+    !expanded &&
+    (segments?.some((segment) => segment.type === 'tool' && segment.tool?.status === 'error') ??
+      false)
   const reasoningCount = segments?.filter((segment) => segment.type === 'thinking').length ?? 0
   const activityLabel = [
     toolCount ? `${toolCount} tool${toolCount === 1 ? '' : 's'}` : '',
@@ -702,9 +709,13 @@ function AgentWorkDisclosure({
         onClick={() => setExpanded((current) => !current)}
         aria-expanded={expanded}
         aria-controls={contentId}
+        aria-label={anyFailed ? `${label}, a step failed` : undefined}
       >
         <span>{label}</span>
-        <ChevronRight size={12} className={expanded ? 'expanded' : ''} aria-hidden="true" />
+        <span className="work-row-marks" aria-hidden="true">
+          {anyFailed && <FailureMark />}
+          <ChevronRight size={12} className={`work-row-chevron${expanded ? ' is-expanded' : ''}`} />
+        </span>
       </button>
       {current && (
         <div
@@ -1041,16 +1052,19 @@ function MessageItemInner({
                               className="actions-toggle thinking-step-toggle"
                               onClick={() => onToggleThinking(thinkingId)}
                               aria-expanded={expandedThinking.has(thinkingId)}
-                              title="Show or hide thinking"
                             >
                               <ThinkingIcon />
-                              <span className="actions-summary">
+                              {/* Clamped to --work-thought-max; the tooltip gives the whole line. */}
+                              <span
+                                className="actions-summary"
+                                title={thinkingPreview(segment.content)}
+                              >
                                 {thinkingPreview(segment.content)}
                               </span>
                               <ChevronRight
-                                size={11}
+                                size={12}
                                 aria-hidden="true"
-                                className={`toggle-icon ${expandedThinking.has(thinkingId) ? 'expanded' : ''}`}
+                                className={`work-row-chevron${expandedThinking.has(thinkingId) ? ' is-expanded' : ''}`}
                               />
                             </button>
                             <Reveal open={expandedThinking.has(thinkingId)}>

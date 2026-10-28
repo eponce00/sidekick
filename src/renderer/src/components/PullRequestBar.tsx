@@ -23,6 +23,7 @@ import {
   type PullRequestSummary
 } from '../../../shared/pullRequests'
 import { usePullRequestStatus } from '../hooks/usePullRequestStatus'
+import { DiffCounts } from './DiffCounts'
 import './PullRequestBar.css'
 
 const CHECK_LABELS: Record<PullRequestChecksSummary, string> = {
@@ -71,46 +72,55 @@ function WorkspacePullRequestBar({
   const pr = status.pullRequest
   if (!pr && !status.createUrl) return null
   const merge = pr ? pullRequestMergeStatus(pr) : null
-  const iconClassName = `pull-request-bar-icon is-${merge?.tone ?? 'neutral'}`
 
   return (
     <section className="pull-request-bar" aria-label="Pull request status">
+      {/* Four groups, 12px apart: the pull request and its state, its lines, its checks, and the
+          branch, which alone gives way when the row is short. */}
       <div className="pull-request-bar-row">
-        <PullRequestIcon pr={pr} className={iconClassName} />
         {pr ? (
           <>
-            <a
-              className="pull-request-bar-number"
-              href={pr.url}
-              target="_blank"
-              rel="noreferrer"
-              title={pr.title}
-              aria-label={`Open pull request #${pr.number} on GitHub: ${pr.title}`}
-            >
-              #{pr.number}
-            </a>
-            <span className={`pull-request-bar-merge is-${merge?.tone}`}>{merge?.label}</span>
+            <span className="pull-request-bar-group">
+              <PullRequestIcon pr={pr} className="pull-request-bar-icon" />
+              <a
+                className="pull-request-bar-number"
+                href={pr.url}
+                target="_blank"
+                rel="noreferrer"
+                title={pr.title}
+                aria-label={`Open pull request #${pr.number} on GitHub: ${pr.title}`}
+              >
+                #{pr.number}
+              </a>
+              {/* A status chip's anatomy: the dot carries the colour, the word stays grey. */}
+              <span className={`pull-request-bar-merge is-${merge?.tone}`}>
+                <span className="pull-request-bar-merge-dot" aria-hidden="true" />
+                {merge?.label}
+              </span>
+            </span>
             <span
               className="pull-request-bar-lines"
               title={`${pr.additions.toLocaleString()} lines added, ${pr.deletions.toLocaleString()} removed`}
             >
-              <span className="is-added">+{pr.additions.toLocaleString()}</span>
-              <span className="is-removed">−{pr.deletions.toLocaleString()}</span>
+              <DiffCounts additions={pr.additions} deletions={pr.deletions} />
             </span>
             <PullRequestChecks pr={pr} />
           </>
         ) : (
           status.createUrl && (
-            <a
-              className="pull-request-bar-create"
-              href={status.createUrl}
-              target="_blank"
-              rel="noreferrer"
-              title="Open GitHub’s compare form for this branch. Push your commits before you submit it."
-            >
-              Create PR
-              <ExternalLink size={11} aria-hidden="true" />
-            </a>
+            <span className="pull-request-bar-group">
+              <PullRequestIcon pr={pr} className="pull-request-bar-icon" />
+              <a
+                className="pull-request-bar-create"
+                href={status.createUrl}
+                target="_blank"
+                rel="noreferrer"
+                title="Open GitHub’s compare form for this branch. Push your commits before you submit it."
+              >
+                Create PR
+                <ExternalLink size={11} aria-hidden="true" />
+              </a>
+            </span>
           )
         )}
         <span className="pull-request-bar-branch" title={`${status.repository} · ${status.branch}`}>
@@ -197,7 +207,7 @@ function PullRequestChecks({ pr }: { pr: PullRequestSummary }): React.JSX.Elemen
       >
         <span className="pull-request-checks-dot" aria-hidden="true" />
         {CHECK_LABELS[summary]}
-        <ChevronDown size={11} aria-hidden="true" />
+        <ChevronDown size={12} aria-hidden="true" />
       </button>
       {open && (
         <div className="pull-request-checks-card" id={listId} role="dialog" aria-label="CI checks">

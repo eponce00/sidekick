@@ -19,8 +19,10 @@ export interface PanelAppInfo {
   label: string
   description: string
   icon: React.ReactNode
-  /** A dot on the tab: the app is working, or waits for the user. */
+  /** A mark on the tab while it is not the one shown: the app is working, or waits for the user. */
   badge?: 'live' | 'waiting'
+  /** How many things wait for the user, shown in the shared .count-badge. */
+  waitingCount?: number
 }
 
 const DRAG_TYPE = 'application/x-sidekick-panel-tab'
@@ -161,6 +163,7 @@ export function PanelSections({
                 {section.tabs.map((tab) => {
                   const info = tabInfo(tab.kind)
                   const selected = tab.id === section.activeTabId
+                  const waitingCount = Math.max(1, info.waitingCount ?? 1)
                   return (
                     <div
                       key={tab.id}
@@ -216,11 +219,18 @@ export function PanelSections({
                       >
                         <span className="panel-tab-icon">
                           {info.icon}
-                          {info.badge && (
+                          {/* The shown app says its own state, so its tab carries no mark. */}
+                          {!selected && info.badge === 'waiting' && (
                             <span
-                              className={`browser-live-dot${info.badge === 'waiting' ? ' is-waiting' : ''}`}
-                              aria-label={info.badge === 'waiting' ? 'Waiting for you' : 'Working'}
-                            />
+                              className="count-badge is-attention panel-tab-badge"
+                              role="img"
+                              aria-label={`${waitingCount} waiting for you`}
+                            >
+                              {waitingCount}
+                            </span>
+                          )}
+                          {!selected && info.badge === 'live' && (
+                            <span className="browser-live-dot" role="img" aria-label="Working" />
                           )}
                         </span>
                         <span className="panel-tab-label">{info.label}</span>

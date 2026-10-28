@@ -1,6 +1,6 @@
 import { createRoot } from 'react-dom/client'
-// Inter, which the desktop loads from Google Fonts; the phone page loads nothing from elsewhere,
-// so it carries the four weights the app uses itself.
+// Inter at the four weights the app uses, bundled as on the desktop: the phone page loads
+// nothing from elsewhere.
 import '@fontsource/inter/400.css'
 import '@fontsource/inter/500.css'
 import '@fontsource/inter/600.css'

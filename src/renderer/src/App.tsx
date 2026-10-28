@@ -68,10 +68,13 @@ import { toggleDictation, useDictating } from './services/voice/dictationControl
 import {
   LAYOUT_MOTION_MS,
   ACTIVITY_PANEL_NARROW_WIDTH,
+  ACTIVITY_PANEL_RAIL_WIDTH,
+  ACTIVITY_PANEL_WIDTH_KEY,
   PANEL_GLIDE_MS,
   SIDEBAR_RAIL_WIDTH,
   SIDEBAR_WIDTH,
   activityPanelSnapWidths,
+  defaultActivityPanelWidth,
   storedActivityPanelSize,
   storedActivityPanelWidth,
   workspaceLayout,
@@ -244,13 +247,15 @@ function App(): React.JSX.Element {
     window.addEventListener('resize', update)
     return () => window.removeEventListener('resize', update)
   }, [])
-  const [activityPanelWidth, setActivityPanelWidth] = useState(() =>
+  // Null until the user drags the edge, so the default keeps following the window.
+  const [draggedPanelWidth, setDraggedPanelWidth] = useState(() =>
     storedActivityPanelWidth(
-      window.localStorage.getItem('activityPanelWidth'),
+      window.localStorage.getItem(ACTIVITY_PANEL_WIDTH_KEY),
       window.innerWidth,
       window.localStorage.getItem('activityPanelSize')
     )
   )
+  const activityPanelWidth = draggedPanelWidth ?? defaultActivityPanelWidth(viewportWidth)
   // The panel keeps the narrow column while it shows nothing that needs its width, such as an
   // empty browser tab, unless the user widens it then.
   const [panelNeedsRoom, setPanelNeedsRoom] = useState(true)
@@ -261,9 +266,6 @@ function App(): React.JSX.Element {
   useEffect(() => {
     window.localStorage.setItem('activityPanelSize', activityPanelSize)
   }, [activityPanelSize])
-  useEffect(() => {
-    window.localStorage.setItem('activityPanelWidth', String(activityPanelWidth))
-  }, [activityPanelWidth])
   // Each time the inspector's edge glides to a width, the chat is held still while it moves.
   const [panelGlide, setPanelGlide] = useState(0)
   // Where the panel floats over the chat, sizes do not apply.
@@ -300,10 +302,9 @@ function App(): React.JSX.Element {
   // When the sidebar or the inspector opens, closes or changes size, the chat's content is held at
   // its final width for the animation, centred and clipped, instead of re-wrapping every frame.
   // Dragging the inspector's edge and resizing the window still re-lay it out live.
-  const collapsedPanelWidth = 48
   const sidebarTargetWidth = effectiveSidebarCollapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH
   const panelTargetWidth = !effectiveActivityPanelPinned
-    ? collapsedPanelWidth
+    ? ACTIVITY_PANEL_RAIL_WIDTH
     : panelSize === 'full'
       ? layout.panelMaxWidth
       : Math.min(panelWidth, layout.panelMaxWidth)
@@ -1333,6 +1334,19 @@ function App(): React.JSX.Element {
           conversationId={panelConversationId}
           conversationTitle={conversation?.title ?? null}
           welcomeSuggestions={visible ? welcomeSuggestions : []}
+          contextMeter={
+            visible ? (
+              <ContextIndicator
+                currentTokens={tokenCounts.current}
+                maxTokens={tokenCounts.max}
+                selectedModel={currentModel.modelId}
+                model={currentPinnedModel}
+                autoCompactEnabled={settings.autoCompactEnabled ?? true}
+                autoCompactThreshold={settings.autoCompactThreshold ?? 0.8}
+                conversationCost={conversationCost}
+              />
+            ) : null
+          }
           workspaceFolder={conversationFolder(conversation)}
           projectName={panelProject?.name ?? null}
           projectId={panelProject?.id ?? null}
@@ -1425,28 +1439,37 @@ function App(): React.JSX.Element {
         <div className="title-bar-left">
           {/* At 20 px the title bar takes the icon's small cut, drawn to read at that size. */}
           <img src={smallIconUrl} alt="SideKick" className="title-bar-icon" />
-          {titleBarContext && (
-            <>
-              <span className="title-bar-divider">/</span>
-              <WrittenTitle
-                className="title-bar-context"
-                text={titleBarContext}
-                identity={currentConversationId}
-              />
-            </>
+          {isSettingsOpen ? (
+            // Settings keeps the shell: its name takes the breadcrumb slot, in the chat's type.
+            <span className="title-bar-crumb">
+              <span className="title-bar-context">Settings</span>
+            </span>
+          ) : (
+            titleBarContext && (
+              // The project leads, muted, and gives way first; a chat outside one shows its title.
+              <span
+                className="title-bar-crumb"
+                title={
+                  activeProject ? `${activeProject.name} / ${titleBarContext}` : titleBarContext
+                }
+              >
+                {activeProject && (
+                  <>
+                    <span className="title-bar-project">{activeProject.name}</span>
+                    <span className="title-bar-divider">/</span>
+                  </>
+                )}
+                <WrittenTitle
+                  className="title-bar-context"
+                  text={titleBarContext}
+                  identity={currentConversationId}
+                />
+              </span>
+            )
           )}
         </div>
         <div className="title-bar-right">
           <div className="title-bar-actions">
-            <ContextIndicator
-              currentTokens={tokenCounts.current}
-              maxTokens={tokenCounts.max}
-              selectedModel={currentModel.modelId}
-              model={currentPinnedModel}
-              autoCompactEnabled={settings.autoCompactEnabled ?? true}
-              autoCompactThreshold={settings.autoCompactThreshold ?? 0.8}
-              conversationCost={conversationCost}
-            />
             <button
               className="theme-toggle-button"
               onClick={(event) => {
@@ -1461,7 +1484,7 @@ function App(): React.JSX.Element {
               {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
             </button>
             <button
-              className="settings-button"
+              className={`settings-button${isSettingsOpen ? ' active' : ''}`}
               onClick={() => {
                 setSettingsInitialSection('general')
                 setIsSettingsOpen(true)
@@ -1561,7 +1584,8 @@ function App(): React.JSX.Element {
           maxWidth={layout.panelMaxWidth}
           width={panelWidth}
           onWidthChange={(width) => {
-            setActivityPanelWidth(width)
+            setDraggedPanelWidth(width)
+            window.localStorage.setItem(ACTIVITY_PANEL_WIDTH_KEY, String(width))
             if (!panelNeedsRoom) setPanelWidenedWhileEmpty(true)
           }}
           onNeedsRoomChange={(needsRoom) => {
@@ -1575,6 +1599,7 @@ function App(): React.JSX.Element {
           snapWidths={panelSnapWidths}
           onSettle={() => setPanelGlide((count) => count + 1)}
           onOpenConversation={(id) => void handleSelectConversation(id)}
+          onOpenProject={() => void handleOpenProject(true)}
           onOpenBrowserSettings={() => {
             setSettingsInitialSection('agent')
             setIsSettingsOpen(true)

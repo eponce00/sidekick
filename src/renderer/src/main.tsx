@@ -1,4 +1,10 @@
 import { createRoot } from 'react-dom/client'
+// Inter at exactly the four weights UI.md allows, bundled: a local-first app does not fetch its
+// typeface.
+import '@fontsource/inter/400.css'
+import '@fontsource/inter/500.css'
+import '@fontsource/inter/600.css'
+import '@fontsource/inter/700.css'
 import App from './App'
 import { PanelWindow } from './PanelWindow'
 import { installBrowserApiMock } from './dev/browserApiMock'

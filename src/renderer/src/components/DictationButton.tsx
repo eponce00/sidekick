@@ -7,6 +7,7 @@ import { voicePreferences } from '../services/voice/voicePreferences'
 import { applyDictation, type DictationRange } from '../services/voice/dictationText'
 import { registerDictation, setDictating } from '../services/voice/dictationControl'
 import { isVoiceShortcut, voiceShortcutLabel } from '../services/voice/voiceShortcut'
+import { DownloadMeter } from './DownloadMeter'
 import './DictationButton.css'
 
 type Phase = 'idle' | 'starting' | 'recording' | 'finishing'
@@ -235,39 +236,48 @@ export function DictationButton({
   if (!voice?.enabled || !window.api?.voice) return null
   const model = voice.models.dictation
   const settingUp = model.status !== 'ready'
+  // The arc is progress, so it is drawn only while bytes arrive; a paused or failed download
+  // says so in the tooltip rather than leaving an accent arc that looks alive.
+  const downloading = model.status === 'downloading'
   const percent = Math.floor(voiceModelProgress(model) * 100)
+  const setupLabel =
+    model.status === 'error'
+      ? `Dictation download failed at ${percent}%${model.error ? ` · ${model.error}` : ''}`
+      : downloading
+        ? `Dictation is being set up (${percent}%)`
+        : percent > 0
+          ? `Dictation download paused at ${percent}%`
+          : 'Dictation download has not started'
   const busy = phase === 'starting' || phase === 'finishing'
   const listening = phase === 'recording'
+  // The ring says the model is still on its way; once it is ready the mic stands alone.
+  const metered = settingUp && !listening && !busy
   const shortcut = phone ? '' : ` (${voiceShortcutLabel()})`
   const label = busy
     ? 'Starting the microphone'
     : listening
       ? `Stop dictating${shortcut}`
       : settingUp
-        ? `Dictation is being set up (${percent}%)`
+        ? setupLabel
         : `Dictate${shortcut}`
 
   return (
     <div className="dictation">
       <button
         type="button"
-        className={`dictation-button${listening ? ' is-listening' : ''}${busy ? ' is-busy' : ''}${settingUp && !listening ? ' is-setting-up' : ''}`}
-        style={
-          {
-            '--dictation-level': level.toFixed(3),
-            '--dictation-progress': `${percent}%`
-          } as React.CSSProperties
-        }
+        className={`dictation-button${listening ? ' is-listening' : ''}${busy ? ' is-busy' : ''}`}
+        style={{ '--dictation-level': level.toFixed(3) } as React.CSSProperties}
         disabled={disabled}
         onClick={toggle}
         title={label}
         aria-label={label}
         aria-pressed={listening}
       >
+        {metered && <DownloadMeter percent={percent} active={downloading} />}
         {busy ? (
           <Loader2 size={15} className="dictation-spinner" />
         ) : (
-          <Mic size={16} strokeWidth={listening ? 2.2 : 1.9} />
+          <Mic size={metered ? 12 : 16} strokeWidth={listening ? 2.2 : 1.9} />
         )}
       </button>
       {notice && (

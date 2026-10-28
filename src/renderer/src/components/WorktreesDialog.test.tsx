@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagedWorktreeSummary, WorktreeBranchOptions } from '../../../shared/worktrees'
 import { WorktreesDialog } from './WorktreesDialog'
-import { WorkspaceBar } from './WorkspaceBar'
+import { ProjectChoiceChip, WorkspaceBar } from './WorkspaceBar'
 import { chooseSelectOption, selectOptions } from './Select.testing'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -148,15 +148,7 @@ describe('worktree UI', () => {
     const onChooseProject = vi.fn()
     await act(async () => {
       root.render(
-        <WorkspaceBar
-          projectId={null}
-          worktree={null}
-          canChoose
-          workIn="worktree"
-          baseRef=""
-          onWorkInChange={vi.fn()}
-          onBaseRefChange={vi.fn()}
-          onManageWorktrees={vi.fn()}
+        <ProjectChoiceChip
           projectChoices={[{ id: 'repo', name: 'Repo' }]}
           onChooseProject={onChooseProject}
         />

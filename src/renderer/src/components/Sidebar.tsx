@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CalendarClock,
   Check,
@@ -22,13 +22,13 @@ import {
   Pin,
   PinOff,
   Plus,
-  Search,
   Smartphone,
   SquarePen,
   Trash2,
   X
 } from 'lucide-react'
 import type { Conversation, Project } from '../types/app.types'
+import { SearchField } from './SearchField'
 import type { MoveConversationInput } from '../../../shared/projects'
 import { sidebarConversationOrder } from '../utils/sidebarConversationOrder'
 import { LAYOUT_MOTION_MS } from '../utils/activityPanelLayout'
@@ -723,57 +723,74 @@ function Sidebar({
               {familyCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
             </button>
           )}
-          {renamingConversationId === conversation.id ? (
-            <div className="conversation-content">
-              <input
-                className="conversation-rename-input"
-                value={renameValue}
-                autoFocus
-                onClick={(event) => event.stopPropagation()}
-                onChange={(event) => setRenameValue(event.target.value)}
-                onBlur={finishRename}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') event.currentTarget.blur()
-                  if (event.key === 'Escape') setRenamingConversationId(null)
-                }}
-              />
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="conversation-select-button conversation-content"
-              onClick={() => onSelectConversation(conversation.id)}
-              onDoubleClick={() => beginConversationRename(conversation)}
-              title={`${conversation.title} — double-click to rename`}
-            >
-              <span className="conversation-title">
-                {conversation.worktree_id && (
-                  <FolderGit2
-                    size={12}
-                    className="conversation-worktree-icon"
-                    aria-label="Works in its own worktree"
-                  />
+          <span className="conversation-main">
+            {renamingConversationId === conversation.id ? (
+              <div className="conversation-content">
+                <input
+                  className="conversation-rename-input"
+                  value={renameValue}
+                  autoFocus
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => setRenameValue(event.target.value)}
+                  onBlur={finishRename}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') event.currentTarget.blur()
+                    if (event.key === 'Escape') setRenamingConversationId(null)
+                  }}
+                />
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="conversation-select-button conversation-content"
+                onClick={() => onSelectConversation(conversation.id)}
+                onDoubleClick={() => beginConversationRename(conversation)}
+                title={`${conversation.title}${projectTag ? ` · in ${projectTag}` : ''} — double-click to rename`}
+              >
+                <span className="conversation-title">
+                  {conversation.worktree_id && (
+                    <FolderGit2
+                      size={12}
+                      className="conversation-worktree-icon"
+                      aria-label="Works in its own worktree"
+                    />
+                  )}
+                  <WrittenTitle text={label || conversation.title} identity={conversation.id} />
+                </span>
+                {rollUp && (
+                  // Whole items drop off the end when the row is narrow, rather than a cut word.
+                  <span className="conversation-metadata session-roll-up">
+                    {rollUp.split(' · ').map((item, index) => (
+                      <Fragment key={item}>
+                        {index > 0 && ' '}
+                        <span className="session-roll-up-item">
+                          {index > 0 && '· '}
+                          {item}
+                        </span>
+                      </Fragment>
+                    ))}
+                  </span>
                 )}
-                <WrittenTitle text={label || conversation.title} identity={conversation.id} />
+                {options.showProject && conversation.project_id && (
+                  <span className="conversation-metadata">
+                    {projectNameById.get(conversation.project_id)}
+                  </span>
+                )}
+                {!conversation.project_id && conversation.home_project_name && (
+                  <span className="conversation-metadata">
+                    Detached from {conversation.home_project_name}
+                  </span>
+                )}
+              </button>
+            )}
+            {/* Wraps onto the hidden second line, and so disappears, when too little of it fits.
+                Renaming hides it, since the row's clipped height would cut the field. */}
+            {projectTag && renamingConversationId !== conversation.id && (
+              <span className="session-project-tag" title={`In ${projectTag}`}>
+                {projectTag}
               </span>
-              {rollUp && <span className="conversation-metadata session-roll-up">{rollUp}</span>}
-              {options.showProject && conversation.project_id && (
-                <span className="conversation-metadata">
-                  {projectNameById.get(conversation.project_id)}
-                </span>
-              )}
-              {!conversation.project_id && conversation.home_project_name && (
-                <span className="conversation-metadata">
-                  Detached from {conversation.home_project_name}
-                </span>
-              )}
-            </button>
-          )}
-          {projectTag && (
-            <span className="session-project-tag" title={`In ${projectTag}`}>
-              {projectTag}
-            </span>
-          )}
+            )}
+          </span>
           {dot && (
             <span
               className={`conversation-run-indicator ${dot}`}
@@ -860,7 +877,7 @@ function Sidebar({
               aria-label="Move to"
               onMouseLeave={() => setMovingConversationId(null)}
             >
-              <div className="app-menu-heading" role="presentation">
+              <div className="app-menu-heading section-heading" role="presentation">
                 Move to
               </div>
               <MenuItem
@@ -1077,21 +1094,40 @@ function Sidebar({
     </div>
   )
 
+  // Expanded, a labelled row on the tree's grid with the connection dot in its status slot; on
+  // the rail, an icon button with the dot cut out of the glyph's corner. The dot is the shared
+  // 6px one in the accent, shown only while a phone is connected.
   const phoneButton = phone && (
     <button
       ref={phoneButtonRef}
       type="button"
-      className={`sidebar-icon-btn sidebar-phone-btn ${isPhoneOpen ? 'active' : ''}`}
+      className={`${isCollapsed ? 'sidebar-icon-btn sidebar-phone-btn' : 'sidebar-phone-row'}${isPhoneOpen ? ' active' : ''}`}
       onClick={() => setIsPhoneOpen((current) => !current)}
       title={phoneConnected ? 'Phone connected' : 'Phone'}
       aria-label={phoneConnected ? 'Phone connected' : 'Phone'}
       aria-haspopup="dialog"
       aria-expanded={isPhoneOpen}
     >
-      <Smartphone size={16} />
-      {phoneConnected && <span className="sidebar-phone-dot" aria-hidden="true" />}
+      <span className="sidebar-phone-glyph">
+        <Smartphone size={16} />
+        {isCollapsed && phoneConnected && (
+          <span className="conversation-run-indicator sidebar-phone-dot" aria-hidden="true" />
+        )}
+      </span>
+      {!isCollapsed && <span className="sidebar-phone-label">Phone</span>}
+      {!isCollapsed && phoneConnected && (
+        <span className="conversation-run-indicator" aria-hidden="true" />
+      )}
     </button>
   )
+
+  // Surfaces waiting chats even inside closed projects, and on the rail, where the filter that
+  // carries this count is folded away: expanding the sidebar leads back to it.
+  // Folded, the toggle carries the waiting count whatever the filter, since the filter's own badge
+  // is hidden with the header; expanded, the filter button shows it unless it already filters by it.
+  const hasWaiting = statusCounts.waiting > 0
+  const showWaitingCount = hasWaiting && statusFilter !== 'waiting'
+  const waitingLabel = `${statusCounts.waiting} need attention`
 
   return (
     <>
@@ -1103,8 +1139,18 @@ function Sidebar({
             className="sidebar-icon-btn sidebar-toggle-btn"
             onClick={onToggleCollapsed}
             title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={
+              isCollapsed
+                ? `Expand sidebar${hasWaiting ? `, ${waitingLabel}` : ''}`
+                : 'Collapse sidebar'
+            }
           >
             <PanelLeft size={16} />
+            {isCollapsed && hasWaiting && (
+              <span className="count-badge is-attention" aria-hidden="true">
+                {statusCounts.waiting}
+              </span>
+            )}
           </button>
           {!isCollapsed && <span className="sidebar-heading">SideKick</span>}
           <div className="sidebar-header-actions">
@@ -1156,11 +1202,10 @@ function Sidebar({
                     aria-expanded={isFilterMenuOpen}
                   >
                     <ListFilter size={15} />
-                    {/* Surfaces waiting chats even inside closed projects. */}
-                    {statusCounts.waiting > 0 && statusFilter !== 'waiting' && (
+                    {showWaitingCount && (
                       <span
-                        className="sidebar-filter-badge"
-                        aria-label={`${statusCounts.waiting} need attention`}
+                        className="sidebar-filter-badge count-badge is-attention"
+                        aria-label={waitingLabel}
                       >
                         {statusCounts.waiting}
                       </span>
@@ -1199,15 +1244,13 @@ function Sidebar({
         </div>
 
         {!isCollapsed && (conversations.length > 0 || projects.length > 0) && (
-          <label className="sidebar-search field-shell">
-            <Search size={13} />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search chats"
-              aria-label="Search conversations"
-            />
-          </label>
+          <SearchField
+            className="sidebar-search"
+            value={query}
+            onChange={setQuery}
+            placeholder="Search chats"
+            aria-label="Search conversations"
+          />
         )}
 
         {!isCollapsed && filtering && (
@@ -1225,6 +1268,20 @@ function Sidebar({
           </div>
         )}
 
+        {!isCollapsed && (
+          <div className="sidebar-new-chat">
+            <button
+              type="button"
+              className="sidebar-new-chat-row"
+              onClick={() => onNewConversation(null)}
+              title={`New chat (${shortcutLabel('new-chat', platform)})`}
+            >
+              <SquarePen size={16} aria-hidden="true" />
+              <span>New chat</span>
+            </button>
+          </div>
+        )}
+
         <div className="conversation-list">
           {isCollapsed ? (
             <nav className="collapsed-sidebar-nav" aria-label="Sidebar destinations">
@@ -1233,11 +1290,13 @@ function Sidebar({
                   type="button"
                   className={compactDestination === 'projects' ? 'active' : ''}
                   onClick={onToggleCollapsed}
-                  title={`Projects (${listedProjects.length})`}
+                  title={`Projects · ${listedProjects.length}`}
                   aria-label={`Expand projects, ${listedProjects.length} total`}
                 >
                   <FolderOpen size={16} />
-                  <span>{listedProjects.length}</span>
+                  <span className="count-badge" aria-hidden="true">
+                    {listedProjects.length}
+                  </span>
                 </button>
               )}
               {standaloneConversations.length > 0 && (
@@ -1245,11 +1304,13 @@ function Sidebar({
                   type="button"
                   className={compactDestination === 'chats' ? 'active' : ''}
                   onClick={onToggleCollapsed}
-                  title={`Standalone chats (${standaloneConversations.length})`}
+                  title={`Chats · ${standaloneConversations.length}`}
                   aria-label={`Expand standalone chats, ${standaloneConversations.length} total`}
                 >
                   <MessageSquare size={16} />
-                  <span>{standaloneConversations.length}</span>
+                  <span className="count-badge" aria-hidden="true">
+                    {standaloneConversations.length}
+                  </span>
                 </button>
               )}
               {onOpenSchedules && (
@@ -1269,7 +1330,7 @@ function Sidebar({
             </nav>
           ) : query.trim() ? (
             <section className="sidebar-section">
-              <div className="sidebar-section-label">Search results</div>
+              <div className="section-heading sidebar-section-label">Search results</div>
               {visibleSearchResults.length > 0 ? (
                 visibleSearchResults.map((conversation) =>
                   renderConversation(conversation, { showProject: true })
@@ -1283,7 +1344,7 @@ function Sidebar({
               {view === 'recent' ? (
                 recentGroups.map((group) => (
                   <section className="sidebar-section recent-section" key={group.bucket}>
-                    <div className="sidebar-section-label">{group.label}</div>
+                    <div className="section-heading sidebar-section-label">{group.label}</div>
                     {renderConversationList(group.conversations, { showProject: true })}
                   </section>
                 ))
@@ -1291,7 +1352,7 @@ function Sidebar({
                 <>
                   {(!filtering || projectsWithMatches.length > 0) && (
                     <section className="sidebar-section project-section">
-                      <div className="sidebar-section-label sidebar-section-label-with-action">
+                      <div className="section-heading sidebar-section-label sidebar-section-label-with-action">
                         {sectionHeading('projects', 'Projects', listedProjects.length)}
                         <button
                           type="button"
@@ -1463,7 +1524,8 @@ function Sidebar({
                                       className="project-new-chat-empty"
                                       onClick={() => onNewConversation(project.id)}
                                     >
-                                      <SquarePen size={12} /> New chat
+                                      <SquarePen size={14} aria-hidden="true" />
+                                      <span>New chat</span>
                                     </button>
                                   ) : null}
                                 </div>
@@ -1494,7 +1556,7 @@ function Sidebar({
                         if (dropTarget) finishDrop(dropTarget)
                       }}
                     >
-                      <div className="sidebar-section-label sidebar-section-label-with-action">
+                      <div className="section-heading sidebar-section-label sidebar-section-label-with-action">
                         {sectionHeading('chats', 'Chats', standaloneConversations.length)}
                         <button
                           type="button"

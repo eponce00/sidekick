@@ -268,10 +268,12 @@ export function ChatModelPicker({
                   const providerAvailability = model.providerHealth
                     ? describeProviderAvailability(model.providerHealth)
                     : undefined
-                  const sourceLabel = uniqueModelMetadata([
-                    modelDisplay.vendor,
-                    model.providerInstanceName
-                  ])[0]
+                  // The connection the model runs through, as its icon shows; the vendor, when it
+                  // differs, goes in the tooltip.
+                  const [sourceLabel, vendorLabel] = uniqueModelMetadata([
+                    model.providerInstanceName,
+                    modelDisplay.vendor
+                  ])
                   const selectedModel = selectedModelId === model.id
                   return (
                     <button
@@ -281,7 +283,9 @@ export function ChatModelPicker({
                       className={`model-menu-option ${selectedModel ? 'is-selected' : ''}`}
                       key={model.id}
                       onClick={() => void choose(model.id)}
-                      title={`${modelDisplay.fullName} · ${modelDisplay.fullId}`}
+                      title={[modelDisplay.fullName, vendorLabel, modelDisplay.fullId]
+                        .filter(Boolean)
+                        .join(' · ')}
                     >
                       <ProviderIcon provider={providerIconKindForModel(model)} size={14} />
                       <span className="model-menu-option-name">{compactModelLabel(model)}</span>

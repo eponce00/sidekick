@@ -598,7 +598,7 @@ body {
   flex: 1;
 }
 
-.cp-drawer .sidebar-search.cp-search {
+.cp-drawer .search-field.cp-search {
   height: 40px;
   gap: var(--space-3);
   margin: 0;
@@ -606,7 +606,7 @@ body {
 }
 
 /* At 16 px a phone does not zoom in when the field is tapped. */
-.cp-search input {
+.cp-drawer .cp-search input {
   font-size: 16px;
 }
 

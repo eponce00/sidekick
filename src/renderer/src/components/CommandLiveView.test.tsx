@@ -67,8 +67,9 @@ describe('CommandLiveView', () => {
       'Ok to proceed? (y)'
     )
     const button = (label: string): HTMLButtonElement =>
-      [...container.querySelectorAll('button')].find((candidate) =>
-        candidate.textContent?.includes(label)
+      [...container.querySelectorAll('button')].find(
+        (candidate) =>
+          candidate.textContent?.includes(label) || candidate.getAttribute('aria-label') === label
       ) as HTMLButtonElement
     await act(async () => button('Stop').click())
     expect(terminal.stop).toHaveBeenCalledWith('command')

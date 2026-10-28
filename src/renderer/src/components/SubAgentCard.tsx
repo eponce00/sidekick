@@ -10,6 +10,7 @@ import {
   type SubAgentState
 } from '../utils/subAgentActivity'
 import AgentInteractionCard from './AgentInteractionCard'
+import { StopGlyph } from './StopGlyph'
 import { subAgentTarget, subAgentTitle, useOpenSubAgent } from './subAgentNavigation'
 
 export function SubAgentStateIcon({ state }: { state: SubAgentState }): React.JSX.Element {
@@ -202,7 +203,7 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
             title="Stop this sub-agent; the chat continues with what it found"
             aria-label="Stop sub-agent"
           >
-            <Square size={10} fill="currentColor" aria-hidden="true" />
+            <StopGlyph />
           </button>
         )}
       </div>

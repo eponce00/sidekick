@@ -173,4 +173,53 @@ describe('manager chat rows', () => {
     await act(async () => button('Open schedules').click())
     expect(onOpenChat).toHaveBeenCalledWith(schedules.conversationId)
   })
+
+  it('marks a delegated step by its chat’s state, not the list’s', async () => {
+    await act(async () =>
+      root.render(
+        <SessionTodoList
+          todos={[
+            {
+              id: 1,
+              title: 'Port schedules',
+              description: '',
+              status: 'not-started',
+              sessionId: schedules.conversationId
+            }
+          ]}
+          members={members}
+          statuses={statusMap([[schedules.conversationId, 'failed']])}
+          manager={manager}
+          onOpenChat={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector('.family-todo-title')?.textContent).toBe(
+      'Failed: Port schedules'
+    )
+  })
+
+  it('keeps a done step done once its chat is idle', async () => {
+    await act(async () =>
+      root.render(
+        <SessionTodoList
+          todos={[
+            {
+              id: 1,
+              title: 'Port schedules',
+              description: '',
+              status: 'completed',
+              sessionId: schedules.conversationId
+            }
+          ]}
+          members={members}
+          statuses={statusMap([[schedules.conversationId, 'idle']])}
+          manager={manager}
+          onOpenChat={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector('.family-todo-title')?.textContent).toBe('Done: Port schedules')
+    expect(container.querySelector('footer')?.textContent).toContain('1 done')
+  })
 })

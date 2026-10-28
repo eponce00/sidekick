@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState } from 'react'
-import { Check, Copy, MessageSquarePlus } from 'lucide-react'
+import { MessageSquarePlus } from 'lucide-react'
 import type { ToolExecution } from '../types/chat.types'
 import {
   isCommentableDiffRow,
@@ -9,7 +9,8 @@ import {
   type DiffLineSelection,
   type DiffRow
 } from '../utils/diffRows'
-import { copyText } from '../utils/clipboard'
+import { CommandCopyButton } from './CommandResultOutput'
+import { DiffCounts } from './DiffCounts'
 import './ToolExecutionCard.css'
 
 function resultDiff(tool: ToolExecution): string {
@@ -89,7 +90,6 @@ export function RichDiffBlock({
   const diff = resultDiff(tool)
   const rows = useMemo(() => parseDiffRows(diff), [diff])
   const [expanded, setExpanded] = useState(false)
-  const [copied, setCopied] = useState(false)
   const [view, setView] = useState<'unified' | 'split'>('unified')
   const splitRows = useMemo(() => splitDiffRows(rows), [rows])
   const [range, setRange] = useState<{ anchor: number; focus: number } | null>(null)
@@ -185,20 +185,7 @@ export function RichDiffBlock({
             Click a line number to comment
           </span>
         )}
-        <button
-          type="button"
-          className="rich-tool-copy"
-          onClick={() => {
-            void copyText(diff).then((written) => {
-              if (!written) return
-              setCopied(true)
-              window.setTimeout(() => setCopied(false), 1_000)
-            })
-          }}
-        >
-          {copied ? <Check size={11} /> : <Copy size={11} />}
-          {copied ? 'Copied' : 'Copy diff'}
-        </button>
+        <CommandCopyButton text={diff} label="Copy diff" />
       </div>
       {view === 'split' ? (
         <div className="rich-diff-split">
@@ -249,8 +236,7 @@ export function RichDiffBlock({
         </div>
       )}
       <div className="rich-diff-footer">
-        <span className="diff-additions">+{additions}</span>
-        <span className="diff-deletions">−{deletions}</span>
+        <DiffCounts additions={additions} deletions={deletions} />
         {files > 0 && (
           <span>
             {files} {files === 1 ? 'file' : 'files'}

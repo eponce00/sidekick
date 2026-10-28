@@ -8,7 +8,6 @@ import {
   Copy,
   CornerDownLeft,
   Plus,
-  Square,
   SquareTerminal,
   Trash2
 } from 'lucide-react'
@@ -25,6 +24,8 @@ import {
   useUserTerminals
 } from '../utils/userTerminalStore'
 import { copyText } from '../utils/clipboard'
+import { SessionStateDot } from './SessionChip'
+import { StopGlyph } from './StopGlyph'
 import './TerminalPanel.css'
 
 function stateLabel(session: TerminalSessionSummary): string {
@@ -47,6 +48,17 @@ function stateLabel(session: TerminalSessionSummary): string {
 function shellStateLabel(terminal: UserTerminalSummary): string {
   if (terminal.state === 'running') return 'Running'
   return terminal.exitCode ? `Exited with code ${terminal.exitCode}` : 'Exited'
+}
+
+/** The dot a row's icon carries: only a live, waiting or failed command has one. */
+type RowDot = 'working' | 'waiting' | 'failed'
+
+function sessionDot(session: TerminalSessionSummary): RowDot | undefined {
+  if (session.state === 'running') return 'working'
+  if (session.state === 'waiting_for_input') return 'waiting'
+  if (session.state === 'timed_out' || session.state === 'failed') return 'failed'
+  if (session.state === 'exited' && session.exitCode) return 'failed'
+  return undefined
 }
 
 function duration(session: TerminalSessionSummary, now: number): string {
@@ -75,7 +87,8 @@ function terminalTheme(): NonNullable<ConstructorParameters<typeof Terminal>[0]>
   const token = (name: string, fallback: string): string =>
     style.getPropertyValue(name).trim() || fallback
   return {
-    background: token('--surface-1', '#171717'),
+    // The panel's own surface, so the terminal is part of the panel rather than a white sheet.
+    background: token('--surface-0', '#151515'),
     foreground: token('--text-primary', '#e6e6e6'),
     cursor: token('--accent', '#86aee8'),
     selectionBackground: token('--accent-subtle', 'rgba(58, 214, 184, 0.25)')
@@ -95,9 +108,13 @@ function openTerminal(
   const terminal = new Terminal({
     convertEol: options.convertEol,
     fontFamily: getComputedStyle(document.body).getPropertyValue('--font-mono') || 'monospace',
-    fontSize: 12,
+    // The app's code size (--code-text), so the terminal matches the command output in chat.
+    fontSize: parseFloat(getComputedStyle(document.body).getPropertyValue('--code-text')) || 12,
     scrollback: 10_000,
     theme: terminalTheme(),
+    // xterm's ANSI palette is tuned for black; this lifts any colour that would fall under 4.5:1
+    // on the panel's surface, which matters most in the light theme.
+    minimumContrastRatio: 4.5,
     allowProposedApi: true
   })
   const fit = new FitAddon()
@@ -353,20 +370,59 @@ const actionTitle = (label: string): { title: string; 'aria-label': string } => 
   'aria-label': label
 })
 
+/**
+ * The header's second line: a state dot, the status, then the folder as trailing muted text. One
+ * line that ellipsizes, status first, with the whole line as its tooltip.
+ */
+function StatusRow({
+  state,
+  failed,
+  dot,
+  status,
+  cwd
+}: {
+  state: string
+  failed: boolean
+  dot?: RowDot
+  status: string
+  cwd: string
+}): React.JSX.Element {
+  const folder = folderName(cwd)
+  // A shell's last line can end in spaces ("type ... "), which read as a gap before the dot.
+  const label = status.trimEnd()
+  return (
+    <div
+      className={`terminal-panel-status is-${state}${failed ? ' is-failed' : ''}`}
+      title={`${label} · ${cwd}`}
+    >
+      {dot && <SessionStateDot state={dot} />}
+      <span className="terminal-panel-status-label">{label}</span>
+      <span className="terminal-panel-status-separator" aria-hidden="true">
+        ·
+      </span>
+      <span className="terminal-panel-cwd" title={cwd}>
+        {folder}
+      </span>
+    </div>
+  )
+}
+
 function CommandView({ session }: { session: TerminalSessionSummary }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const copyTextRef = useRef<(() => string) | null>(null)
   const live = terminalSessionIsLive(session.state)
   const waitingAtTerminal = session.state === 'waiting_for_input' && session.pty
+  const dot = sessionDot(session)
   return (
     <div className="terminal-panel-view">
       <div className="terminal-panel-header">
-        <code className="terminal-panel-command" title={session.command}>
+        <code className="terminal-panel-command" title={`$ ${session.command}`}>
           <span aria-hidden="true">$</span>
           {session.command}
         </code>
         <button
           type="button"
+          className="settings-ghost-action is-small is-icon"
           {...actionTitle(copied ? 'Copied' : 'Copy the output')}
           onClick={() => {
             const text = copyTextRef.current?.()
@@ -383,6 +439,7 @@ function CommandView({ session }: { session: TerminalSessionSummary }): React.JS
         {live && !session.background && (
           <button
             type="button"
+            className="settings-ghost-action is-small is-icon"
             {...actionTitle('Run in the background, so the agent can go on')}
             onClick={() => void window.api.terminal.moveToBackground(session.id)}
           >
@@ -392,23 +449,21 @@ function CommandView({ session }: { session: TerminalSessionSummary }): React.JS
         {live && (
           <button
             type="button"
-            className="is-danger"
+            className="settings-ghost-action is-small is-icon"
             {...actionTitle('Stop the command')}
             onClick={() => void window.api.terminal.stop(session.id)}
           >
-            <Square size={13} />
+            <StopGlyph />
           </button>
         )}
       </div>
-      <div className={`terminal-panel-status is-${session.state}`}>
-        <span>
-          {stateLabel(session)}
-          {waitingAtTerminal && ': click the terminal and type your reply'}
-        </span>
-        <span className="terminal-panel-cwd" title={session.cwd}>
-          {folderName(session.cwd)}
-        </span>
-      </div>
+      <StatusRow
+        state={session.state}
+        failed={dot === 'failed'}
+        {...(dot && dot !== 'failed' ? { dot } : {})}
+        status={`${stateLabel(session)}${waitingAtTerminal ? ': click the terminal and type your reply' : ''}`}
+        cwd={session.cwd}
+      />
       <CommandTerminal key={session.id} session={session} copyTextRef={copyTextRef} />
       {live && !session.pty && <PipeInput session={session} />}
     </div>
@@ -425,19 +480,19 @@ function ShellView({ terminal }: { terminal: UserTerminalSummary }): React.JSX.E
         </span>
         <button
           type="button"
-          className="is-danger"
+          className="settings-ghost-action is-small is-icon is-danger"
           {...actionTitle('Kill the terminal')}
           onClick={() => void window.api.userTerminal.close(terminal.id)}
         >
-          <Trash2 size={13} />
+          <Trash2 size={14} />
         </button>
       </div>
-      <div className={`terminal-panel-status is-${terminal.state}`}>
-        <span>{shellStateLabel(terminal)}</span>
-        <span className="terminal-panel-cwd" title={terminal.cwd}>
-          {folderName(terminal.cwd)}
-        </span>
-      </div>
+      <StatusRow
+        state={terminal.state}
+        failed={Boolean(terminal.exitCode)}
+        status={shellStateLabel(terminal)}
+        cwd={terminal.cwd}
+      />
       <ShellTerminal key={terminal.id} terminal={terminal} />
     </div>
   )
@@ -543,9 +598,18 @@ export function TerminalPanel({
     id: string,
     item: {
       icon: React.ReactNode
+      /** The row's place in its list, which the icon rail draws in place of the shared glyph. */
+      numeral?: number
       title: string
-      tooltip: string
+      /** "name · status": the row's accessible name, steady while the row is focused. */
+      summary: string
+      /** How long it has run. It ticks, so it is only in the tooltip, after the summary. */
+      elapsed?: string
+      detail: string
       state: string
+      dot?: RowDot
+      /** The dot a resting row shows only in the icon rail, where it has no words to tell it apart. */
+      restDot: 'idle' | 'done' | 'stopped'
       meta: string
       action?: { label: string; icon: React.ReactNode; run: () => void }
     }
@@ -561,10 +625,21 @@ export function TerminalPanel({
           className="terminal-panel-item-select"
           onClick={() => setSelectedId(id)}
           aria-current={selected}
-          title={item.tooltip}
+          aria-label={item.summary}
+          title={`${item.summary}${item.elapsed ? ` · ${item.elapsed}` : ''}\n${item.detail}`}
         >
           <span className="terminal-panel-item-icon" aria-hidden="true">
             {item.icon}
+            {item.numeral !== undefined && (
+              <span className="terminal-panel-item-numeral">{item.numeral}</span>
+            )}
+            {item.dot ? (
+              <SessionStateDot state={item.dot} />
+            ) : (
+              <span className="terminal-panel-rest-dot">
+                <SessionStateDot state={item.restDot} />
+              </span>
+            )}
           </span>
           <span className="terminal-panel-item-title">{item.title}</span>
           <span className="terminal-panel-item-meta">{item.meta}</span>
@@ -593,7 +668,7 @@ export function TerminalPanel({
         ) : null}
       </div>
       <aside className="terminal-panel-side">
-        <div className="terminal-panel-side-head">
+        <div className="terminal-panel-side-head section-heading">
           <span>Terminals</span>
           {newTerminalButton}
         </div>
@@ -605,8 +680,12 @@ export function TerminalPanel({
                 row(shell.id, {
                   icon: <SquareTerminal size={13} />,
                   title: shell.title,
-                  tooltip: `${shell.cwd}\n${shellStateLabel(shell)}`,
+                  summary: `${shell.title} · ${shellStateLabel(shell)}`,
+                  detail: shell.cwd,
                   state: shell.exitCode ? 'failed' : shell.state,
+                  // An open shell is its resting state, so only a failed one carries a dot.
+                  ...(shell.exitCode ? { dot: 'failed' as const } : {}),
+                  restDot: shell.state === 'running' ? 'idle' : 'done',
                   meta: shell.state === 'running' ? '' : `Exit ${shell.exitCode ?? 0}`,
                   action: {
                     label: `Kill ${shell.title}`,
@@ -621,11 +700,16 @@ export function TerminalPanel({
             <>
               <div className="terminal-panel-group">Agent</div>
               <ul className="terminal-panel-list" aria-label="Agent commands">
-                {[...sessions].reverse().map((session) =>
+                {[...sessions].reverse().map((session, index) =>
                   row(session.id, {
                     icon: <Bot size={13} />,
+                    numeral: index + 1,
                     title: session.title,
-                    tooltip: `${session.command}\n${stateLabel(session)}`,
+                    summary: `${session.title} · ${stateLabel(session)}`,
+                    elapsed: duration(session, now),
+                    detail: session.command,
+                    dot: sessionDot(session),
+                    restDot: session.state === 'stopped' ? 'stopped' : 'done',
                     state:
                       session.state === 'exited' && session.exitCode ? 'failed' : session.state,
                     meta:
@@ -638,7 +722,7 @@ export function TerminalPanel({
                       ? {
                           action: {
                             label: `Stop ${session.title}`,
-                            icon: <Square size={11} />,
+                            icon: <StopGlyph size={9} />,
                             run: () => void window.api.terminal.stop(session.id)
                           }
                         }

@@ -119,7 +119,7 @@
 }
 
 .schedule-status-dot.waiting {
-  background: var(--color-warning);
+  background: var(--color-warning-mark);
   box-shadow: 0 0 0 3px var(--color-warning-subtle);
 }
 
@@ -264,11 +264,11 @@
 }
 
 .schedule-run-dot.error {
-  background: var(--color-error);
+  background: var(--color-error-mark);
 }
 
 .schedule-run-dot.warning {
-  background: var(--color-warning);
+  background: var(--color-warning-mark);
 }
 
 .schedule-run-dot.working {
@@ -516,9 +516,9 @@
   gap: var(--space-3);
 }
 
-.schedules-checkbox input {
-  margin: 2px 0 0;
-  accent-color: var(--accent);
+/* On the first line of the text beside it. */
+.schedules-checkbox .ui-checkbox {
+  margin-top: 2px;
 }
 
 .schedules-editor-hint,

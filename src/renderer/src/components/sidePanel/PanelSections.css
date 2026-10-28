@@ -8,6 +8,12 @@
   container-type: inline-size;
 }
 
+/* The shared count badge, on the icon's corner and clear of the glyph's middle. */
+.panel-tab-icon > .panel-tab-badge {
+  top: -7px;
+  right: -9px;
+}
+
 /* A narrow panel shows the other tabs as icons only, as a browser does with many tabs; the active
    one keeps its name, and every name stays in the tooltip and for screen readers. */
 @container (max-width: 360px) {
@@ -70,6 +76,7 @@
 }
 
 .panel-tab:hover {
+  --badge-ring: var(--surface-2);
   color: var(--text-secondary);
   background: var(--surface-2);
 }

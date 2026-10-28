@@ -1,17 +1,5 @@
 import { useCallback, useEffect, useId, useState } from 'react'
-import {
-  Activity,
-  AudioLines,
-  CircleAlert,
-  Download,
-  Keyboard,
-  Languages,
-  Mic,
-  Play,
-  Square,
-  UserRound,
-  Volume2
-} from 'lucide-react'
+import { Activity, AudioLines, CircleAlert, Play } from 'lucide-react'
 import {
   SPEECH_LANGUAGES,
   SPEECH_VOICES,
@@ -29,8 +17,10 @@ import {
 import { speechPlayer } from '../services/voice/speechPlayer'
 import { updateVoicePreferences, useVoicePreferences } from '../services/voice/voicePreferences'
 import { voiceShortcutLabel } from '../services/voice/voiceShortcut'
+import { DownloadMeter } from './DownloadMeter'
 import { SettingsRow, SettingsSection, ToggleField } from './SettingsLayout'
 import { Select } from './Select'
+import { StopGlyph } from './StopGlyph'
 
 type Device = { deviceId: string; label: string }
 
@@ -104,28 +94,26 @@ export function VoiceSettings({
       description="Dictate messages and have replies read aloud. Speech never leaves this device."
     >
       <ToggleField
-        icon={AudioLines}
         label="Dictation and read-aloud"
-        hint={
-          <>
-            Downloads about 1 GB of speech models once, in the background. Dictation uses{' '}
-            <a href={PARAKEET_ULTRA_URL} target="_blank" rel="noreferrer">
-              Parakeet Ultra
-            </a>{' '}
-            by Moondream, based on{' '}
-            <a href={NVIDIA_PARAKEET_URL} target="_blank" rel="noreferrer">
-              NVIDIA Parakeet
-            </a>
-            , both{' '}
-            <a href={CC_BY_URL} target="_blank" rel="noreferrer">
-              CC BY 4.0
-            </a>
-            ; SideKick converted and quantized it. Read-aloud uses Kokoro (Apache 2.0).
-          </>
-        }
+        hint="Downloads about 1 GB of speech models once, in the background."
         checked={enabled}
         onChange={onEnabledChange}
       />
+      <p className="settings-footnote">
+        Dictation uses{' '}
+        <a href={PARAKEET_ULTRA_URL} target="_blank" rel="noreferrer">
+          Parakeet Ultra
+        </a>{' '}
+        by Moondream, based on{' '}
+        <a href={NVIDIA_PARAKEET_URL} target="_blank" rel="noreferrer">
+          NVIDIA Parakeet
+        </a>
+        , both{' '}
+        <a href={CC_BY_URL} target="_blank" rel="noreferrer">
+          CC BY 4.0
+        </a>
+        ; SideKick converted and quantized it. Read-aloud uses Kokoro (Apache 2.0).
+      </p>
       {enabled && <VoiceDeviceRows />}
     </SettingsSection>
   )
@@ -205,18 +193,27 @@ function VoiceDeviceRows(): React.JSX.Element {
         settingUp('Read aloud', voice.models.speech)
       ].filter(Boolean)
     : []
+  // The meter follows the model still on its way, dictation first, as the composer's mic does.
+  const downloadingModel =
+    voice && voice.models.dictation.status !== 'ready'
+      ? voice.models.dictation
+      : voice?.models.speech
   const hearing = level > 0.01
 
   return (
     <>
       {pending.length > 0 && (
-        <p className="settings-note voice-settings-status" role="status">
-          <Download size={14} aria-hidden="true" />
+        <div className="voice-settings-status" role="status">
           <span>Setting up · {pending.join(' · ')}</span>
-        </p>
+          {downloadingModel && (
+            <DownloadMeter
+              percent={Math.floor(voiceModelProgress(downloadingModel) * 100)}
+              active={downloadingModel.status === 'downloading'}
+            />
+          )}
+        </div>
       )}
       <SettingsRow
-        icon={Mic}
         label="Microphone"
         description="Dictation listens here."
         controlId={`${id}-microphone`}
@@ -242,11 +239,7 @@ function VoiceDeviceRows(): React.JSX.Element {
               }
               aria-label={testing ? 'Stop microphone test' : 'Test microphone'}
             >
-              {testing ? (
-                <Square size={11} fill="currentColor" aria-hidden="true" />
-              ) : (
-                <Activity size={14} aria-hidden="true" />
-              )}
+              {testing ? <StopGlyph size={11} /> : <Activity size={14} aria-hidden="true" />}
               {testing ? 'Stop' : 'Test'}
             </button>
           </span>
@@ -263,7 +256,6 @@ function VoiceDeviceRows(): React.JSX.Element {
       </SettingsRow>
 
       <SettingsRow
-        icon={Volume2}
         label="Speaker"
         description="Replies are read aloud here."
         controlId={`${id}-speaker`}
@@ -288,11 +280,7 @@ function VoiceDeviceRows(): React.JSX.Element {
               disabled={voice?.models.speech.status !== 'ready'}
               aria-label={sampleActive ? 'Stop sample' : 'Play a sample'}
             >
-              {sampleActive ? (
-                <Square size={11} fill="currentColor" aria-hidden="true" />
-              ) : (
-                <Play size={13} aria-hidden="true" />
-              )}
+              {sampleActive ? <StopGlyph size={11} /> : <Play size={13} aria-hidden="true" />}
               {sampleActive ? 'Stop' : 'Sample'}
             </button>
           </span>
@@ -300,7 +288,6 @@ function VoiceDeviceRows(): React.JSX.Element {
       />
 
       <SettingsRow
-        icon={UserRound}
         label="Voice"
         description="A reply in another language is read by that language's voice of the same kind."
         controlId={`${id}-voice`}
@@ -323,7 +310,6 @@ function VoiceDeviceRows(): React.JSX.Element {
       />
 
       <SettingsRow
-        icon={Languages}
         label="Read-aloud language"
         description="Detected from each message unless you choose one."
         controlId={`${id}-language`}
@@ -349,7 +335,6 @@ function VoiceDeviceRows(): React.JSX.Element {
       />
 
       <SettingsRow
-        icon={Keyboard}
         label="Mic shortcut"
         description="Starts and stops dictation. Dictation understands 25 European languages."
         control={<kbd className="settings-kbd">{voiceShortcutLabel()}</kbd>}

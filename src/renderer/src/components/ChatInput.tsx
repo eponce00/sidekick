@@ -13,7 +13,6 @@ import {
   Microscope,
   Paperclip,
   Plus,
-  Square,
   StickyNote,
   Target,
   X
@@ -71,6 +70,7 @@ import {
 import { SAVED_PROMPT_ARGUMENTS, type SavedPrompt } from '../../../shared/savedPrompts'
 import './ChatInput.css'
 import { Select } from './Select'
+import { StopGlyph } from './StopGlyph'
 
 interface FeatureMenuActionProps {
   label: string
@@ -80,6 +80,10 @@ interface FeatureMenuActionProps {
   disabled?: boolean
   unavailableReason?: string
   selected?: boolean
+  /** Shows the description in the row, for behaviour that is unfamiliar from its name alone. */
+  showHint?: boolean
+  /** Quiet text at the row's end, such as the folder an action would change. */
+  trailing?: string
 }
 
 function FeatureMenuAction({
@@ -89,7 +93,9 @@ function FeatureMenuAction({
   onClick,
   disabled = false,
   unavailableReason,
-  selected = false
+  selected = false,
+  showHint = false,
+  trailing
 }: FeatureMenuActionProps): React.JSX.Element {
   const helpText = unavailableReason || description
 
@@ -101,12 +107,23 @@ function FeatureMenuAction({
       onClick={onClick}
       disabled={disabled}
       title={helpText}
-      aria-label={`${label}. ${helpText}`}
+      // The trailing text is hidden from the name's parts, so the name says it once.
+      aria-label={trailing ? `${label}, ${trailing}. ${helpText}` : `${label}. ${helpText}`}
     >
       <span className="features-menu-item-icon" aria-hidden="true">
         {icon}
       </span>
       <span className="features-menu-item-label">{label}</span>
+      {showHint && (
+        <span className="features-menu-item-hint" aria-hidden="true">
+          {helpText}
+        </span>
+      )}
+      {trailing && (
+        <span className="features-menu-item-trailing" aria-hidden="true">
+          {trailing}
+        </span>
+      )}
       {selected && (
         <span className="features-menu-item-check" aria-label="Selected">
           <Check size={15} />
@@ -243,6 +260,8 @@ interface ChatInputProps {
   getPromptHistory?: () => readonly PromptHistoryEntry[]
   showScrollToBottom?: boolean
   onScrollToBottom?: () => void
+  /** The chat's context meter, first of the run controls. */
+  contextMeter?: React.ReactNode
 }
 
 export function ChatInput({
@@ -332,7 +351,8 @@ export function ChatInput({
   getPromptHistory,
   showScrollToBottom = false,
   onScrollToBottom = () => undefined,
-  onAddFileMention
+  onAddFileMention,
+  contextMeter
 }: ChatInputProps) {
   const imageInputRef = React.useRef<HTMLInputElement>(null)
   // While dictating, the empty box says it is listening.
@@ -819,7 +839,13 @@ export function ChatInput({
           />
         ) : undefined
       }
-      footer={<PullRequestBar workspaceRoot={workspaceFolder} />}
+      footer={
+        // Holds the pull-request bar's line even when there is none, so the composer stays put
+        // between an empty chat, a chat outside a repository and one with a pull request.
+        <div className="composer-footer">
+          <PullRequestBar workspaceRoot={workspaceFolder} />
+        </div>
+      }
       promptRefinement={
         selectedPinnedModel
           ? {
@@ -1097,7 +1123,7 @@ export function ChatInput({
                 aria-label="Add to message"
               >
                 <section className="features-menu-section" role="group" aria-label="Add">
-                  <div className="features-menu-section-label">Add</div>
+                  <div className="features-menu-section-label section-heading">Add</div>
                   <FeatureMenuAction
                     label={attachesToChatFolder ? 'Files' : 'Files and folders'}
                     description={
@@ -1133,13 +1159,13 @@ export function ChatInput({
                   role="group"
                   aria-label="Project context"
                 >
-                  <div className="features-menu-section-label">Project context</div>
+                  <div className="features-menu-section-label section-heading">Project context</div>
                   <FeatureMenuAction
                     label={workspaceFolder ? 'Change project folder' : 'Open project folder'}
                     description="Choose the files SideKick can read and change"
                     icon={<FolderOpen size={16} />}
                     onClick={() => runFeatureAction(onOpenWorkspace)}
-                    selected={Boolean(workspaceFolder)}
+                    trailing={workspaceFolder?.split(/[\\/]/).filter(Boolean).at(-1)}
                   />
                   {workspaceFolder && (
                     <FeatureMenuAction
@@ -1162,7 +1188,7 @@ export function ChatInput({
                 </section>
 
                 <section className="features-menu-section" role="group" aria-label="Agent behavior">
-                  <div className="features-menu-section-label">Agent behavior</div>
+                  <div className="features-menu-section-label section-heading">Agent behavior</div>
                   <FeatureMenuAction
                     label="Ongoing goal"
                     description="Keep SideKick working toward an objective across messages"
@@ -1171,6 +1197,7 @@ export function ChatInput({
                     disabled={!goalAvailable && !goalArmed}
                     unavailableReason={goalUnavailableReason}
                     selected={goalArmed}
+                    showHint
                   />
                   <FeatureMenuAction
                     label="Plan first"
@@ -1180,6 +1207,7 @@ export function ChatInput({
                     disabled={!planAvailable}
                     unavailableReason={planUnavailableReason}
                     selected={planSelected}
+                    showHint
                   />
                   <FeatureMenuAction
                     label="Research report"
@@ -1189,19 +1217,22 @@ export function ChatInput({
                     disabled={!researchAvailable}
                     unavailableReason={researchUnavailableReason}
                     selected={researchSelected}
+                    showHint
                   />
                 </section>
               </div>
             )}
           </div>
           {toolbarExtra}
+          {/* With the chat's context, not the run controls: it is a standing setting. */}
+          {onPermissionModeChange && (
+            <PermissionModePicker mode={permissionMode} onChange={onPermissionModeChange} />
+          )}
         </>
       }
       toolbarRight={
         <>
-          {onPermissionModeChange && (
-            <PermissionModePicker mode={permissionMode} onChange={onPermissionModeChange} />
-          )}
+          {contextMeter}
           <ChatModelPicker
             selectedModelId={selectedModel}
             models={pinnedModels}
@@ -1229,7 +1260,7 @@ export function ChatInput({
               disabled={isStopping}
               title={isStopping ? 'Stopping...' : 'Stop generation'}
             >
-              <Square size={14} fill="currentColor" />
+              <StopGlyph />
             </button>
           )}
         </>

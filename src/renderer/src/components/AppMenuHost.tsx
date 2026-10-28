@@ -96,7 +96,7 @@ function MenuList({
             return <div key={item.id} className="app-menu-separator" role="separator" />
           if (item.type === 'heading')
             return (
-              <div key={item.id} className="app-menu-heading" role="presentation">
+              <div key={item.id} className="app-menu-heading section-heading" role="presentation">
                 {item.label}
               </div>
             )

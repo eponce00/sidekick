@@ -14,7 +14,7 @@
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   color: var(--text-secondary);
-  background: var(--surface-3);
+  background: var(--composer-chip-bg);
 }
 
 .composer-context-attachment > svg {
@@ -79,18 +79,25 @@
   gap: 1px;
 }
 
-/* Sections are split by hairlines and named by small grey headings, as in .app-menu. */
+/* As in .app-menu: a section with a heading is marked by the heading alone; one without is split
+   off by a hairline. */
 .features-menu-section + .features-menu-section {
   margin-top: 4px;
+}
+
+/* With no hairline, space alone splits a group off, so a heading after the first takes 8px. */
+.features-menu-section + .features-menu-section:has(> .section-heading) {
+  margin-top: 8px;
+}
+
+.features-menu-section + .features-menu-section:not(:has(> .section-heading)) {
   padding-top: 4px;
   border-top: 1px solid var(--border-subtle);
 }
 
+/* On the icon column's left edge: the rows' own inline padding. */
 .features-menu-section-label {
-  padding: 6px 10px 3px 32px;
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-  font-weight: 600;
+  padding: 6px 10px 3px 6px;
   line-height: 1.2;
 }
 
@@ -100,6 +107,45 @@
 
 .features-menu-organized .features-menu-item-check {
   flex: 0 0 auto;
+}
+
+/* A row with secondary text: the label keeps its width and the hint or trailing text gives way. */
+.features-menu-organized
+  .features-menu-action:has(.features-menu-item-hint, .features-menu-item-trailing)
+  .features-menu-item-label {
+  flex: 0 0 auto;
+}
+
+.features-menu-item-hint,
+.features-menu-item-trailing {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Rows with a description lay it in a fixed second column, so every description in the group
+   starts on one edge; the label column fits the group's longest label. */
+.features-menu-organized .features-menu-action:has(.features-menu-item-hint) {
+  display: grid;
+  grid-template-columns: 18px 128px minmax(0, 1fr) auto;
+}
+
+.features-menu-item-hint {
+  flex: 1;
+}
+
+.features-menu-organized .features-menu-action:focus-visible {
+  color: var(--text-primary);
+}
+
+.features-menu-item-trailing {
+  flex: 0 1 auto;
+  margin-left: auto;
+  padding-left: 16px;
 }
 
 .features-menu-status {
@@ -129,4 +175,9 @@
   .features-menu.features-menu-organized {
     max-height: calc(100vh - 88px);
   }
+}
+
+/* One pull-request bar line: its 6px margin and 24px row. */
+.composer-footer {
+  min-height: calc(var(--space-2) + 24px);
 }

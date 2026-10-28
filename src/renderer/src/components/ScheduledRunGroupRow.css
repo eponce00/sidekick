@@ -8,7 +8,7 @@
 
 .scheduled-run-group-row .conversation-title {
   min-width: 0;
-  flex: 1;
+  flex: 0 1 auto;
 }
 
 .scheduled-run-group-row.contains-active .scheduled-run-group-icon {
@@ -20,13 +20,20 @@
   color: var(--text-muted);
 }
 
+/* The tree's inline meta, as a worker's project reads "api-contract · sidekick-api". */
 .scheduled-run-group-count {
-  flex-shrink: 0;
+  flex: none;
   color: var(--text-muted);
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.scheduled-run-group-count::before {
+  margin-right: 4px;
+  content: '·';
 }
 
 .scheduled-run-group-runs {
-  margin-left: 18px;
+  margin-left: var(--tree-indent);
 }

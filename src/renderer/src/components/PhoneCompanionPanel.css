@@ -195,9 +195,6 @@
 .phone-popover-devices h3 {
   margin: 0;
   padding: 6px 8px 3px;
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-  font-weight: 600;
   line-height: 1.2;
 }
 

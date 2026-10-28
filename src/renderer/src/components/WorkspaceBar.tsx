@@ -24,9 +24,46 @@ interface WorkspaceBarProps {
   onManageWorktrees: () => void
   /** Reports whether the project can have worktrees, once that is known. */
   onWorktreesAvailableChange?: (available: boolean) => void
-  /** Projects a chat outside any project can move into before its first message. */
-  projectChoices?: ReadonlyArray<{ id: string; name: string }>
-  onChooseProject?: (projectId: string) => void
+}
+
+/**
+ * Before the first message of a chat outside any project, a chip in the composer's context
+ * controls that moves it into a project, so a folder or a worktree can be offered. It is part of
+ * the composer rather than a card above it, which kept the welcome screen to one surface.
+ */
+export function ProjectChoiceChip({
+  projectChoices,
+  onChooseProject
+}: {
+  projectChoices: ReadonlyArray<{ id: string; name: string }>
+  onChooseProject: (projectId: string) => void
+}): React.JSX.Element {
+  const id = useId()
+  return (
+    <label
+      className="composer-project-chip"
+      htmlFor={id}
+      title="Choose a project to work in its folder or a new worktree"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <FolderOpen size={13} aria-hidden="true" />
+      <Select
+        id={id}
+        value=""
+        onChange={(event) => {
+          if (event.target.value) onChooseProject(event.target.value)
+        }}
+        aria-label="Project"
+      >
+        <option value="">No project</option>
+        {projectChoices.map((project) => (
+          <option key={project.id} value={project.id}>
+            {project.name}
+          </option>
+        ))}
+      </Select>
+    </label>
+  )
 }
 
 /**
@@ -44,13 +81,10 @@ export function WorkspaceBar({
   onWorkInChange,
   onBaseRefChange,
   onManageWorktrees,
-  onWorktreesAvailableChange,
-  projectChoices = [],
-  onChooseProject
+  onWorktreesAvailableChange
 }: WorkspaceBarProps): React.JSX.Element | null {
   const [options, setOptions] = useState<WorktreeBranchOptions | null>(null)
   const baseId = useId()
-  const projectSelectId = useId()
   const choosing = canChoose && Boolean(projectId) && !worktree
 
   useEffect(() => {
@@ -71,42 +105,16 @@ export function WorkspaceBar({
     }
   }, [choosing, projectId, onWorktreesAvailableChange])
 
-  // A chat outside any project has no folder to copy, so it picks a project first.
-  if (canChoose && !projectId && onChooseProject && projectChoices.length) {
-    return (
+  // A chat outside any project picks one with `ProjectChoiceChip` in the composer; only a
+  // failure to move it there is said here.
+  if (canChoose && !projectId) {
+    return error ? (
       <div className="workspace-bar-area">
-        <div className="workspace-bar is-choosing">
-          <span className="workspace-bar-label">Work in</span>
-          <label className="workspace-bar-field is-base" htmlFor={projectSelectId}>
-            <FolderOpen size={12} className="workspace-bar-muted" aria-hidden="true" />
-            <Select
-              id={projectSelectId}
-              value=""
-              disabled={disabled}
-              onChange={(event) => {
-                if (event.target.value) onChooseProject(event.target.value)
-              }}
-              aria-label="Project"
-            >
-              <option value="">No project</option>
-              {projectChoices.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <span className="workspace-bar-muted">
-            Choose a project to work in its folder or a new worktree
-          </span>
+        <div className="workspace-bar-error" role="alert">
+          {error}
         </div>
-        {error && (
-          <div className="workspace-bar-error" role="alert">
-            {error}
-          </div>
-        )}
       </div>
-    )
+    ) : null
   }
   if (!choosing) return null
   // A folder without Git has no worktrees to offer; say so instead of showing a dead button.

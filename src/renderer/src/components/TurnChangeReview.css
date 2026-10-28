@@ -1,7 +1,7 @@
 .turn-change-review {
-  margin: 12px 0 16px;
+  margin: 0;
   overflow: hidden;
-  border: 1px solid var(--surface-3);
+  border: 1px solid var(--card-edge);
   border-radius: var(--radius-lg);
   background: var(--surface-1);
 }
@@ -12,21 +12,17 @@
   align-items: center;
 }
 
+/* Header and rows are one surface split by a hairline; the icon is inline, since a tile is only
+   for an identity. */
 .turn-change-review-header {
   gap: 12px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--surface-3);
-  background: color-mix(in srgb, var(--surface-2) 60%, var(--surface-1));
+  min-height: 44px;
+  padding: 6px 8px 6px 14px;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .turn-change-review-icon {
-  display: inline-grid;
   flex: none;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-md);
-  background: var(--surface-0);
   color: var(--text-secondary);
 }
 
@@ -34,8 +30,8 @@
   display: flex;
   min-width: 0;
   flex: 1;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 8px;
 }
 
 .turn-change-review-title strong {
@@ -48,17 +44,10 @@
 .turn-change-file-stats {
   display: inline-flex;
   gap: 6px;
-  font: 500 11px/1.3 var(--font-mono);
-}
-
-.turn-change-review-stats .is-add,
-.turn-change-file-stats .is-add {
-  color: var(--color-success);
-}
-
-.turn-change-review-stats .is-delete,
-.turn-change-file-stats .is-delete {
-  color: var(--color-error);
+  flex: none;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1.3;
 }
 
 .turn-change-review-actions {
@@ -68,8 +57,7 @@
   gap: 6px;
 }
 
-.turn-change-review-undo,
-.turn-change-review-view {
+.turn-change-review-undo {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -87,14 +75,7 @@
   color: var(--text-secondary);
 }
 
-.turn-change-review-view {
-  border: 1px solid var(--border-subtle);
-  background: var(--surface-1);
-  color: var(--text-primary);
-}
-
-.turn-change-review-undo:hover:not(:disabled),
-.turn-change-review-view:hover {
+.turn-change-review-undo:hover:not(:disabled) {
   background: var(--surface-3);
   color: var(--text-primary);
 }
@@ -105,7 +86,7 @@
 }
 
 .turn-change-file + .turn-change-file {
-  border-top: 1px solid var(--surface-2);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .turn-change-file-row {
@@ -134,19 +115,28 @@
 }
 
 .turn-change-file-path {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: flex;
+  min-width: 0;
   white-space: nowrap;
-  font: 500 12px/1.3 var(--font-mono);
+  font: 500 var(--code-text) / var(--code-leading) var(--font-mono);
 }
 
-/* The folder recedes so the file name, the part that differs, reads first. */
+/* The folder recedes and gives way first, so the file name, the part that differs, is cut only
+   once the folder is gone. */
 .turn-change-file-dir {
+  flex: 0 1000 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--text-muted);
   font-weight: 400;
 }
 
 .turn-change-file-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--text-primary);
 }
 
@@ -156,7 +146,7 @@
   border-radius: var(--radius-xs);
   background: var(--surface-3);
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
 }
 
@@ -206,7 +196,7 @@
   min-height: 36px;
   padding: 0 14px;
   border: 0;
-  border-top: 1px solid var(--surface-2);
+  border-top: 1px solid var(--border-subtle);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;

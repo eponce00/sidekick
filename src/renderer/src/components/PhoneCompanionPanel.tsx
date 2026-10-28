@@ -132,7 +132,9 @@ function PhonePopover({
 
       {devices.length > 0 && (
         <section className="phone-popover-devices" aria-labelledby={`${titleId}-devices`}>
-          <h3 id={`${titleId}-devices`}>Phones</h3>
+          <h3 id={`${titleId}-devices`} className="section-heading">
+            Phones
+          </h3>
           <ul>
             {devices.map((device) => (
               <PairedPhoneRow

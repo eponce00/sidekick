@@ -1,24 +1,26 @@
 .sidebar {
-  width: 276px;
+  /* Every one-line tree row (project, chat, schedule, phone, New chat) is one 32px pitch. */
+  --sidebar-row-height: 32px;
+  width: var(--sidebar-width);
   height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background: var(--surface-0);
-  border-right: 1px solid var(--panel-border);
+  border-right: 1px solid var(--rail-border);
   transition: width var(--duration-layout) var(--ease-out);
 }
 
 /* While it changes width, its content keeps its full width and is clipped or revealed, so text
    never re-wraps from frame to frame. */
 .sidebar:not(.collapsed) > :not(.sidebar-search, .sidebar-filter-chip) {
-  min-width: 275px;
+  min-width: calc(var(--sidebar-width) - 1px);
 }
 
 /* The search field's side margins come out of the same width, so it ends inside the sidebar. The
    filter chip keeps its own width. */
 .sidebar:not(.collapsed) > .sidebar-search {
-  min-width: calc(275px - 2 * 9px);
+  min-width: calc(var(--sidebar-width) - 1px - 2 * 9px);
 }
 
 .sidebar.is-closing {
@@ -90,6 +92,7 @@
 }
 
 .sidebar-icon-btn:hover {
+  --badge-ring: var(--surface-2);
   color: var(--text-primary);
   background: var(--surface-2);
 }
@@ -142,31 +145,15 @@
   max-height: 240px;
 }
 
-.sidebar-filter-btn {
+.sidebar-filter-btn,
+.sidebar-toggle-btn {
   position: relative;
 }
 
 .sidebar-filter-btn.active {
+  --badge-ring: var(--surface-3);
   color: var(--text-primary);
   background: var(--surface-3);
-}
-
-/* Same hue as the waiting dot, so the count reads as "chats waiting on you". */
-.sidebar-filter-badge {
-  position: absolute;
-  top: 1px;
-  right: 0;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  border-radius: var(--radius-full);
-  background: var(--warning);
-  color: var(--surface-0);
-  font-size: var(--text-2xs);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  line-height: 14px;
-  pointer-events: none;
 }
 
 .sidebar .sidebar-filter-menu {
@@ -211,28 +198,10 @@
 }
 
 .sidebar-search {
-  height: 31px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
+  flex-shrink: 0;
   margin: 0 9px 7px;
-  padding: 0 9px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  color: var(--text-muted);
-  background: var(--surface-2);
-  transition:
-    border-color var(--duration-fast),
-    background var(--duration-fast);
 }
 
-.sidebar-search:focus-within {
-  border-color: var(--field-focus-border);
-  background: var(--surface-1);
-  box-shadow: var(--field-focus-glow);
-}
-
-.sidebar-search input,
 .conversation-rename-input,
 .project-rename-input {
   width: 100%;
@@ -340,16 +309,88 @@
   border-radius: var(--radius-md);
 }
 
-/* The phone button sits under the list like the header's buttons above it, with no band. */
+/* The phone row sits under the list with no band, on the list's own inline padding plus, on the
+   right, its 10px scrollbar gutter, so the row's dot lines up with the chats' dots above it. */
 .sidebar-footer {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  padding: 4px 8px 8px 10px;
+  padding: 4px 17px 8px 7px;
 }
 
-.sidebar-phone-btn {
+/* The global New chat row above the tree: fixed while the list scrolls, inset like the list so
+   its glyph and label share the project rows' edges. */
+.sidebar-new-chat {
+  flex-shrink: 0;
+  padding: 0 17px 4px 7px;
+}
+
+/* A top-level row on the tree's grid ([chevron][icon][label][status]), so its glyph and label
+   share the project rows' edges; the connection dot takes the status slot as a chat's does. The
+   New chat row is drawn the same way. */
+.sidebar-phone-row,
+.sidebar-new-chat-row,
+.project-new-chat-empty {
+  width: 100%;
+  min-height: var(--sidebar-row-height);
+  display: grid;
+  grid-template-columns: 24px 23px minmax(0, 1fr) auto;
+  align-items: center;
+  padding: 0 8px 0 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  text-align: left;
+  transition:
+    color var(--duration-fast),
+    background var(--duration-fast);
+}
+
+.sidebar-phone-row > .sidebar-phone-glyph,
+.sidebar-new-chat-row > svg {
+  grid-column: 2;
+  margin-left: 3px;
+  color: var(--text-muted);
+}
+
+.sidebar-phone-label,
+.sidebar-new-chat-row > span {
+  grid-column: 3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-phone-row > .conversation-run-indicator {
+  grid-column: 4;
+  margin-left: 8px;
+}
+
+.sidebar-phone-row:hover,
+.sidebar-new-chat-row:hover {
+  color: var(--text-primary);
+  background: var(--surface-2);
+}
+
+.sidebar-phone-row.active {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.sidebar-phone-row:is(:hover, .active) > .sidebar-phone-glyph,
+.sidebar-new-chat-row:hover > svg {
+  color: var(--text-secondary);
+}
+
+.sidebar-phone-glyph {
   position: relative;
+  display: grid;
+  place-items: center;
 }
 
 .sidebar-phone-btn.active,
@@ -358,17 +399,24 @@
   background: var(--surface-3);
 }
 
-/* A phone is connected now. */
+/* On the rail the connection dot sits on the glyph's corner, cut out of it by a ring in the
+   button's surface, as the Terminal rail's state dots are. The phone's outline is narrower than
+   its 16px box, so the dot is centred on the outline's corner rather than the box's. */
 .sidebar-phone-dot {
   position: absolute;
-  top: 4px;
-  right: 4px;
-  width: 8px;
-  height: 8px;
-  border: 2px solid var(--surface-0);
-  border-radius: var(--radius-full);
-  background: var(--accent);
+  top: -2px;
+  right: 0;
+  box-shadow: 0 0 0 1.5px var(--surface-0);
   pointer-events: none;
+}
+
+.sidebar-phone-btn:hover .sidebar-phone-dot {
+  box-shadow: 0 0 0 1.5px var(--surface-2);
+}
+
+.sidebar-phone-btn.active .sidebar-phone-dot,
+.sidebar-phone-btn:active .sidebar-phone-dot {
+  box-shadow: 0 0 0 1.5px var(--surface-3);
 }
 
 /* From the bottom of the rail the menu opens beside it and upward, so it stays on screen. */
@@ -377,39 +425,23 @@
   bottom: 0;
 }
 
+/* The button is 38px, not the toggle's 28px, so the badge moves in to sit on the glyph's corner
+   as the toggle's does. */
+.collapsed-sidebar-nav .count-badge {
+  top: 2px;
+  right: 2px;
+}
+
 .collapsed-sidebar-nav button:hover {
+  --badge-ring: var(--surface-2);
   color: var(--text-primary);
   background: var(--surface-2);
 }
 
-/* The list holding the open chat: shown by surface, as a toolbar's active button is. */
+/* The list holding the open chat: a brighter icon, with no resting tint, which would read as a
+   pressed or open control. */
 .collapsed-sidebar-nav button.active {
   color: var(--text-primary);
-  background: var(--surface-3);
-}
-
-.collapsed-sidebar-nav button > span {
-  position: absolute;
-  right: 2px;
-  bottom: 2px;
-  min-width: 14px;
-  height: 14px;
-  display: grid;
-  place-items: center;
-  padding: 0 3px;
-  border: 2px solid var(--surface-0);
-  border-radius: var(--radius-full);
-  color: var(--text-secondary);
-  background: var(--surface-3);
-  font-size: var(--text-2xs);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-
-.collapsed-sidebar-nav button.active > span {
-  color: var(--text-primary);
-  background: var(--surface-4);
 }
 
 .sidebar-section-label {
@@ -417,10 +449,6 @@
   display: flex;
   align-items: center;
   padding: 0 7px;
-  color: var(--text-muted);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  letter-spacing: 0;
 }
 
 .sidebar-section-label-with-action {
@@ -570,11 +598,11 @@
 }
 
 .project-row {
-  min-height: 34px;
+  min-height: var(--sidebar-row-height);
   display: flex;
   align-items: center;
   gap: 3px;
-  padding: 2px 3px;
+  padding: 2px 3px 2px 0;
   color: var(--text-secondary);
 }
 
@@ -644,34 +672,47 @@
 }
 
 .project-conversations {
-  margin-left: 27px;
+  margin-left: var(--tree-indent);
   padding-left: 0;
 }
 
+/* An empty project's placeholder: on the tree's grid, so its title shares the chats' size and
+   left edge, with its icon in the icon column; muted, since it is an action and not a chat. */
+/* A project's empty New chat row: the shared row above, with no meta column and quieter text. */
 .project-new-chat-empty {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 8px;
-  border: 0;
-  background: transparent;
+  grid-template-columns: 24px 23px minmax(0, 1fr);
   color: var(--text-muted);
-  cursor: pointer;
-  font-size: var(--text-xs);
+}
+
+.project-new-chat-empty > svg {
+  grid-column: 2;
+  margin-left: 3px;
+}
+
+.project-new-chat-empty > span {
+  grid-column: 3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-new-chat-empty:hover {
+  background: var(--surface-2);
   color: var(--text-primary);
 }
 
+/* One grid for every row at every depth: [chevron][icon][title][meta]. The chevron and icon
+   columns match a project row's, so titles at one depth share one left edge whether or not the
+   row has a chevron or an icon; each level is indented by --tree-indent. Meta (a status dot, a
+   run count) takes room only on rows that have it, and the hover actions float over it. */
 .conversation-item {
   position: relative;
-  min-height: 34px;
-  display: flex;
+  /* One pitch for every one-line row; a manager's two-line row grows past it. */
+  min-height: var(--sidebar-row-height);
+  display: grid;
+  grid-template-columns: 24px 23px minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 4px;
-  margin: 1px 0;
-  padding: 5px 7px 5px 9px;
+  padding: 4px 8px 4px 0;
   border: 0;
   border-radius: var(--radius-sm);
   transition:
@@ -679,19 +720,59 @@
     border-color var(--duration-fast);
 }
 
-.conversation-item.nested {
-  min-height: 33px;
-  padding: 5px 7px;
+.conversation-item > :is(.session-family-toggle, svg:first-child) {
+  grid-column: 1;
+  justify-self: center;
+}
+
+.conversation-item > .scheduled-run-group-icon {
+  grid-column: 2;
+  margin-left: 3px;
+}
+
+.conversation-item > :is(.conversation-main, .conversation-title) {
+  grid-column: 3;
+}
+
+/* A worktree mark sits in the icon column, so the title after it keeps the shared edge. */
+.conversation-item:has(.conversation-worktree-icon) > .conversation-main {
+  grid-column: 2 / 4;
+  padding-left: 3px;
+}
+
+.conversation-item > .conversation-run-indicator {
+  grid-column: 4;
+  margin-left: 8px;
+}
+
+.conversation-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+/* A worker's project name wraps onto a hidden second line, and so disappears, when less than a
+   useful part of it fits beside the title. */
+.conversation-main:has(> .session-project-tag) {
+  flex-wrap: wrap;
+  height: 24px;
+  overflow: hidden;
 }
 
 .conversation-item:hover {
   background: var(--surface-2);
 }
 
-/* Weight is reserved for the selected row; a list where every title is
-   medium reads as a wall of semi-bold, especially in Inter on Windows. */
+/* Weight and full contrast are reserved for the selected row; a list where every title is
+   medium and bright reads as a wall. */
 .conversation-item.active .conversation-title {
+  color: var(--text-primary);
   font-weight: 500;
+}
+
+.conversation-item:hover .conversation-title {
+  color: var(--text-primary);
 }
 
 .conversation-item.active {
@@ -756,7 +837,7 @@
 
 .conversation-title {
   overflow: hidden;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   font-size: var(--text-sm);
   font-weight: 400;
   line-height: 1.45;
@@ -764,9 +845,9 @@
   white-space: nowrap;
 }
 
-/* A chat in its own worktree: a quiet mark before its title. */
+/* A chat in its own worktree: a quiet mark before its title, filling the icon column. */
 .conversation-worktree-icon {
-  margin-right: 5px;
+  margin-right: 8px;
   color: var(--text-muted);
   vertical-align: -2px;
 }
@@ -780,6 +861,8 @@
   white-space: nowrap;
 }
 
+/* Every state is one 6px dot (UI.md, Sidebar tree). Accent means live work only, and only the
+   live states (working, waiting) carry a halo. */
 .conversation-run-indicator {
   width: 6px;
   height: 6px;
@@ -793,16 +876,16 @@
   animation: conversation-run-pulse 1.8s ease-in-out infinite;
 }
 
+/* Done and not yet read: neutral, so it never reads as still working. */
 .conversation-run-indicator.unread {
+  background: var(--text-primary);
   animation: none;
 }
 
 /* Waiting on the user: steady and in the warning color, so it reads apart from
    the pulsing "working" dot. */
 .conversation-run-indicator.waiting {
-  width: 8px;
-  height: 8px;
-  background: var(--warning);
+  background: var(--color-warning-mark);
   box-shadow: 0 0 0 3px var(--color-warning-subtle);
 }
 
@@ -813,38 +896,34 @@
 }
 
 .conversation-run-indicator.failed {
-  background: var(--color-error);
+  background: var(--color-error-mark);
 }
 
 /* Started, waiting for a run slot. */
 .conversation-run-indicator.queued {
-  width: 8px;
-  height: 8px;
   border: 1.5px dashed var(--accent);
   background: transparent;
 }
 
 .conversation-run-indicator.stopped {
-  width: 8px;
-  height: 8px;
   border: 1.5px solid var(--text-muted);
   background: transparent;
 }
 
-/* Chats a chat started hang under it on a thin guide line, as in Claude Code's sidebar. */
+/* Chats a chat started hang under it on a thin guide line, as in Claude Code's sidebar. The
+   line runs under the manager's chevron; line and padding make one --tree-indent. */
 .session-family-workers {
-  margin: 0 0 2px 15px;
-  padding-left: 6px;
+  margin: 0 0 2px 12px;
+  padding-left: calc(var(--tree-indent) - 13px);
   border-left: 1px solid var(--border-color);
 }
 
 .session-family-toggle {
-  width: 18px;
+  width: 22px;
   height: 22px;
   display: grid;
   flex-shrink: 0;
   place-items: center;
-  margin-left: -5px;
   padding: 0;
   border: 0;
   border-radius: var(--radius-xs);
@@ -879,22 +958,26 @@
 
 /* The name claims its width first, so the project tag beside it shrinks before the name does. */
 .conversation-item.session-worker .conversation-content {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
 }
 
 .session-project-tag {
-  min-width: 28px;
+  min-width: 8ch;
   max-width: 96px;
   flex: 0 1000 auto;
   overflow: hidden;
-  padding: 1px 6px;
-  border-radius: var(--radius-full);
-  color: var(--text-secondary);
-  background: var(--surface-2);
+  color: var(--text-muted);
   font-size: var(--text-xs);
   line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Inline tree meta, like a schedule's run count, not a filled chip; the row's 4px gap sits
+   before the separator. */
+.session-project-tag::before {
+  margin-right: 4px;
+  content: '·';
 }
 
 .conversation-rename-input {
@@ -905,17 +988,30 @@
   font-size: var(--text-sm);
 }
 
+/* Floats over the row's end, so a title is not cut short for actions that only show on hover. */
 .conversation-actions {
+  position: absolute;
+  top: 50%;
+  right: 4px;
   display: flex;
   align-items: center;
-  flex-shrink: 0;
+  padding-left: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
   opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
   transition: opacity var(--duration-fast);
+}
+
+.conversation-item.active .conversation-actions {
+  background: var(--surface-3);
 }
 
 .conversation-item:hover .conversation-actions,
 .conversation-item:focus-within .conversation-actions {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .conversation-action-button {
@@ -966,4 +1062,16 @@
 .empty-conversations.compact {
   padding: 9px 7px;
   justify-content: flex-start;
+}
+
+/* A manager's roll-up keeps one line by dropping whole items off its end: each item wraps as a
+   unit onto a second line that is clipped away. */
+.conversation-metadata.session-roll-up {
+  height: 1.3em;
+  white-space: normal;
+}
+
+.session-roll-up-item {
+  display: inline-block;
+  white-space: nowrap;
 }

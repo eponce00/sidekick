@@ -4,6 +4,7 @@ import type { ContentSegment, ToolExecution } from '../types/chat.types'
 import { changedFilesFromSegments } from '../utils/turnChanges'
 import { useReviewCommentSink } from '../hooks/useReviewCommentSink'
 import { RichDiffBlock } from './RichDiffBlock'
+import { DiffCounts } from './DiffCounts'
 import './TurnChangeReview.css'
 
 /** A long change list shows this many files until it is expanded, so the answer stays in view. */
@@ -49,16 +50,13 @@ export function TurnChangeReview({
   return (
     <section className="turn-change-review" aria-label="Files changed in this response">
       <div className="turn-change-review-header">
-        <span className="turn-change-review-icon" aria-hidden="true">
-          <FileDiff size={16} />
-        </span>
         <span className="turn-change-review-title">
+          <FileDiff size={16} className="turn-change-review-icon" aria-hidden="true" />
           <strong>
             {verb} {files.length} {files.length === 1 ? 'file' : 'files'}
           </strong>
           <span className="turn-change-review-stats">
-            <span className="is-add">+{additions}</span>
-            <span className="is-delete">−{deletions}</span>
+            <DiffCounts additions={additions} deletions={deletions} />
           </span>
         </span>
         <span className="turn-change-review-actions">
@@ -79,7 +77,7 @@ export function TurnChangeReview({
           {withDiffs.length > 0 && (
             <button
               type="button"
-              className="turn-change-review-view"
+              className="settings-secondary-action is-small"
               aria-expanded={allOpen}
               onClick={() => {
                 if (allOpen) {
@@ -147,10 +145,12 @@ export function TurnChangeReview({
                     <ExternalLink size={12} />
                   </button>
                 )}
-                <span className="turn-change-file-stats">
-                  <span className="is-add">+{file.additions}</span>
-                  <span className="is-delete">−{file.deletions}</span>
-                </span>
+                {/* One file's counts are the header's; saying them twice was noise. */}
+                {files.length > 1 && (
+                  <span className="turn-change-file-stats">
+                    <DiffCounts additions={file.additions} deletions={file.deletions} />
+                  </span>
+                )}
               </div>
               {open && file.diff && (
                 <RichDiffBlock

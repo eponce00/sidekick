@@ -1,4 +1,5 @@
 import {
+  Children,
   memo,
   isValidElement,
   useCallback,
@@ -24,7 +25,7 @@ import {
   ChevronRight,
   Copy,
   ExternalLink,
-  FileCode2,
+  FileCode,
   FileText,
   Image as ImageIcon,
   ImageOff,
@@ -115,6 +116,44 @@ function remarkFileReferences(): (tree: MarkdownNode) => void {
           next.push({ type: 'text', value: child.value.slice(cursor) })
       }
       node.children = next
+    }
+    visit(tree)
+  }
+}
+
+const TRAILING_PUNCTUATION = /^[.,;:!?)]/
+const OPENING_MARK = /[([{“‘"']$/
+
+function addClassName(node: MarkdownNode, className: string): void {
+  const properties = (node.properties ??= {})
+  const existing = properties.className
+  properties.className = [
+    ...(Array.isArray(existing) ? existing : existing ? [String(existing)] : []),
+    className
+  ]
+}
+
+/**
+ * Marks inline code and links that a full stop, comma or closing bracket follows, or an opening
+ * bracket or quote precedes, so their chip's padding on that side can shrink and the mark sits as
+ * close as it does beside plain text.
+ */
+function rehypeTrailingPunctuation(): (tree: MarkdownNode) => void {
+  return (tree) => {
+    const visit = (node: MarkdownNode): void => {
+      const children = node.children
+      if (!children || node.tagName === 'pre') return
+      children.forEach((child, index) => {
+        if (child.type !== 'element') return
+        visit(child)
+        if (child.tagName !== 'code' && child.tagName !== 'a') return
+        const previous = children[index - 1]
+        if (previous?.type === 'text' && OPENING_MARK.test(previous.value ?? ''))
+          addClassName(child, 'is-after-opening')
+        const next = children[index + 1]
+        if (next?.type === 'text' && TRAILING_PUNCTUATION.test(next.value ?? ''))
+          addClassName(child, 'is-before-punctuation')
+      })
     }
     visit(tree)
   }
@@ -612,13 +651,55 @@ function useWorkspaceFileOpen(
   return { resolved, error, open }
 }
 
+/**
+ * A chip's or link's icon kept on one line with the first word of its label, so a line never
+ * ends on an orphaned icon. A path's first word runs to its first slash.
+ */
+function IconWithLabel({
+  icon,
+  children,
+  labelClassName
+}: {
+  icon: React.ReactNode
+  children: React.ReactNode
+  labelClassName?: string
+}): React.JSX.Element {
+  const parts = Children.toArray(children)
+  const first = parts[0]
+  if (typeof first === 'string') {
+    const match = /^(\S*?\/|\S+)([\s\S]*)$/.exec(first)
+    const lead = match?.[1] ?? first
+    const rest = match?.[2] ?? ''
+    return (
+      <>
+        <span className="markdown-icon-lead">
+          {icon}
+          {lead}
+        </span>
+        {(rest || parts.length > 1) && (
+          <span className={labelClassName}>
+            {rest}
+            {parts.slice(1)}
+          </span>
+        )}
+      </>
+    )
+  }
+  return (
+    <>
+      {icon}
+      <span className={labelClassName}>{children}</span>
+    </>
+  )
+}
+
 function FileChipIcon({ path }: { path: string }): React.JSX.Element {
   const extension = path.split('.').pop()?.toLowerCase() ?? ''
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'].includes(extension))
     return <ImageIcon size={12} aria-hidden="true" />
   if (['md', 'markdown', 'mdx', 'txt', 'rst', 'pdf', 'doc', 'docx'].includes(extension))
     return <FileText size={12} aria-hidden="true" />
-  return <FileCode2 size={12} aria-hidden="true" />
+  return <FileCode size={12} aria-hidden="true" />
 }
 
 function InlineWorkspaceFile({
@@ -664,8 +745,7 @@ function InlineWorkspaceFile({
         }
       }}
     >
-      <FileChipIcon path={fileOpen.resolved[0]} />
-      {children}
+      <IconWithLabel icon={<FileChipIcon path={fileOpen.resolved[0]} />}>{children}</IconWithLabel>
     </code>
   )
 }
@@ -705,8 +785,9 @@ function MarkdownLink({
         }}
         title={fileOpen.error || `Open ${fileOpen.resolved[0]}`}
       >
-        <FileChipIcon path={fileOpen.resolved[0]} />
-        <span>{children}</span>
+        <IconWithLabel icon={<FileChipIcon path={fileOpen.resolved[0]} />}>
+          {children}
+        </IconWithLabel>
       </a>
     )
   }
@@ -722,9 +803,16 @@ function MarkdownLink({
         .filter(Boolean)
         .join(' ')}
     >
-      {mapLink && <MapPin size={13} aria-hidden="true" />}
-      {!mapLink && external && href && <SiteIcon url={href} size={14} />}
-      <span>{children}</span>
+      {mapLink ? (
+        <>
+          <MapPin size={13} aria-hidden="true" />
+          <span>{children}</span>
+        </>
+      ) : external && href ? (
+        <IconWithLabel icon={<SiteIcon url={href} size={14} />}>{children}</IconWithLabel>
+      ) : (
+        <span>{children}</span>
+      )}
     </a>
   )
 }
@@ -848,7 +936,7 @@ const MarkdownFragment = memo(function MarkdownFragment({
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath, remarkFileReferences]}
-      rehypePlugins={[rehypeSharedHighlight, rehypeKatex, rehypeTwemoji]}
+      rehypePlugins={[rehypeTrailingPunctuation, rehypeSharedHighlight, rehypeKatex, rehypeTwemoji]}
       components={{
         code: renderCode,
         pre: ({ children }) => {

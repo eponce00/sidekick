@@ -20,6 +20,7 @@ import { useSwipeToClose } from './gestures'
 import { useBackLayer } from './navigation'
 import { Robot } from './Robot'
 import { Sheet, SheetAction } from './Sheet'
+import { SearchField } from '../components/SearchField'
 
 /**
  * The chats, in a drawer that slides over the open chat from the left as the ChatGPT app keeps its
@@ -232,30 +233,31 @@ export function ChatDrawer({
       <nav ref={panel} className="cp-drawer" aria-label="Chats">
         <div className="cp-drawer-top">
           {searchOpen ? (
-            <label className="sidebar-search field-shell cp-search">
-              <Search size={16} aria-hidden="true" />
-              <input
-                ref={searchInput}
-                type="text"
-                value={query}
-                autoFocus
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search chats"
-                aria-label="Search chats"
-                enterKeyHint="search"
-              />
-              <button
-                type="button"
-                className="cp-search-clear"
-                aria-label="Close search"
-                onClick={() => {
-                  setQuery('')
-                  setSearchOpen(false)
-                }}
-              >
-                <X size={15} aria-hidden="true" />
-              </button>
-            </label>
+            <SearchField
+              className="cp-search"
+              iconSize={16}
+              ref={searchInput}
+              type="text"
+              value={query}
+              autoFocus
+              onChange={setQuery}
+              placeholder="Search chats"
+              aria-label="Search chats"
+              enterKeyHint="search"
+              trailing={
+                <button
+                  type="button"
+                  className="cp-search-clear"
+                  aria-label="Close search"
+                  onClick={() => {
+                    setQuery('')
+                    setSearchOpen(false)
+                  }}
+                >
+                  <X size={15} aria-hidden="true" />
+                </button>
+              }
+            />
           ) : (
             <>
               <h2 className="cp-drawer-title">SideKick</h2>
