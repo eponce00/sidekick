@@ -105,8 +105,9 @@ export function CommandResultOutput({
       )}
       {result.truncated && (
         <div className="rich-tool-truncation">
-          The command printed more than {kept}; SideKick kept only the{' '}
-          {result.terminal ? 'last' : 'first'} {kept}.
+          {result.terminal
+            ? 'The command printed more than its terminal keeps; SideKick kept only its last lines.'
+            : `The command printed more than ${kept}; SideKick kept only the first ${kept}.`}
         </div>
       )}
       {outputReference?.truncated && (
