@@ -194,8 +194,13 @@ async function run(config) {
       const page = await application.firstWindow()
       await page.waitForFunction(() => Boolean(window.api?.agentRuns))
       stage = 'navigation'
+      // SideKick makes a project only from a folder chosen in its folder picker.
+      await application.evaluate(({ dialog }, folder) => {
+        dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] })
+      }, workspace)
       await page.evaluate(
         async ({ workspace, url }) => {
+          await window.api.workspace.selectFolder()
           const project = await window.api.projects.create(workspace, 'Read-only PDF fixture')
           const conversation = await window.api.conversations.create(
             'Read-only PDF fixture',

@@ -75,6 +75,31 @@ export function resolveKnownWorkspace(passedRoot?: unknown): string {
   return candidate
 }
 
+/**
+ * Makes a folder the visible workspace. Later workspace checks trust it, so it must already be
+ * one SideKick knows, never an arbitrary path from the renderer.
+ */
+export function setStoredWorkspace(folderPath: unknown): void {
+  if (folderPath !== null && (typeof folderPath !== 'string' || !folderPath)) {
+    throw new Error('Invalid workspace root')
+  }
+  getStore().set('workspacePath', folderPath === null ? null : resolveKnownWorkspace(folderPath))
+}
+
+/** Folders the user chose in SideKick's folder picker since it started. */
+const pickedFolders = new Set<string>()
+
+export function rememberPickedFolder(folderPath: string): void {
+  pickedFolders.add(resolve(folderPath))
+}
+
+/** A new project's folder must be one the user chose in the folder picker. */
+export function assertPickedFolder(folderPath: string): void {
+  if (!pickedFolders.has(resolve(folderPath))) {
+    throw new Error('Choose the project folder in the folder picker')
+  }
+}
+
 /** Path-traversal guard: ensures filePath is inside workspaceRoot. */
 export function assertInsideWorkspace(filePath: string, workspaceRoot: string): void {
   assertPathInside(workspaceRoot, filePath)

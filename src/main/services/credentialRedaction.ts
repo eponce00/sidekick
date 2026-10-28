@@ -75,10 +75,14 @@ export function secretVariants(value: string): string[] {
     encoded.push(...lines.filter((line) => !/^-----(BEGIN|END) [A-Z0-9 ]+-----$/.test(line.trim())))
   }
   const json = JSON.stringify(value).slice(1, -1)
+  const slashes = json.replace(/\//g, '\\/')
   // JSON as other writers produce it: `<`, `>` and `&` as \u escapes (Go), `<` alone (the
   // page-content blocks SideKick gives its model), every non-ASCII character escaped (Python's
-  // default), and JSON text quoted again inside another JSON string.
+  // default), `/` escaped as well (PHP's default), and JSON text quoted again inside another
+  // JSON string.
   encoded.push(
+    slashes,
+    unicodeEscaped(slashes, /[\u0080-￿]/g, false),
     json,
     unicodeEscaped(json, /</g, false),
     unicodeEscaped(json, /[<>&]/g, false),
@@ -93,7 +97,9 @@ export function secretVariants(value: string): string[] {
       component,
       component.replace(/%20/g, '+'),
       component.replace(/%[0-9A-F]{2}/g, (escape) => escape.toLowerCase()),
-      encodeURI(value)
+      encodeURI(value),
+      // Form and query fields as URLSearchParams writes them, which also escapes `!'()~`.
+      new URLSearchParams({ v: value }).toString().slice(2)
     )
   } catch {
     // A lone surrogate cannot be percent-encoded, so no program prints it that way either.
@@ -234,9 +240,44 @@ function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff
 }
 
-/** Text without its escapes, and where each of its characters sits in the original. */
-function withoutEscapes(raw: string): { text: string; at: number[] } | null {
-  if (!raw.includes('\x1b')) return null
+const BASE64_LINE = /^[\w+/-]+$/
+const BASE64_CHARACTER = /[\w+/=-]/
+
+/**
+ * Line breaks inside Base64 wrapped at the widths encoders use: 76 columns (MIME, `base64`) and
+ * 64 (PEM, OpenSSL). A break at the very end counts, so a stream holds a line the next continues.
+ */
+function wrappedBase64Breaks(raw: string): Array<[number, number]> {
+  const breaks: Array<[number, number]> = []
+  let lineStart = 0
+  for (let index = raw.indexOf('\n'); index !== -1; index = raw.indexOf('\n', lineStart)) {
+    const lineEnd = index > lineStart && raw[index - 1] === '\r' ? index - 1 : index
+    const width = lineEnd - lineStart
+    if (
+      (width === 64 || width === 76) &&
+      (index + 1 === raw.length || BASE64_CHARACTER.test(raw[index + 1])) &&
+      BASE64_LINE.test(raw.slice(lineStart, lineEnd))
+    ) {
+      breaks.push([lineEnd, index + 1])
+    }
+    lineStart = index + 1
+  }
+  return breaks
+}
+
+/**
+ * Text as values are matched in it, without escapes and with wrapped Base64 joined into one
+ * line, and where each of its characters sits in the original.
+ */
+function matchableText(raw: string): { text: string; at: number[] } | null {
+  const cuts: Array<[number, number]> = raw.includes('\n') ? wrappedBase64Breaks(raw) : []
+  if (raw.includes('\x1b')) {
+    for (const match of raw.matchAll(ANSI_SEQUENCE)) {
+      cuts.push([match.index, match.index + match[0].length])
+    }
+  }
+  if (!cuts.length) return null
+  cuts.sort((left, right) => left[0] - right[0])
   let text = ''
   const at: number[] = []
   let cursor = 0
@@ -244,9 +285,10 @@ function withoutEscapes(raw: string): { text: string; at: number[] } | null {
     for (let index = cursor; index < end; index++) at.push(index)
     text += raw.slice(cursor, end)
   }
-  for (const match of raw.matchAll(ANSI_SEQUENCE)) {
-    keep(match.index)
-    cursor = match.index + match[0].length
+  for (const [start, end] of cuts) {
+    if (start < cursor) continue
+    keep(start)
+    cursor = end
   }
   keep(raw.length)
   at.push(raw.length)
@@ -312,7 +354,8 @@ export class CredentialRedactor {
   }
 
   /**
-   * Every match in `text`, also where escapes split a value, and where a tail that could still
+   * Every match in `text`, also where escapes or Base64 line wrapping split a value, and where a
+   * tail that could still
    * begin one starts, including an escape cut off at the end.
    */
   scan(text: string): { spans: Span[]; holdFrom: number } {
@@ -320,7 +363,7 @@ export class CredentialRedactor {
     // An escape cut off at the end is left out of matching, and held with whatever it follows.
     const partial = text.includes('\x1b') ? PARTIAL_ANSI.exec(text) : null
     const complete = partial ? text.slice(0, partial.index) : text
-    const plain = withoutEscapes(complete)
+    const plain = matchableText(complete)
     if (!plain) {
       const { spans, tail } = this.automaton.scan(complete)
       return { spans, holdFrom: complete.length - tail }

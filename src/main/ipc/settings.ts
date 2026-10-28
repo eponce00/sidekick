@@ -5,6 +5,7 @@ import type { PinnedModel } from '../../shared/models'
 import type { ProviderSettings } from '../../shared/settings'
 import {
   migrateLegacyProviderInstances,
+  sameProviderBaseUrl,
   syncLegacyProviderSettings
 } from '../../shared/providerInstances'
 import { appState, getStore } from './state'
@@ -107,7 +108,13 @@ export function protectSettings(value: unknown, existingValue?: unknown): unknow
             (candidate) => candidate && typeof candidate === 'object' && candidate.id === id
           )
         : undefined
-      const secret = instance.apiKey === undefined ? previousInstance?.apiKey : instance.apiKey
+      // A saved key goes only to the address it was saved with; moving the provider without a
+      // new key drops it, so the user enters it again for the new address.
+      const moved =
+        previousInstance !== undefined &&
+        !sameProviderBaseUrl(previousInstance.baseUrl, instance.baseUrl)
+      const secret =
+        instance.apiKey === undefined ? (moved ? '' : previousInstance?.apiKey) : instance.apiKey
       delete instance.apiKeyConfigured
       if (id) retainedProviderIds.add(id)
       if (id && typeof secret === 'string' && secret) {

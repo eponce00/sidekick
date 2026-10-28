@@ -266,4 +266,43 @@ describe('JSON forms other writers produce', () => {
     expect(redactor.redact(twice)).toContain('[secret: entry-0]')
     expect(redactor.redact(twice)).not.toContain(value.slice(-10))
   })
+
+  it('catches a value whose JSON escapes slashes, as PHP writes it by default', () => {
+    const value = `a/b/é${generated(10)}`
+    const redactor = redactorFor(value)
+    const json = JSON.stringify(value).slice(1, -1).replace(/\//g, '\\/')
+    for (const form of [json, unicode(json, /[\u0080-￿]/g)]) {
+      expect(redactor.redact(`{"token":"${form}"}`), form).toBe('{"token":"[secret: entry-0]"}')
+    }
+  })
+})
+
+describe('forms SideKick and common tools write', () => {
+  it('catches a value in a form or query field, encoded the way URLSearchParams writes it', () => {
+    const value = `it's (a) ~test!*${generated(10)}`
+    const redactor = redactorFor(value)
+    const field = new URLSearchParams({ token: value }).toString()
+    expect(redactor.redact(`POST ${field}&next=1`)).toBe('POST token=[secret: entry-0]&next=1')
+  })
+
+  it('catches Base64 wrapped at 76 or 64 columns, wherever the value starts', () => {
+    const value = generated(90)
+    const redactor = redactorFor(value)
+    for (const width of [76, 64]) {
+      for (const prefix of ['', 'user:', 'ab']) {
+        const encoded = Buffer.from(`${prefix}${value}`).toString('base64')
+        const wrapped = encoded.match(new RegExp(`.{1,${width}}`, 'g'))!.join('\r\n')
+        const output = redactor.redact(`${wrapped}\r\n`)
+        expect(output, `width ${width} prefix ${prefix}`).toContain('[secret: entry-0]')
+        // Only the few characters that also encode the prefix stay readable.
+        expect(output).not.toMatch(/[A-Za-z0-9+/]{12}/)
+      }
+    }
+  })
+
+  it('leaves ordinary lines that happen to be 76 characters long as they are', () => {
+    const redactor = redactorFor(generated(30))
+    const text = `${'a'.repeat(76)}\n${'b'.repeat(10)}\n`
+    expect(redactor.redact(text)).toBe(text)
+  })
 })

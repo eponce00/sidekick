@@ -11,7 +11,13 @@ import {
 } from 'electron'
 import { basename, isAbsolute, join, relative } from 'path'
 import { getStore } from './state'
-import { getStoredWorkspace, resolveKnownWorkspace, assertInsideWorkspace } from './workspaceUtils'
+import {
+  getStoredWorkspace,
+  resolveKnownWorkspace,
+  assertInsideWorkspace,
+  rememberPickedFolder,
+  setStoredWorkspace
+} from './workspaceUtils'
 import { chatIdForFolder, copyUploadIntoChatFolder } from '../services/chatFolders'
 import { promises as fs } from 'fs'
 import { spawn } from 'child_process'
@@ -53,6 +59,7 @@ export function registerWorkspaceHandlers(): void {
     if (result.canceled || result.filePaths.length === 0) {
       return { canceled: true, path: null }
     }
+    rememberPickedFolder(result.filePaths[0])
     return { canceled: false, path: result.filePaths[0] }
   })
 
@@ -209,8 +216,8 @@ export function registerWorkspaceHandlers(): void {
     return { ok: true }
   })
 
-  ipcMain.handle('workspace:setPath', async (_, folderPath: string | null) => {
-    getStore().set('workspacePath', folderPath)
+  ipcMain.handle('workspace:setPath', async (_, folderPath: unknown) => {
+    setStoredWorkspace(folderPath)
     return { success: true }
   })
 
