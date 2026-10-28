@@ -261,6 +261,20 @@ npm run benchmark:agent-evals -- before.json after.json
 It calls a model, so it never runs in CI. Write a new case by hand from the pattern a bad run
 shows, never by copying a conversation, prompt, path or credential from a run journal.
 
+### Real-world scenarios
+
+`npm run test:real-world-eval -- <model> [<model> …]` runs project-sized tasks on free OpenRouter
+models (`src/main/evals/realWorld.live.test.ts`): the production kernel, tools, terminal and system
+prompt on a small synthetic project, graded by what ends up on disk and in the reply. They cover a
+failing test, a long background job, a launcher that starts another program, a server's whole
+lifecycle, a command waiting at a prompt, a long log, git, a rename across files, live web
+research, a two-turn revision, a large file, CRLF and accented text, and a 24k window that has to
+compact. After each run the model is asked, with tools off, what in the tooling got in its way;
+treat its answer as a lead to check in the transcript, not a finding. `SIDEKICK_REALWORLD_ONLY`
+runs only the named scenarios, and `SIDEKICK_REALWORLD_REPORT` and
+`SIDEKICK_REALWORLD_TRANSCRIPTS` save the results and each run's messages. It reads the OpenRouter
+key like the other evaluations and calls models, so it never runs in CI.
+
 ## Search and packaged-app tests
 
 `npm run test:search-smoke` performs an opt-in live search check. Keep ordinary search behavior

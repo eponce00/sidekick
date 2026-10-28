@@ -56,6 +56,7 @@
     "test:agent-eval:configured:visual": "electron scripts/run-configured-agent-eval.cjs --visual",
     "test:agent-eval:configured:comprehensive": "electron scripts/run-configured-agent-eval.cjs --comprehensive",
     "test:openrouter-eval": "node scripts/run-openrouter-model-eval.cjs",
+    "test:real-world-eval": "node scripts/run-real-world-eval.cjs",
     "test:system-eval": "node scripts/run-agent-system-eval.cjs",
     "audit:runs": "node scripts/audit-runs.cjs",
     "test:behavior": "node --test scripts/electron-behavior.test.cjs scripts/electron-chat-family.test.cjs",
