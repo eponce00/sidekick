@@ -224,20 +224,10 @@ describe('WebMcpPageTools', () => {
     ).resolves.toMatchObject({ status: 'completed', output: 'ok' })
   })
 
-  it('keeps answers nobody awaits yet bounded in size and number', async () => {
+  it('keeps a bounded number of answers nobody awaits yet', async () => {
     vi.useFakeTimers()
     const page = pageWith(tool('add_item'))
-    const huge = 'x'.repeat(WEBMCP_MAX_RESULT_BYTES * 4)
-    page.handle('WebMCP.toolResponded', { invocationId: 'big', status: 'Completed', output: huge })
     const signal = new AbortController().signal
-    const big = (await page.awaitResult('big', {
-      form: false,
-      timeoutMs: 1_000,
-      signal
-    })) as Extract<WebMcpCallOutcome, { status: 'completed' }>
-    expect(big.truncated).toBe(true)
-    expect(Buffer.byteLength(String(big.output))).toBeLessThanOrEqual(WEBMCP_MAX_RESULT_BYTES)
-
     for (let index = 0; index < 12; index++) {
       page.handle('WebMCP.toolResponded', {
         invocationId: `early-${index}`,

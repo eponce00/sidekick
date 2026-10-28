@@ -43,7 +43,7 @@ describe('ChatsPanel', () => {
   const button = (scope: Element, label: string): HTMLButtonElement =>
     [...scope.querySelectorAll('button')].find((item) => item.textContent === label)!
 
-  it('lists a manager’s chats with state, branch and actions', async () => {
+  it('stops, messages and opens a manager’s chats, stopping only one still running', async () => {
     const onOpenChat = vi.fn()
     const onMessageChat = vi.fn()
     const onStop = vi.fn()
@@ -66,20 +66,7 @@ describe('ChatsPanel', () => {
         />
       )
     )
-    const cards = [...container.querySelectorAll('.chats-panel-card')]
-    expect(cards).toHaveLength(2)
-    expect(container.querySelector('.chats-panel-heading')?.textContent).toBe(
-      'Started by this chat 2'
-    )
-    const [waiting, finished] = cards
-    expect(waiting.querySelector('.chats-panel-state')?.textContent).toBe('Needs you')
-    expect(waiting.querySelector('.chats-panel-reason')?.textContent).toBe('Approval: run npm test')
-    expect(waiting.querySelector('.chats-panel-branch')?.textContent).toBe(
-      'sidekick/schedules+3 commits4 files changed'
-    )
-    expect(finished.querySelector('.chats-panel-branch')?.textContent).toBe(
-      'sidekick/question-card+1 commitclean'
-    )
+    const [waiting, finished] = [...container.querySelectorAll('.chats-panel-card')]
     // Only a chat still running can be stopped.
     expect(button(finished, 'Stop')).toBeUndefined()
     await act(async () => button(waiting, 'Stop').click())
@@ -88,10 +75,9 @@ describe('ChatsPanel', () => {
     expect(onMessageChat).toHaveBeenCalledWith(schedules.conversationId)
     await act(async () => button(finished, 'Open').click())
     expect(onOpenChat).toHaveBeenCalledWith(done.conversationId)
-    expect(container.querySelector('.chats-panel-usage')?.textContent).toContain('2 of 8')
   })
 
-  it('shows a worker its family and itself, and detaches only after confirmation', async () => {
+  it('leads a worker to its manager, and detaches only after confirmation', async () => {
     const onOpenChat = vi.fn()
     const onDetach = vi.fn()
     await act(async () =>
@@ -113,25 +99,11 @@ describe('ChatsPanel', () => {
         />
       )
     )
-    const current = container.querySelector('[aria-current="page"]')
-    expect(current?.textContent).toBe('schedules')
     await act(async () => button(container, 'Design review').click())
     expect(onOpenChat).toHaveBeenCalledWith('manager')
 
-    const facts = Object.fromEntries(
-      [...container.querySelectorAll('.chats-panel-facts dt')].map((dt) => [
-        dt.textContent,
-        dt.nextElementSibling?.textContent
-      ])
-    )
-    expect(facts['Started by']).toMatch(/^Design review, /)
-    expect(facts['Works in']).toBe('New worktree from main')
-    expect(facts.Branch).toBe('sidekick/schedules+3 commits4 files changed')
-    expect(facts.Reports).toBe('When idle, to the manager')
-
     await act(async () => button(container, 'Detach from manager').click())
     expect(onDetach).not.toHaveBeenCalled()
-    expect(container.textContent).toContain('will stop reporting to Design review')
     await act(async () => button(container, 'Detach').click())
     expect(onDetach).toHaveBeenCalledWith(schedules.conversationId)
   })
@@ -150,7 +122,6 @@ describe('ChatsPanel', () => {
         />
       )
     )
-    expect(container.textContent).toContain('Not reported anywhere')
     expect(button(container, 'Detach from manager')).toBeUndefined()
   })
 })

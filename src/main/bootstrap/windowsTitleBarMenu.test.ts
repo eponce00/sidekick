@@ -11,24 +11,10 @@ function actions(): WindowMenuActions {
 }
 
 describe('windowsTitleBarMenuTemplate', () => {
-  it('offers the conventional restore, minimize, maximize, and close commands', () => {
-    const template = windowsTitleBarMenuTemplate({ minimized: false, maximized: false }, actions())
-    expect(template.map(({ label, type }) => label || type)).toEqual([
-      'Restore',
-      'Minimize',
-      'Maximize',
-      'separator',
-      'Close'
-    ])
-    expect(template[0].enabled).toBe(false)
-    expect(template[1].enabled).toBe(true)
-    expect(template[2].enabled).toBe(true)
-    expect(template[4].accelerator).toBe('Alt+F4')
-  })
-
-  it('enables restore and disables maximize for a maximized window', () => {
-    const template = windowsTitleBarMenuTemplate({ minimized: false, maximized: true }, actions())
-    expect(template[0].enabled).toBe(true)
-    expect(template[2].enabled).toBe(false)
+  it('enables restore only for a maximized window, and maximize only for a normal one', () => {
+    const normal = windowsTitleBarMenuTemplate({ minimized: false, maximized: false }, actions())
+    expect([normal[0].enabled, normal[2].enabled]).toEqual([false, true])
+    const maximized = windowsTitleBarMenuTemplate({ minimized: false, maximized: true }, actions())
+    expect([maximized[0].enabled, maximized[2].enabled]).toEqual([true, false])
   })
 })

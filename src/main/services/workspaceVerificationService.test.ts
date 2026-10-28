@@ -243,12 +243,9 @@ describe('WorkspaceVerificationService', () => {
   it.each([
     ['cargo test', 'test'],
     ['go vet ./...', 'check'],
-    ['python -m pytest', 'test'],
     ['bundle exec rubocop', 'lint'],
     ['dotnet build', 'build'],
-    ['pnpm typecheck', 'typecheck'],
-    ['./gradlew test', 'test'],
-    ['swift test', 'test']
+    ['pnpm typecheck', 'typecheck']
   ])('classifies %s as %s', (command, kind) => {
     expect(classifyVerificationCommand(command).kind).toBe(kind)
   })

@@ -51,11 +51,6 @@ describe('profile files', () => {
     expect(readdirSync(temp)).toEqual([])
   })
 
-  it('returns undefined for a missing file', async () => {
-    expect(await readSqliteSnapshot(join(directory, 'nope'), () => 1, temp)).toBeUndefined()
-    expect(await readProfileFile(join(directory, 'nope'), 10)).toBeUndefined()
-  })
-
   it('refuses a folder in place of a file, and a file over the size limit', async () => {
     mkdirSync(join(directory, 'Bookmarks'))
     await expect(readProfileFile(join(directory, 'Bookmarks'), 100)).rejects.toMatchObject({

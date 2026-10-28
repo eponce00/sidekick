@@ -59,20 +59,6 @@ describe('RunSlots', () => {
     expect(slots.queued()).toEqual([])
   })
 
-  it('keeps each provider to its own limit without holding back other providers', async () => {
-    const slots = new RunSlots(() => 4)
-    await slots.acquire(request('local-1', 'local', 1))
-    const queued = vi.fn()
-    const local = slots.acquire(request('local-2', 'local', 1, { onQueued: queued }))
-    expect(queued).toHaveBeenCalledOnce()
-    // A hosted run behind the waiting local one still starts at once.
-    const hosted = vi.fn()
-    await slots.acquire(request('cloud-1', 'cloud', 4, { onQueued: hosted }))
-    expect(hosted).not.toHaveBeenCalled()
-    expect(slots.inUse()).toEqual({ global: 2, providers: { local: 1, cloud: 1 } })
-    void local
-  })
-
   it('never holds a slot while waiting for another, so a full provider does not use up global slots', async () => {
     const slots = new RunSlots(() => 2)
     await slots.acquire(request('local-1', 'local', 1))
@@ -127,18 +113,5 @@ describe('RunSlots', () => {
     const queued = vi.fn()
     void slots.acquire(request('c', 'server', 8, { onQueued: queued }))
     expect(queued).toHaveBeenCalledOnce()
-  })
-
-  it('tells listeners when the queue changes', async () => {
-    const slots = new RunSlots(() => 1)
-    const listener = vi.fn()
-    const unsubscribe = slots.subscribe(listener)
-    const first = await slots.acquire(request('a'))
-    const second = slots.acquire(request('b'))
-    expect(listener).toHaveBeenCalledTimes(1)
-    first.release()
-    await second
-    expect(listener).toHaveBeenCalledTimes(2)
-    unsubscribe()
   })
 })

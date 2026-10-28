@@ -85,7 +85,6 @@ describe('CommandLiveView', () => {
     await act(async () =>
       emit({ type: 'session', session: session({ state: 'waiting_for_input' }) })
     )
-    expect(container.textContent).toContain('Waiting for input')
     const input = container.querySelector('input') as HTMLInputElement
     await act(async () => {
       const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!

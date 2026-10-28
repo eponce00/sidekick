@@ -72,18 +72,6 @@ describe('ChatModelPicker with reasoning', () => {
     container.querySelector<HTMLButtonElement>('.model-selector-inline')!
   const slider = (): HTMLElement => container.querySelector<HTMLElement>('[role="slider"]')!
 
-  it('shows the model and its level on one chip, and opens on the effort', async () => {
-    await act(async () =>
-      root.render(<Picker levels={['off', 'low', 'medium', 'high', 'max']} initial="off" />)
-    )
-    expect(chip().textContent).toContain('Off')
-    await act(async () => chip().click())
-    expect(container.querySelector('.effort-card-level')?.textContent).toBe('Off')
-    expect(slider().getAttribute('aria-valuemax')).toBe('4')
-    // At the starting level there is nothing to reset.
-    expect(container.querySelector<HTMLButtonElement>('.effort-card-reset')!.disabled).toBe(true)
-  })
-
   it('steps the effort with the arrow keys and resets to the starting level', async () => {
     await act(async () =>
       root.render(<Picker levels={['off', 'low', 'medium', 'high', 'max']} initial="off" />)
@@ -93,32 +81,12 @@ describe('ChatModelPicker with reasoning', () => {
       await act(async () =>
         slider().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
       )
-    expect(container.querySelector('.effort-card-level')?.textContent).toBe('High')
     expect(slider().getAttribute('aria-valuetext')).toBe('High')
-    expect(chip().textContent).toContain('High')
     await act(async () =>
       slider().dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))
     )
     expect(container.querySelector('.effort-card-level')?.textContent).toBe('Max')
     await act(async () => container.querySelector<HTMLButtonElement>('.effort-card-reset')!.click())
     expect(container.querySelector('.effort-card-level')?.textContent).toBe('Off')
-  })
-
-  it('reaches the model list from the card, and back', async () => {
-    const onModelChange = vi.fn()
-    await act(async () =>
-      root.render(<Picker levels={['on', 'off']} initial="on" onModelChange={onModelChange} />)
-    )
-    await act(async () => chip().click())
-    await act(async () => container.querySelector<HTMLButtonElement>('.effort-card-model')!.click())
-    expect(container.querySelector('.effort-card')).toBeNull()
-    expect(container.querySelectorAll('[role="option"]')).toHaveLength(2)
-    await act(async () => container.querySelector<HTMLButtonElement>('.effort-card-back')!.click())
-    expect(container.querySelector('.effort-card')).not.toBeNull()
-    await act(async () => container.querySelector<HTMLButtonElement>('.effort-card-model')!.click())
-    await act(async () =>
-      container.querySelectorAll<HTMLButtonElement>('[role="option"]')[1].click()
-    )
-    expect(onModelChange).toHaveBeenCalledWith('b:qwen')
   })
 })

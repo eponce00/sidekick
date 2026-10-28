@@ -243,10 +243,12 @@ it('hands a command still running at its time to the background, and reports whe
     conversationId: 'chat',
     title: 'Build',
     command: node(
-      "console.log('compiling'); setTimeout(() => { console.log('done'); process.exit(3) }, 2500)"
+      "console.log('compiling'); setTimeout(() => { console.log('done'); process.exit(3) }, 6000)"
     ),
     workspaceRoot: root,
-    timeoutSecs: 1
+    // A loaded Windows machine took over a second to start PowerShell and Node, so nothing had
+    // printed yet when a one-second call moved the command to the background.
+    timeoutSecs: 3
   })) as OwnedBackgroundTask
   expect(task).toMatchObject({ detached: 'still_running', status: 'running' })
   expect(task.recentOutput).toContain('compiling')

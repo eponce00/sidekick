@@ -78,7 +78,6 @@ it('fails closed on native denial even when settings would permit full access', 
   await setupCreatedWorktree(sender, mocks.root, mocks.root)
   expect(mocks.run).not.toHaveBeenCalled()
   expect(mocks.show.mock.calls[0][0]).toMatchObject({ defaultId: 0, cancelId: 0 })
-  expect(mocks.show.mock.calls[1][0].title).toBe('Worktree setup incomplete')
 })
 
 it('uses isolated execution and cleans up rather than silently falling back to host', async () => {
@@ -94,9 +93,7 @@ it('uses isolated execution and cleans up rather than silently falling back to h
   mocks.sandbox.mockRejectedValue(new Error('Docker unavailable'))
   await setupCreatedWorktree(sender, mocks.root, mocks.root)
   expect(mocks.run).not.toHaveBeenCalled()
-  const detail = mocks.show.mock.calls.at(-1)?.[0].detail as string
-  const output = detail.split('\n').find((line) => line.endsWith('output.log'))!
-  expect(readFileSync(output, 'utf8')).toContain('Docker unavailable')
+  expect(lastOutput()).toContain('Docker unavailable')
 })
 
 it('does nothing for disabled or nonmatching hooks', async () => {
@@ -108,7 +105,7 @@ it('does nothing for disabled or nonmatching hooks', async () => {
   expect(mocks.run).not.toHaveBeenCalled()
 })
 
-it('records silent timeout diagnostics and uncertain-side-effect guidance in private output', async () => {
+it('records silent timeout diagnostics in private output', async () => {
   mocks.run.mockResolvedValue({
     success: false,
     exitCode: -1,
@@ -118,8 +115,6 @@ it('records silent timeout diagnostics and uncertain-side-effect guidance in pri
   await setupCreatedWorktree(sender, mocks.root, mocks.root)
   expect(lastOutput()).toContain('"exitCode":-1')
   expect(lastOutput()).toContain('Command timed out after 120 seconds')
-  expect(lastOutput()).toContain('Effects may have occurred')
-  expect(mocks.show.mock.calls.at(-1)?.[0].title).toBe('Worktree setup incomplete')
 })
 
 it('preserves output and stops later hooks if successful command cleanup cannot be confirmed', async () => {
@@ -133,9 +128,7 @@ it('preserves output and stops later hooks if successful command cleanup cannot 
   await setupCreatedWorktree(sender, mocks.root, mocks.root)
   expect(mocks.run).toHaveBeenCalledTimes(1)
   expect(lastOutput()).toContain('"exitCode":0')
-  expect(lastOutput()).toContain('Cleanup could not be confirmed: fixture cleanup uncertainty')
-  expect(lastOutput()).toContain('Inspect Docker and actual files before retrying')
-  expect(mocks.show.mock.calls.at(-1)?.[0].title).toBe('Worktree setup incomplete')
+  expect(lastOutput()).toContain('fixture cleanup uncertainty')
   expect(senderEvents.listenerCount('destroyed')).toBe(0)
 })
 

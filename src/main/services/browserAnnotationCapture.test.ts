@@ -36,10 +36,7 @@ import {
   annotationSelector,
   annotationText,
   captureAnnotationPicture,
-  coverBox,
-  cssEscape,
   describeAnnotationElement,
-  outlineBox,
   type CdpDomNode
 } from './browserAnnotationCapture'
 
@@ -159,8 +156,7 @@ describe('mark selectors', () => {
     const tricky = element('a', { id: '1"] , script' })
     const classes = element('p', { class: 'card css-1x2y3z4 is-open 9lives extra' })
     const root = documentOf(tricky, classes)
-    expect(annotationSelector(root, tricky.backendNodeId)).toBe(`#${cssEscape('1"] , script')}`)
-    expect(cssEscape('1"] , script')).toBe('\\31 \\"\\]\\ \\,\\ script')
+    expect(annotationSelector(root, tricky.backendNodeId)).toBe('#\\31 \\"\\]\\ \\,\\ script')
     expect(annotationSelector(root, classes.backendNodeId)).toBe('body > p.card.is-open')
   })
 
@@ -268,17 +264,6 @@ describe('reading a marked element over the protocol', () => {
 })
 
 describe('the picture of a mark', () => {
-  it('only ever writes greys, so it works in either channel order', () => {
-    const bitmap = { data: Buffer.alloc(20 * 20 * 4, 0x10), width: 20, height: 20 }
-    coverBox(bitmap, { x: 2, y: 2, width: 6, height: 6 }, 1)
-    outlineBox(bitmap, { x: 10, y: 10, width: 8, height: 8 }, 1)
-    for (let index = 0; index < bitmap.data.length; index += 4) {
-      const [r, g, b] = bitmap.data.subarray(index, index + 3)
-      expect(r === g && g === b).toBe(true)
-    }
-    expect(bitmap.data[(3 * 20 + 3) * 4 + 3]).toBe(255)
-  })
-
   it('covers fields in the picture exactly where the page lays them out', async () => {
     images.created.length = 0
     const clips: unknown[] = []

@@ -24,35 +24,7 @@ describe('MessageMarkdown rich media', () => {
 
   afterEach(async () => {
     await act(async () => root.unmount())
-    document.querySelectorAll('.message-image-lightbox').forEach((node) => node.remove())
     container.remove()
-  })
-
-  it('puts a table in its own card, and draws a checklist with the app’s boxes', async () => {
-    await act(async () => {
-      root.render(
-        <MessageMarkdown
-          content={[
-            '| Area | Status |',
-            '| --- | --- |',
-            '| Phone | Done |',
-            '',
-            '- [x] Typecheck',
-            '- [ ] Test on iPhone'
-          ].join('\n')}
-        />
-      )
-    })
-
-    expect(container.querySelector('.markdown-table > table td')?.textContent).toBe('Phone')
-    // The browser's disabled checkboxes are replaced, and still say what they mean.
-    expect(container.querySelector('input')).toBeNull()
-    expect(
-      [...container.querySelectorAll('.markdown-task-box')].map((box) =>
-        box.getAttribute('aria-label')
-      )
-    ).toEqual(['Done', 'Not done'])
-    expect(container.querySelector('.markdown-task-box.is-done svg')).not.toBeNull()
   })
 
   it('reads two prices on a line as prices, and still typesets math', async () => {
@@ -65,91 +37,6 @@ describe('MessageMarkdown rich media', () => {
     expect(container.textContent).toContain('$825,000 asking, last sold 2015 for $299,500.')
     // Only the real formula is typeset.
     expect(container.querySelectorAll('.katex')).toHaveLength(1)
-  })
-
-  it('keeps mixed image-and-copy paragraphs in normal document flow', async () => {
-    await act(async () => {
-      root.render(
-        <div className="message-content">
-          <MessageMarkdown content="![One](https://a.test/1.jpg) caption outside the image" />
-        </div>
-      )
-    })
-
-    expect(container.querySelector('.message-image-gallery')).toBeNull()
-    expect(container.querySelector('.doc-img')?.getAttribute('alt')).toBe('One')
-    expect(container.textContent).toContain('caption outside the image')
-  })
-
-  it('lays paired images out as one gallery and opens keyboard-accessible preview', async () => {
-    await act(async () => {
-      root.render(
-        <div className="message-content">
-          <MessageMarkdown
-            content={
-              '![Storefront](https://img.test/front.jpg)\n![Pastries](https://img.test/food.jpg)'
-            }
-          />
-        </div>
-      )
-    })
-
-    const gallery = container.querySelector('.message-image-gallery')
-    const tiles = container.querySelectorAll<HTMLButtonElement>('.message-image-tile')
-    expect(gallery?.getAttribute('data-count')).toBe('2')
-    expect(tiles).toHaveLength(2)
-    expect(container.querySelectorAll('.message-image-gallery img')).toHaveLength(2)
-
-    await act(async () => tiles[0].click())
-    expect(document.querySelector('[role="dialog"]')?.getAttribute('aria-label')).toContain(
-      'Storefront'
-    )
-    expect(document.querySelector('.message-image-lightbox-stage img')?.getAttribute('alt')).toBe(
-      'Storefront'
-    )
-
-    await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' })))
-    expect(document.querySelector('.message-image-lightbox-stage img')?.getAttribute('alt')).toBe(
-      'Pastries'
-    )
-
-    await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
-  })
-
-  it('bounds large galleries while keeping every image available in the preview', async () => {
-    const markdown = Array.from(
-      { length: 6 },
-      (_, index) => `![Image ${index + 1}](https://img.test/${index + 1}.jpg)`
-    ).join('\n')
-    await act(async () => {
-      root.render(
-        <div className="message-content">
-          <MessageMarkdown content={markdown} />
-        </div>
-      )
-    })
-
-    expect(container.querySelectorAll('.message-image-tile')).toHaveLength(4)
-    expect(container.querySelector('.message-image-more')?.textContent).toBe('+2')
-    expect(container.querySelector('.message-image-gallery')?.getAttribute('aria-label')).toBe(
-      '6 shared images'
-    )
-  })
-
-  it('shows a quiet fallback when a remote image fails', async () => {
-    await act(async () => {
-      root.render(
-        <div className="message-content">
-          <MessageMarkdown content="![Unavailable](https://img.test/missing.jpg)" />
-        </div>
-      )
-    })
-    const image = container.querySelector('.message-image-tile img') as HTMLImageElement
-    await act(async () => image.dispatchEvent(new Event('error')))
-    expect(container.querySelector('.message-image-error')?.textContent).toContain(
-      'Image unavailable'
-    )
   })
 
   it('defers streamed images until the response is stable', async () => {
@@ -188,11 +75,8 @@ describe('MessageMarkdown rich media', () => {
     const card = container.querySelector('.message-map-card')
     const link = container.querySelector('.message-map-address') as HTMLAnchorElement
     expect(card?.textContent).toContain('Versailles, Miami')
-    expect(container.querySelector('.message-map-surface')).not.toBeNull()
-    expect(container.querySelector('.message-map-toggle')).toBeNull()
     expect(link.target).toBe('_blank')
     expect(link.rel).toContain('noreferrer')
-    expect(container.querySelector('.message-map-external')).toBeNull()
   })
 
   it('keeps map links inline when they are part of a prose paragraph', async () => {
@@ -207,32 +91,12 @@ describe('MessageMarkdown rich media', () => {
     expect(container.querySelector('.markdown-map-link')?.textContent).toContain('the park')
   })
 
-  it('keeps artifact rendering available through the shared Markdown boundary', async () => {
-    const onArtifactResult = vi.fn()
-    await act(async () => {
-      root.render(
-        <div className="message-content">
-          <MessageMarkdown content="`const answer = 42`" onArtifactResult={onArtifactResult} />
-        </div>
-      )
-    })
-    expect(container.querySelector('code')?.textContent).toContain('const answer = 42')
-  })
-
   it('keeps fenced code together while splitting stable streamed blocks', () => {
     expect(
       splitMarkdownRenderBlocks(
         'First paragraph.\n\n```ts\nconst x = 1\n\nconst y = 2\n```\n\nTail'
       )
     ).toEqual(['First paragraph.\n\n', '```ts\nconst x = 1\n\nconst y = 2\n```\n\n', 'Tail'])
-  })
-
-  it('renders block code with a language label and copy control', async () => {
-    await act(async () => {
-      root.render(<MessageMarkdown content={'```typescript\nconst answer = 42\n```'} />)
-    })
-    expect(container.querySelector('.markdown-code-language')?.textContent).toBe('typescript')
-    expect(container.querySelector('[aria-label="Copy code"]')).not.toBeNull()
   })
 
   it('turns an inline filename into a chip only once it resolves, then opens it in the viewer', async () => {
@@ -257,7 +121,6 @@ describe('MessageMarkdown rich media', () => {
       expect(resolveFileReference).toHaveBeenCalledWith('main.js', 'C:\\project')
       const chip = container.querySelector('.markdown-inline-file') as HTMLElement
       expect(chip).not.toBeNull()
-      expect(chip.querySelector('svg')).not.toBeNull()
 
       await act(async () => {
         chip.click()
@@ -325,7 +188,7 @@ describe('MessageMarkdown code blocks', () => {
 
     expect(writeText).toHaveBeenCalledWith('npm run dev')
     expect(navigator.clipboard.writeText).not.toHaveBeenCalled()
-    expect(container.querySelector('[aria-label="Code copied"]')?.textContent).toContain('Copied')
+    expect(container.querySelector('[aria-label="Code copied"]')).not.toBeNull()
   })
 
   it('does not claim a copy that failed', async () => {

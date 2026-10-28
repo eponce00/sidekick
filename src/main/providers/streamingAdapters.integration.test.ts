@@ -43,6 +43,26 @@ const request: ProviderChatRequest = {
   purpose: 'conversation'
 }
 
+const anthropicInstance: ProviderInstance = {
+  id: 'anthropic',
+  name: 'Anthropic',
+  type: 'anthropic',
+  enabled: true,
+  baseUrl: 'https://api.anthropic.test/v1',
+  apiKey: 'hidden',
+  modelSource: 'discover',
+  models: []
+}
+const ollamaInstance: ProviderInstance = {
+  id: 'ollama',
+  name: 'Ollama',
+  type: 'ollama',
+  enabled: true,
+  baseUrl: 'http://localhost:11434',
+  modelSource: 'discover',
+  models: []
+}
+
 function text(chunks: ProviderStreamChunk[], key: 'content' | 'thinking'): string {
   return chunks.map((chunk) => chunk.message?.[key] || '').join('')
 }
@@ -118,7 +138,7 @@ describe('provider streaming adapters', () => {
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
-  it('accepts explicit finish reason plus EOF and retains subsequent usage, reasoning and exact tools', async () => {
+  it('accepts explicit finish reason plus EOF and retains subsequent usage', async () => {
     const response = streamingResponse([
       'data: {"choices":[{"delta":{"reasoning_content":"retained reasoning","tool_calls":[{"index":0,"id":"exact-call","function":{"name":"lookup","arguments":"{\\"query\\":\\"exact\\"}"}}]},"finish_reason":"tool_calls"}]}\n',
       'data: {"choices":[],"usage":{"prompt_tokens":17,"completion_tokens":9,"prompt_tokens_details":{"cached_tokens":4}}}\n'
@@ -132,11 +152,6 @@ describe('provider streaming adapters', () => {
       vi.fn(async () => response) as unknown as typeof fetch
     )
     expect(result.ok).toBe(true)
-    expect(text(chunks, 'thinking')).toBe('retained reasoning')
-    expect(chunks.flatMap((chunk) => chunk.message?.tool_calls ?? []).at(-1)).toMatchObject({
-      id: 'exact-call',
-      function: { name: 'lookup', arguments: '{"query":"exact"}' }
-    })
     expect(chunks.at(-1)).toMatchObject({
       done: true,
       done_reason: 'tool_calls',
@@ -825,19 +840,9 @@ describe('provider streaming adapters', () => {
       postedBody = JSON.parse(String(init?.body)) as Record<string, unknown>
       return response
     }) as unknown as typeof fetch
-    const instance: ProviderInstance = {
-      id: 'anthropic',
-      name: 'Anthropic',
-      type: 'anthropic',
-      enabled: true,
-      baseUrl: 'https://api.anthropic.test/v1',
-      apiKey: 'hidden',
-      modelSource: 'discover',
-      models: []
-    }
     const chunks: ProviderStreamChunk[] = []
     const result = await streamAnthropicChat(
-      instance,
+      anthropicInstance,
       { ...request, target: { ...request.target, providerKind: 'anthropic' } },
       (chunk) => chunks.push(chunk),
       fetchImpl
@@ -932,16 +937,6 @@ describe('provider streaming adapters', () => {
   })
 
   it('preserves signed and redacted thinking blocks in Anthropic completions', async () => {
-    const instance: ProviderInstance = {
-      id: 'anthropic',
-      name: 'Anthropic',
-      type: 'anthropic',
-      enabled: true,
-      baseUrl: 'https://api.anthropic.test/v1',
-      apiKey: 'hidden',
-      modelSource: 'discover',
-      models: []
-    }
     const fetchImpl = vi.fn(
       async () =>
         new Response(
@@ -959,7 +954,7 @@ describe('provider streaming adapters', () => {
     ) as unknown as typeof fetch
 
     const result = await completeAnthropicChat(
-      instance,
+      anthropicInstance,
       { ...request, target: { ...request.target, providerKind: 'anthropic' } },
       fetchImpl
     )
@@ -972,22 +967,13 @@ describe('provider streaming adapters', () => {
   })
 
   it('preserves fragmented Ollama NDJSON records', async () => {
-    const instance: ProviderInstance = {
-      id: 'ollama',
-      name: 'Ollama',
-      type: 'ollama',
-      enabled: true,
-      baseUrl: 'http://localhost:11434',
-      modelSource: 'discover',
-      models: []
-    }
     const response = streamingResponse([
       '{"message":{"content":"hel',
       'lo"},"done":false}\n{"done":true,"prompt_eval_count":2,"eval_count":1}\n'
     ])
     const chunks: ProviderStreamChunk[] = []
     const result = await streamOllamaChat(
-      instance,
+      ollamaInstance,
       { ...request, target: { ...request.target, providerKind: 'ollama' } },
       (chunk) => chunks.push(chunk),
       vi.fn(async () => response) as unknown as typeof fetch
@@ -1029,18 +1015,9 @@ describe('provider streaming adapters', () => {
   })
 
   it('surfaces Ollama errors delivered inside a successful NDJSON response', async () => {
-    const instance: ProviderInstance = {
-      id: 'ollama',
-      name: 'Ollama',
-      type: 'ollama',
-      enabled: true,
-      baseUrl: 'http://localhost:11434',
-      modelSource: 'discover',
-      models: []
-    }
     const chunks: ProviderStreamChunk[] = []
     const result = await streamOllamaChat(
-      instance,
+      ollamaInstance,
       { ...request, target: { ...request.target, providerKind: 'ollama' } },
       (chunk) => chunks.push(chunk),
       vi.fn(async () =>

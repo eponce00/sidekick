@@ -233,10 +233,6 @@ describe('browser import', () => {
     writeFileSync(path, '<DL><DT><A HREF="https://three.example/">Three</A></DL>')
     await service.importFile(path)
     expect(store.bookmarks().map((bookmark) => bookmark.title)).toEqual(['Three'])
-    writeFileSync(join(home, 'notes.html'), '<p>hello</p>')
-    await expect(service.importFile(join(home, 'notes.html'))).rejects.toThrow(
-      /not a bookmarks file/
-    )
   })
 
   it('finds Safari and the Chromium browsers in macOS folders', async () => {

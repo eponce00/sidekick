@@ -119,10 +119,7 @@ describe('credentials IPC', () => {
 
   it('refuses a website anyone can register under', async () => {
     for (const site of ['com', 'github.io']) {
-      expect(await call('credentials:save', input({ sites: [site] }))).toMatchObject({
-        ok: false,
-        error: expect.stringContaining('Anyone can register')
-      })
+      expect(await call('credentials:save', input({ sites: [site] }))).toMatchObject({ ok: false })
     }
     expect(await call('credentials:save', input({ sites: ['me.github.io'] }))).toMatchObject({
       ok: true,
@@ -146,13 +143,11 @@ describe('credentials IPC', () => {
   })
 
   it('refuses a secret or password too short to keep out of output', async () => {
-    expect(await call('credentials:save', input({ values: { secret: 'abc' } }))).toMatchObject({
-      ok: false,
-      error: expect.stringContaining('at least 4 characters')
-    })
-    expect(await call('credentials:save', input({ values: { secret: '   ' } }))).toMatchObject({
-      ok: false
-    })
+    for (const secret of ['abc', '   ']) {
+      expect(await call('credentials:save', input({ values: { secret } }))).toMatchObject({
+        ok: false
+      })
+    }
     expect(mocks.vault.list()).toEqual([])
   })
 })

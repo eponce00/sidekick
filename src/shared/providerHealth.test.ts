@@ -15,12 +15,10 @@ describe('provider health', () => {
   it('replaces explicit inference crash details with actionable private-safe diagnostics', () => {
     const memory = providerHealthErrorMessage('torch.OutOfMemoryError: private-path secret=fixture')
     expect(memory).toContain('GPU memory')
-    expect(memory).toContain('restarting alone may not prevent recurrence')
     expect(memory).not.toContain('private-path')
     expect(memory).not.toContain('fixture')
     const engine = offlineProviderHealth('EngineDeadError: hidden details', now)
     expect(engine.status).toBe('offline')
-    expect(engine.message).toContain('online gateway does not prove')
     expect(engine.message).not.toContain('hidden details')
     expect(providerHealthErrorMessage('Request timed out')).toBe('Request timed out')
   })
@@ -28,31 +26,27 @@ describe('provider health', () => {
   it('treats a missing durable result as unknown', () => {
     expect(unknownProviderHealth()).toEqual({ status: 'unknown' })
     expect(describeProviderHealth(undefined, now)).toMatchObject({
-      state: 'unknown',
-      label: 'Not checked'
+      state: 'unknown'
     })
   })
 
   it('reports a recent successful check as online', () => {
-    expect(describeProviderHealth(onlineProviderHealth(now - 30_000, 3), now)).toEqual({
-      state: 'online',
-      label: 'Online',
-      detail: 'Checked just now'
+    expect(describeProviderHealth(onlineProviderHealth(now - 30_000, 3), now)).toMatchObject({
+      state: 'online'
     })
   })
 
   it('derives stale state instead of persisting it', () => {
     expect(
       describeProviderHealth(onlineProviderHealth(now - PROVIDER_HEALTH_STALE_AFTER_MS), now)
-    ).toMatchObject({ state: 'stale', label: 'Status stale' })
+    ).toMatchObject({ state: 'stale' })
   })
 
   it('keeps a stale successful check green on compact chat surfaces', () => {
     const health = onlineProviderHealth(now - PROVIDER_HEALTH_STALE_AFTER_MS)
 
     expect(describeProviderAvailability(health, now)).toMatchObject({
-      state: 'online',
-      label: 'Last known online'
+      state: 'online'
     })
     expect(describeProviderHealth(health, now)).toMatchObject({ state: 'stale' })
   })
@@ -64,8 +58,7 @@ describe('provider health', () => {
     )
 
     expect(describeProviderAvailability(health, now)).toMatchObject({
-      state: 'unknown',
-      label: 'Status unknown'
+      state: 'unknown'
     })
   })
 

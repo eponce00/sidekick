@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
   carryOriginalCharacters,
-  closestRegion,
   diffSequences,
   findTolerantSpans,
-  normalizeForMatch,
-  stripReadLineNumbers
+  normalizeForMatch
 } from './tolerantMatch'
+
+// Typography, emoji selectors, CRLF and read-tool prefixes are covered through
+// canonicalPatch.test.ts and workspaceMutationService.editMatching.test.ts.
 
 describe('normalizeForMatch', () => {
   it('maps typography, line endings, trailing whitespace and invisible marks with covering ranges', () => {
-    const input = 'A “quote” — ok  \r\n⚠️ low x'
+    const input = 'A “quote” — ok  \r\n⚠️ low x'
     const normalized = normalizeForMatch(input)
     expect(normalized.text).toBe('A "quote" - ok\n⚠ low x')
     // Ranges partition the input, so equal runs can be copied back byte for byte.
@@ -29,54 +30,12 @@ describe('normalizeForMatch', () => {
 })
 
 describe('findTolerantSpans', () => {
-  const file =
-    'intro\r\n| **Flood** | ✅ “Area of Minimal Flood Hazard,” — Zone X |  \r\n| ⚠️ Expected low |\r\n'
-
-  it('finds ASCII copies of curly quotes and dashes and returns the original span', () => {
-    const spans = findTolerantSpans(
-      file,
-      '| **Flood** | ✅ "Area of Minimal Flood Hazard," - Zone X |\n'
-    )
-    expect(spans).toHaveLength(1)
-    expect(file.slice(spans[0].start, spans[0].end)).toBe(
-      '| **Flood** | ✅ “Area of Minimal Flood Hazard,” — Zone X |  \r\n'
-    )
-  })
-
-  it('ignores a dropped emoji variation selector', () => {
-    const spans = findTolerantSpans(file, '| ⚠ Expected low |')
-    expect(spans).toHaveLength(1)
-    expect(file.slice(spans[0].start, spans[0].end)).toBe('| ⚠️ Expected low |')
-  })
-
-  it('reports every candidate so callers can require uniqueness', () => {
-    expect(findTolerantSpans('x “a” y\nx "a" y\n', 'x "a" y')).toHaveLength(2)
-  })
-
   it('does not match whitespace-only needles', () => {
     expect(findTolerantSpans('a \n b', '  ')).toEqual([])
   })
 })
 
 describe('carryOriginalCharacters', () => {
-  it('keeps the file’s typography in unchanged text and uses the model’s new text', () => {
-    const original = 'Status “unknown” — confirm via the “WUI” map.'
-    const modelOld = 'Status "unknown" - confirm via the "WUI" map.'
-    const modelNew = 'Status "confirmed" - verified on the "WUI" map.'
-    expect(carryOriginalCharacters(original, modelOld, modelNew)).toBe(
-      'Status “confirmed” — verified on the “WUI” map.'
-    )
-  })
-
-  it('preserves CRLF, trailing spaces and invisible marks the model did not reproduce', () => {
-    const original = 'one  \r\n| ⚠️ Expected low |\r\nthree\r\n'
-    const modelOld = 'one\n| ⚠ Expected low |\nthree\n'
-    const modelNew = 'one\n| ✅ Confirmed |\nthree\n'
-    expect(carryOriginalCharacters(original, modelOld, modelNew)).toBe(
-      'one  \r\n| ✅ Confirmed |\r\nthree\r\n'
-    )
-  })
-
   it('refuses spans that do not normalize to the model text', () => {
     expect(carryOriginalCharacters('abc', 'abd', 'x')).toBeUndefined()
   })
@@ -114,23 +73,5 @@ describe('diffSequences', () => {
 
   it('gives up on inputs that differ too much', () => {
     expect(diffSequences([...'a'.repeat(50)], [...'b'.repeat(50)], 10)).toBeUndefined()
-  })
-})
-
-describe('stripReadLineNumbers', () => {
-  it('strips read-tool prefixes only when every non-empty line has one', () => {
-    expect(stripReadLineNumbers('12: const a = 1\n13:   return a\n')).toBe(
-      'const a = 1\n  return a\n'
-    )
-    expect(stripReadLineNumbers('12: const a = 1\nreturn a')).toBeUndefined()
-  })
-})
-
-describe('closestRegion', () => {
-  it('points at the most similar lines with line numbers', () => {
-    const file = Array.from({ length: 30 }, (_, index) => `line ${index + 1} text`).join('\n')
-    const region = closestRegion(file, 'line 17 texts\nline 18 text')
-    expect(region).toContain('17: line 17 text')
-    expect(region).toContain('18: line 18 text')
   })
 })

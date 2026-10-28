@@ -55,10 +55,6 @@ describe('groupChats', () => {
       ['p3', []]
     ])
   })
-
-  it('is empty for no chats', () => {
-    expect(groupChats([])).toEqual({ projects: [], chats: [] })
-  })
 })
 
 describe('searchChats', () => {
@@ -73,9 +69,6 @@ describe('searchChats', () => {
     expect(searchChats(chats, 'the  trip')).toEqual([chats[1]])
     expect(searchChats(chats, 'notes draft')).toEqual([chats[2]])
     expect(searchChats(chats, 'upload lisbon')).toEqual([])
-  })
-
-  it('keeps every chat for a blank query', () => {
     expect(searchChats(chats, '   ')).toEqual(chats)
   })
 })

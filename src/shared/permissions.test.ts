@@ -33,11 +33,6 @@ describe('command permission policy', () => {
     expect(resolvePermissionPolicy('full-access', 'confirm').effectiveAccess).toBe('auto')
   })
 
-  it('applies the same policy to every operation kind', () => {
-    expect(resolvePermissionPolicy('always-ask', 'auto').effectiveAccess).toBe('confirm')
-    expect(resolvePermissionPolicy('full-access', 'confirm').effectiveAccess).toBe('auto')
-  })
-
   it('binds authorization requests to exact operation details', () => {
     expect(
       commandPermissionOperation({

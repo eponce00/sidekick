@@ -193,7 +193,6 @@ describe('CredentialVault', () => {
       'value_replaced',
       'created'
     ])
-    expect(vault.events(saved.id)[1].detail).toBe('Changed description.')
   })
 
   it('retires every old value when the kind changes, and records the replacement', () => {
@@ -245,13 +244,6 @@ describe('CredentialVault', () => {
     expect(vault.status()).toMatchObject({ available: false })
     expect(() => vault.save(secretInput())).toThrow(CredentialUnavailableError)
     expect(JSON.parse(store.raw()).file).toEqual(contents)
-  })
-
-  it('marks each sealed record with its layout', () => {
-    const { vault, store, cipher } = setup()
-    const saved = vault.save(secretInput())
-    const sealed = JSON.parse(store.raw()).file.entries[saved.id].sealed
-    expect(JSON.parse(cipher.open(sealed)).schema).toBe(1)
   })
 
   it('keeps the newest thousand events', () => {

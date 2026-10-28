@@ -46,24 +46,6 @@ describe('BrowserLibraryStore', () => {
     expect(store.suggest('   ')).toEqual([])
   })
 
-  it('lists sources with counts and bookmarks with their folders', () => {
-    expect(store.sources()).toEqual([
-      {
-        id: 'chrome:Default',
-        label: 'Google Chrome (Personal)',
-        importedAt: 1_000,
-        bookmarks: 2,
-        history: 4
-      }
-    ])
-    expect(store.bookmarks()[1]).toEqual({
-      sourceId: 'chrome:Default',
-      folder: ['Bookmarks bar', 'Docs'],
-      title: '100% guide',
-      url: 'https://percent.example/'
-    })
-  })
-
   it('drops a source that an import leaves empty', () => {
     store.replace({ id: 'chrome:Default', label: 'x' }, { bookmarks: [], history: [] })
     expect(store.sources()).toEqual([])

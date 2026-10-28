@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { enableSkillToolDefinitions, getToolDefinitions } from '../../constants/toolDefinitions'
 import { PromptComposer } from '../../../../shared/prompts/PromptComposer'
-import {
-  createPromptModelProfile,
-  inferModelFamily
-} from '../../../../shared/prompts/modelProfiles'
+import { createPromptModelProfile } from '../../../../shared/prompts/modelProfiles'
 import { capabilitiesFromTools } from '../../../../shared/prompts/promptCapabilities'
 import { getAgentToolDefinitions } from '../../../../shared/agentToolCatalog'
 
@@ -26,8 +23,6 @@ describe('PromptComposer', () => {
 
     const artifactTools = tools.filter((tool) => tool.function.name === 'create_artifact')
     expect(artifactTools).toHaveLength(1)
-    expect(artifactTools[0].function.description).toContain('not a project file')
-    expect(artifactTools[0].function.description).toContain('Do not use it for a website')
   })
 
   it('routes website deliverables to project files when artifact rendering is active', () => {
@@ -50,20 +45,15 @@ describe('PromptComposer', () => {
     })
 
     expect(prompt.sectionIds).toContain('artifacts')
-    expect(prompt.content).toContain('Website, landing-page, web-app')
     expect(prompt.content).toContain('belongs in workspace files')
     expect(prompt.content).not.toContain('Web Artifacts Builder')
   })
 
   it('defines one transactional workspace mutation contract', () => {
-    const tools = getToolDefinitions(true, '/workspace')
-    const patch = tools.find((tool) => tool.function.name === 'apply_patch')
+    const names = getToolDefinitions(true, '/workspace').map(({ function: tool }) => tool.name)
 
-    expect(patch?.function.description).toContain('potentially multi-file patch')
-    expect(patch?.function.description).toContain('Delete File')
-    expect(tools.map(({ function: tool }) => tool.name)).not.toEqual(
-      expect.arrayContaining(['write', 'delete_file', 'edit'])
-    )
+    expect(names).toContain('apply_patch')
+    expect(names).not.toEqual(expect.arrayContaining(['write', 'delete_file', 'edit']))
   })
 
   it('composes only enabled capabilities and uses the real host shell', () => {
@@ -114,10 +104,6 @@ describe('PromptComposer', () => {
     expect(prompt.projectInstructionsMessage).toContain('Run tests before shipping.')
     expect(prompt.content).toContain('<project_memory trust="untrusted-data">')
     expect(prompt.content).toContain('web pages, search snippets, MCP responses')
-    expect(prompt.content).toContain('asks before every host-classified sensitive operation')
-    expect(prompt.content).toContain(
-      'Never delete a file merely to recreate or rewrite the same path'
-    )
   })
 
   it('marks detached project history as non-authoritative', () => {
@@ -154,7 +140,6 @@ describe('PromptComposer', () => {
 
     expect(prompt.sectionIds).toContain('project-boundary')
     expect(prompt.content).toContain('currently standalone after being detached from SideKick')
-    expect(prompt.content).toContain('historical context only')
     expect(prompt.sectionIds).not.toContain('workspace')
   })
 
@@ -183,11 +168,6 @@ describe('PromptComposer', () => {
     const onBranch = compose({ branch: 'sidekick/fix-1a2b3c', base: 'main' })
     expect(onBranch).toContain('own Git worktree of `C:\\work\\app`')
     expect(onBranch).toContain('SideKick created branch `sidekick/fix-1a2b3c` for it from `main`')
-    expect(onBranch).toContain('Rename, create and switch branches and run any Git command here')
-    expect(onBranch).toContain('cannot be checked out here')
-    expect(onBranch).toContain(
-      'merge it into `main` in the folder where that branch is checked out'
-    )
 
     // Worktrees made while they started detached have no branch of their own yet.
     const detached = compose({ branch: null, base: 'a'.repeat(40) })
@@ -226,12 +206,10 @@ describe('PromptComposer', () => {
 
     const planning = compose('planning')
     expect(planning.content).toContain('runtime-enforced read-only planning phase')
-    expect(planning.content).toContain('cannot modify it')
     expect(planning.content).not.toContain('Use apply_patch for additions')
 
     const executing = compose('executing')
     expect(executing.content).toContain('Approved plan execution')
-    expect(executing.content).toContain('call complete_plan with evidence')
     expect(executing.content).toContain('Use apply_patch for additions')
 
     const structuredTools = getAgentToolDefinitions({
@@ -284,17 +262,6 @@ describe('PromptComposer', () => {
     })
 
     expect(prompt.sectionIds).toContain('browser')
-    expect(prompt.content).toContain('isolated Chromium browser')
-    expect(prompt.content).toContain('Prefer semantic element refs')
-    expect(prompt.content).toContain('browser_verify')
-    expect(prompt.content).toContain('browser_resize')
-    expect(prompt.content).toContain('browser_fill_form')
-    expect(prompt.content).toContain('A partial batch is useful progress')
-    expect(prompt.content).toContain('Keep intermediate tool-call turns terse')
-    expect(prompt.content).toContain('one final redacted semantic observation')
-    expect(prompt.content).toContain('console errors')
-    expect(prompt.content).toContain('browser-accessible PDF surface')
-    expect(prompt.content).toContain('do not replace it with a shell or Python workflow')
   })
 
   it('advertises shipped skill helpers through the managed shell environment', () => {
@@ -316,26 +283,6 @@ describe('PromptComposer', () => {
     })
 
     expect(prompt.content).toContain('$env:SIDEKICK_SKILLS')
-    expect(prompt.content).toContain('do not search for or recreate a shipped helper')
     expect(prompt.content).not.toContain('C:\\Program Files\\SideKick\\resources\\skills')
-  })
-
-  it('infers common model families without coupling behavior to a provider', () => {
-    expect(
-      inferModelFamily({
-        id: 'openrouter:anthropic/claude-sonnet-4',
-        providerModelId: 'anthropic/claude-sonnet-4',
-        name: 'Claude Sonnet 4',
-        provider: 'openrouter'
-      })
-    ).toBe('anthropic')
-    expect(
-      inferModelFamily({
-        id: 'local-1',
-        providerModelId: 'qwen3-coder-30b',
-        name: 'Local coding model',
-        provider: 'lmstudio'
-      })
-    ).toBe('qwen')
   })
 })

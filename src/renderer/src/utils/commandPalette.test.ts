@@ -23,6 +23,9 @@ describe('scoreCommandPaletteItem', () => {
     expect(scoreCommandPaletteItem(settings, 'preferences')).not.toBeNull()
     expect(scoreCommandPaletteItem(settings, 'opstg')).not.toBeNull()
     expect(scoreCommandPaletteItem(settings, 'open zebra')).toBeNull()
+    expect(
+      scoreCommandPaletteItem(item('a', 'conversations', 'Café résumé'), 'CAFE resume')
+    ).not.toBeNull()
   })
 
   it('ranks an exact title above a prefix, a prefix above a later word, and those above fuzzy', () => {
@@ -33,12 +36,6 @@ describe('scoreCommandPaletteItem', () => {
     expect(exact).toBeGreaterThan(prefix)
     expect(prefix).toBeGreaterThan(word)
     expect(word).toBeGreaterThan(fuzzy)
-  })
-
-  it('ignores case and accents', () => {
-    expect(
-      scoreCommandPaletteItem(item('a', 'conversations', 'Café résumé'), 'CAFE resume')
-    ).not.toBeNull()
   })
 })
 
@@ -68,11 +65,7 @@ describe('filterCommandPalette', () => {
     const sections = filterCommandPalette(items, 'chat 3')
     expect(sections.map(({ id }) => id)).toEqual(['conversations'])
     expect(sections[0].items[0].id).toBe('chat-3')
-  })
-
-  it('finds a project by its folder', () => {
-    const sections = filterCommandPalette(items, 'code/side')
-    expect(sections.map(({ id }) => id)).toEqual(['projects'])
+    expect(filterCommandPalette(items, 'code/side').map(({ id }) => id)).toEqual(['projects'])
   })
 })
 
@@ -88,9 +81,6 @@ describe('nextEnabledIndex', () => {
     expect(nextEnabledIndex(rows, 2, 1)).toBe(0)
     expect(nextEnabledIndex(rows, 0, -1)).toBe(2)
     expect(nextEnabledIndex(rows, -1, 1)).toBe(0)
-  })
-
-  it('returns -1 when nothing can be chosen', () => {
     expect(nextEnabledIndex([rows[1]], 0, 1)).toBe(-1)
     expect(nextEnabledIndex([], -1, 1)).toBe(-1)
   })

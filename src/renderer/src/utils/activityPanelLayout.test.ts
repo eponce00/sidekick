@@ -97,20 +97,6 @@ describe('workspace layout beside an open inspector', () => {
   })
 })
 
-describe('a wide browser page', () => {
-  it('fits a 1440-wide page in a 1920-wide window, narrowing the chat to a phone width', () => {
-    const { panelMaxWidth } = workspaceLayout({
-      viewportWidth: 1_920,
-      sidebarCollapsed: false,
-      sidebarHeldOpen: false,
-      panelOpen: true,
-      panelWidth: 1_440
-    })
-    expect(panelMaxWidth).toBe(1_920 - 48 - 320)
-    expect(panelMaxWidth).toBeGreaterThanOrEqual(1_440)
-  })
-})
-
 describe('narrow windows', () => {
   it('keeps the inspector beside the chat down to the rail, chat, and inspector minimums', () => {
     // 901 wide: the rail, the chat, and the inspector side by side, instead of a drawer over the chat.

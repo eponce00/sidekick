@@ -151,23 +151,6 @@ describe('conversation fork IPC', () => {
     expect(modelOf(forked.id)).toBe('ollama:ollama-local/qwen3:8b')
   })
 
-  it('pins a chat and lists it ahead of unpinned chats', async () => {
-    const insert = mocks.db!.prepare(
-      `INSERT INTO conversations (id, title, created_at, updated_at, sidebar_order)
-       VALUES (?, ?, ?, ?, ?)`
-    )
-    insert.run('older', 'Older chat', 1, 1, 1)
-    insert.run('newer', 'Newer chat', 2, 2, 0)
-
-    const setPinned = mocks.handlers.get('conversations:setPinned') as RegisteredHandler
-    await setPinned({}, 'older', true)
-    const list = mocks.handlers.get('conversations:list') as RegisteredHandler
-    const conversations = (await list({})) as Array<{ id: string; is_pinned: number }>
-
-    expect(conversations.map(({ id }) => id)).toEqual(['older', 'newer'])
-    expect(conversations[0].is_pinned).toBe(1)
-  })
-
   it('preserves the committed fork and copied messages when worktree setup fails', async () => {
     const insertProject = mocks.db!.prepare(
       `INSERT INTO projects (id, name, folder_path, created_at, updated_at)
@@ -236,17 +219,8 @@ describe('conversation fork IPC', () => {
       )
       expect(mocks.discardFresh).not.toHaveBeenCalled()
       expect(
-        mocks.db!.prepare('SELECT worktree_id FROM conversations WHERE id = ?').get(forked.id)
-      ).toEqual({ worktree_id: 'fork-worktree' })
-      expect(
-        mocks.db!.prepare('SELECT id FROM conversations WHERE id = ?').get(forked.id)
-      ).toBeDefined()
-      expect(
         mocks.db!.prepare('SELECT content FROM messages WHERE conversation_id = ?').all(forked.id)
       ).toEqual([{ content: 'Keep this durable history' }])
-      expect(warning).toHaveBeenCalledWith(
-        '[Worktrees] Setup could not finish; created fork preserved'
-      )
     } finally {
       warning.mockRestore()
     }

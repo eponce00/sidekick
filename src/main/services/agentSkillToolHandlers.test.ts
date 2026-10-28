@@ -17,14 +17,7 @@ it('loads dependency declarations without claiming runtime availability or launc
     arguments: { skill_id: 'pdf' },
     context: { runId: 'skill-test', signal: new AbortController().signal }
   })
-  expect(result).toMatchObject({
-    data: {
-      dependencies: {
-        status: 'not_checked',
-        python: ['pypdf', 'pdfplumber', 'reportlab', 'pdf2image']
-      }
-    }
-  })
+  expect(result).toMatchObject({ data: { dependencies: { status: 'not_checked' } } })
   expect(result.modelContent).toContain('does not install or verify dependencies')
   expect(activeSkillIds.has('pdf')).toBe(true)
 })

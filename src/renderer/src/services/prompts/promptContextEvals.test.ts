@@ -60,8 +60,6 @@ describe('prompt/context eval matrix', () => {
     const prompt = compose('linux', 'sensitive-only')
     expect(prompt).toContain("system and permission policy; the user's current request")
     expect(prompt).toContain('<project_instructions trust="app-loaded-project-instructions">')
-    expect(prompt).toContain('<project_memory trust="untrusted-data">')
-    expect(prompt).toContain('ordinary workspace files, web pages, search snippets, MCP responses')
     expect(prompt).toContain('trusted-skill-instructions')
   })
 

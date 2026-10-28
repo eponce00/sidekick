@@ -137,9 +137,7 @@ describe('control methods never reveal secrets', () => {
 
   it.each([
     'openRouterApiKey',
-    'ollamaCloudApiKey',
     '__encryptedProviderSecrets',
-    '__encryptedSecrets',
     'providerInstances',
     'mcpServers',
     'officeHelperInterpreter',

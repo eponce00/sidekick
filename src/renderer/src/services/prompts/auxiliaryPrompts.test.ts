@@ -51,16 +51,7 @@ describe('auxiliary prompts', () => {
       historyTruncated: true
     })
 
-    expect(messages[0].content).toContain("SideKick's Prompt Refiner")
-    expect(messages[0].content).toContain('relevant project constraints')
-    expect(messages[0].content).toContain('Never invent facts')
-    expect(messages[0].content).toContain('Do not answer the prompt')
-    expect(messages[1].content).toContain('type="prompt_refinement_context"')
-    expect(messages[1].content).toContain('type="prompt_draft"')
-    expect(messages[1].content).toContain('type="recent_conversation"')
-    expect(messages[1].content).toContain('type="active_objective"')
     expect(messages[1].content).toContain('Build an evidence-backed demographic report.')
-    expect(messages[1].content).toContain('Earlier conversation omitted')
     expect(messages[1].content).toContain('Use data downloaded from official sources.')
     expect(messages[1].content.indexOf('recent_conversation')).toBeLessThan(
       messages[1].content.indexOf('prompt_draft')

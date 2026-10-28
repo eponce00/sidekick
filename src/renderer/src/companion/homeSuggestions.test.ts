@@ -23,13 +23,8 @@ describe('homeSuggestions', () => {
       chat('recent', 'Fix the flaky upload test', 50),
       chat('older', 'Plan the trip', 20)
     ])
-    expect(suggestions).toHaveLength(2)
-    expect(suggestions[0]).toMatchObject({
-      kind: 'open',
-      label: 'Continue “Fix the flaky upload test”'
-    })
+    expect(suggestions.map(({ kind }) => kind)).toEqual(['open', 'prompt'])
     expect(suggestions[0].kind === 'open' && suggestions[0].chat.id).toBe('recent')
-    expect(suggestions[1]).toMatchObject({ kind: 'prompt', label: 'Plan something new' })
   })
 
   it('skips chats with placeholder titles and shortens long ones', () => {

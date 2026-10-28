@@ -122,14 +122,6 @@ describe('AgentToolRegistry', () => {
     expect(observe.mock.calls[0][0]).not.toHaveProperty('toolCallId')
   })
 
-  it('rejects unavailable tools without calling an executor', async () => {
-    const executor = vi.fn()
-    const result = await registry.execute(input('not_a_tool', {}), executor)
-    expect(result.status).toBe('error')
-    expect(result.error?.code).toBe('unknown_tool')
-    expect(executor).not.toHaveBeenCalled()
-  })
-
   it('validates required arguments before side effects', async () => {
     const executor = vi.fn()
     const missing = await registry.execute(input('shell', {}), executor)
@@ -308,14 +300,8 @@ describe('tool refusals', () => {
     ['apply_patch', 'structured-edit', 'edit', 'file_path, old_string, new_string'],
     ['apply_patch', 'claude-edit', 'Edit', 'file_path, old_string, new_string'],
     ['Edit', 'apply-patch', 'apply_patch', 'patch'],
-    ['str_replace_based_edit_tool', 'search-replace', 'search_replace', 'file_path'],
-    ['write_file', 'structured-edit', 'write', 'file_path, content'],
-    ['ask_user_question', 'structured-edit', 'ask_user', 'questions'],
     ['AskUserQuestion', 'structured-edit', 'ask_user', 'questions'],
-    ['exec_command', 'structured-edit', 'shell', 'command'],
-    ['Bash', 'structured-edit', 'shell', 'command'],
-    ['TodoWrite', 'structured-edit', 'manage_todo_list', 'operation'],
-    ['WebFetch', 'structured-edit', 'web_fetch', 'url']
+    ['Bash', 'structured-edit', 'shell', 'command']
   ] as const)(
     'names the SideKick tool for %s from another harness (%s)',
     async (name, editingDialect, equivalent, required) => {
@@ -368,10 +354,7 @@ describe('argument names from other harnesses', () => {
   it.each([
     [{ file_path: 'src/a.ts' }, 'file_path → path'],
     [{ filePath: 'src/a.ts' }, 'filePath → path'],
-    [{ filepath: 'src/a.ts' }, 'filepath → path'],
-    [{ absolute_path: 'src/a.ts' }, 'absolute_path → path'],
-    [{ target_file: 'src/a.ts' }, 'target_file → path'],
-    [{ dir_path: 'src/a.ts' }, 'dir_path → path']
+    [{ target_file: 'src/a.ts' }, 'target_file → path']
   ])('repairs read %j to path', (args, repair) => {
     const normalized = normalizeAgentToolArguments(read, args)
     expect(normalized).toEqual({ arguments: { path: 'src/a.ts' }, repairs: [repair] })

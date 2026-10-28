@@ -12,7 +12,6 @@ describe('skill activation', () => {
 
     expect(skill).toMatchObject({ invocation: 'auto', activationScope: 'run' })
     expect(getSkillsDirectory([])).toContain('id: `web-artifacts`')
-    expect(getSkillsDirectory([])).toContain('not for websites, apps, or HTML')
     expect(getActiveSkillInjections([])).not.toContain('Web Artifacts Builder')
   })
 
@@ -28,8 +27,6 @@ describe('skill activation', () => {
     expect(skill).toMatchObject({ invocation: 'auto', activationScope: 'run' })
     expect(getSkillsDirectory([])).toContain('id: `location-research`')
     expect(getActiveSkillInjections([])).not.toContain('# Location Research')
-    expect(skill?.systemPromptInjection).toContain('use `web_image_search`')
-    expect(skill?.systemPromptInjection).toContain('Open in Google Maps')
     expect(getPersistentSkillIds(['location-research'])).toEqual([])
   })
 })

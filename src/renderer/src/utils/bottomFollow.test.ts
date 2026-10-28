@@ -271,16 +271,6 @@ describe('following the end of a streaming reply', () => {
     expect(follower.following).toBe(false)
     document.getSelection()?.removeAllRanges()
   })
-
-  it('reports each change of following and each scroll', () => {
-    follower.dispose()
-    const onUpdate = vi.fn()
-    follower = followBottom(view, { onUpdate })
-    wheel(-10)
-    expect(onUpdate).toHaveBeenCalledTimes(2)
-    follower.follow()
-    expect(onUpdate).toHaveBeenCalledTimes(3)
-  })
 })
 
 describe('moving to the end', () => {

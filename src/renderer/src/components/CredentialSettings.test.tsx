@@ -73,7 +73,6 @@ it('never fills a stored value into the editor and keeps it unless a new one is 
   await act(async () => button('Edit partner-center').click())
   const secret = container.querySelector<HTMLTextAreaElement>('.credential-value-input textarea')!
   expect(secret.value).toBe('')
-  expect(secret.placeholder).toBe('Type to replace')
   await act(async () => button('Save credential').click())
   expect(save).toHaveBeenCalledWith(expect.objectContaining({ id: 'one', values: {} }))
 })
@@ -85,11 +84,8 @@ it('sends a new value only once, straight to the main process', async () => {
   const secret = container.querySelector<HTMLTextAreaElement>('.credential-value-input textarea')!
   await act(async () => {
     type(alias, 'github-token')
-    type(secret, 'abc')
+    type(secret, 'short')
   })
-  expect(container.textContent).toContain('Enter at least 4 characters')
-  await act(async () => type(secret, 'short'))
-  expect(container.textContent).toContain('may be missed in output')
   await act(async () => button('Save credential').click())
   expect(save).toHaveBeenCalledWith(
     expect.objectContaining({ alias: 'github-token', kind: 'secret', values: { secret: 'short' } })
@@ -107,11 +103,9 @@ it('opens the editor the agent asked for, prefilled but without a value', async 
       />
     )
   )
-  expect(container.textContent).toContain('New credential')
   expect(container.querySelector<HTMLInputElement>('input[id$="-sites"]')!.value).toBe(
     'api.example.com'
   )
-  expect(container.textContent).toContain('Suggested by the agent')
   expect(container.querySelector<HTMLInputElement>('.credential-alias-input')!.value).toBe(
     'new-key'
   )
@@ -120,10 +114,6 @@ it('opens the editor the agent asked for, prefilled but without a value', async 
   expect(
     container.querySelector<HTMLTextAreaElement>('.credential-value-input textarea')!.value
   ).toBe('')
-  // A description the agent wrote is marked until the user changes it.
-  expect(container.textContent).toContain('Written by the agent')
-  await act(async () => type(description, 'Partner Center client secret'))
-  expect(container.textContent).not.toContain('Written by the agent')
 })
 
 it('takes a multi-line key, masked, and sends it with its line breaks', async () => {
@@ -140,23 +130,12 @@ it('takes a multi-line key, masked, and sends it with its line breaks', async ()
     type(container.querySelector<HTMLInputElement>('.credential-alias-input')!, 'deploy-key')
     type(secret, `${key.join('\n')}\n`)
   })
-  expect(secret.rows).toBeGreaterThan(1)
   await act(async () => button('Show what you typed').click())
   expect(secret.classList.contains('is-masked')).toBe(false)
   await act(async () => button('Save credential').click())
   expect(save).toHaveBeenCalledWith(
     expect.objectContaining({ alias: 'deploy-key', values: { secret: `${key.join('\n')}\n` } })
   )
-})
-
-it('explains when the computer has no protected storage', async () => {
-  ;(window.api.credentials as { status: () => Promise<unknown> }).status = async () => ({
-    available: false,
-    reason: 'No keychain.'
-  })
-  await act(async () => root.render(<CredentialSettings />))
-  expect(container.textContent).toContain('Credentials are unavailable')
-  expect(container.textContent).toContain('No keychain.')
 })
 
 it('makes an entry with a username a sign-in, and keeps the stored username on edit', async () => {

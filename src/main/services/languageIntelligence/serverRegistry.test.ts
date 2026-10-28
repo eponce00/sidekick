@@ -4,9 +4,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import {
   availableWorkspaceServers,
-  definitionsForFile,
   detectWorkspaceLanguages,
-  languageIdForFile,
   resolveServerForFile
 } from './serverRegistry'
 
@@ -17,15 +15,6 @@ afterEach(async () => {
 })
 
 describe('language server registry', () => {
-  it('maps common source files without starting or installing anything', () => {
-    expect(definitionsForFile('src/App.tsx')[0]?.id).toBe('typescript')
-    expect(languageIdForFile(definitionsForFile('src/App.tsx')[0], 'src/App.tsx')).toBe(
-      'typescriptreact'
-    )
-    expect(definitionsForFile('main.rs')[0]?.id).toBe('rust')
-    expect(definitionsForFile('Dockerfile')[0]?.id).toBe('docker')
-  })
-
   it('discovers a project-local server lazily', async () => {
     const root = await mkdtemp(join(tmpdir(), 'sidekick-lsp-registry-'))
     roots.push(root)

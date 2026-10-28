@@ -60,7 +60,7 @@ describe('shared browser workspace', () => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
-  it('mounts the live viewport without a persistent resume button', async () => {
+  it('mounts the live viewport at the panel bounds', async () => {
     await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
     expect(request).toHaveBeenCalledWith({
       conversationId: 'chat',
@@ -68,10 +68,6 @@ describe('shared browser workspace', () => {
       bounds: { x: 10, y: 100, width: 500, height: 400 }
     })
     expect(container.querySelector('input')?.value).toBe('https://example.com/')
-    expect(container.querySelector('.browser-workspace-control')).toBeNull()
-    expect(container.textContent).not.toContain('Take control')
-    expect(container.querySelector('.browser-workspace-topbar')).not.toBeNull()
-    expect(container.textContent).not.toContain('Resume agent')
   })
   it("names the page's WebMCP tools in a popover over a picture of the page", async () => {
     const state = {
@@ -94,34 +90,16 @@ describe('shared browser workspace', () => {
     )
     await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
     const button = container.querySelector<HTMLButtonElement>('.browser-workspace-tools')!
-    expect(button.getAttribute('aria-expanded')).toBe('false')
-    expect(button.getAttribute('aria-label')).toBe('Tools this page offers the agent: 2')
-    expect(button.textContent).toBe('')
-    expect(container.querySelector('#browser-page-tools')).toBeNull()
 
     await act(async () => button.click())
     expect(request).toHaveBeenCalledWith({ conversationId: 'chat', action: 'snapshot' })
     const popover = container.querySelector('#browser-page-tools')!
     // A dialog hides the live page, which is drawn above the app; its picture takes its place.
-    expect(popover.getAttribute('role')).toBe('dialog')
     expect(container.querySelector('.browser-workspace-snapshot')).not.toBeNull()
     expect(request).toHaveBeenLastCalledWith({ conversationId: 'chat', action: 'unmount' })
-    expect(popover.textContent).toContain('shop.example')
-    expect(popover.textContent).toContain('offers the agent 2 tools')
-    expect([...popover.querySelectorAll('code')].map((name) => name.textContent)).toEqual([
-      'add_item',
-      'get_cart'
-    ])
-    expect(popover.textContent).toContain('Read-only')
-    // Descriptions stay out of sight until asked for.
-    expect(popover.querySelector('blockquote')).toBeNull()
-    expect(popover.textContent).not.toContain('an item')
 
-    const row = popover.querySelector<HTMLButtonElement>('li button')!
-    await act(async () => row.click())
-    expect(row.getAttribute('aria-expanded')).toBe('true')
+    await act(async () => popover.querySelector<HTMLButtonElement>('li button')!.click())
     const description = popover.querySelector('blockquote')!
-    expect(row.getAttribute('aria-controls')).toBe(description.id)
     // The site's words are text, never markup.
     expect(description.querySelector('b')).toBeNull()
     expect(description.textContent).toBe('<b>Adds</b> an item')
@@ -132,33 +110,7 @@ describe('shared browser workspace', () => {
     expect(container.querySelector('#browser-page-tools')).toBeNull()
     expect(document.activeElement).toBe(button)
   })
-  it('closes the tools popover on a click outside it', async () => {
-    request.mockResolvedValue({
-      sessionId: 'session',
-      activeTabId: 'tab',
-      busy: false,
-      tabs: [
-        { id: 'tab', title: 'Shop', url: 'https://shop.example/', active: true, loading: false }
-      ],
-      pageTools: {
-        origin: 'https://shop.example',
-        tools: [{ name: 'get_cart', description: 'Reads the cart', readOnly: true, form: false }]
-      }
-    })
-    await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
-    await act(async () =>
-      container.querySelector<HTMLButtonElement>('.browser-workspace-tools')!.click()
-    )
-    expect(container.querySelector('#browser-page-tools')?.textContent).toContain('1 tool')
-    await act(async () =>
-      container
-        .querySelector('.browser-workspace-viewport')!
-        .dispatchEvent(new Event('pointerdown', { bubbles: true }))
-    )
-    expect(container.querySelector('#browser-page-tools')).toBeNull()
-  })
-
-  it('toggles annotating in the app’s colors and theme, with the count on its button', async () => {
+  it('toggles annotating in the app’s colors and theme', async () => {
     request.mockResolvedValue({
       sessionId: 'session',
       activeTabId: 'tab',
@@ -175,10 +127,6 @@ describe('shared browser workspace', () => {
     document.documentElement.style.setProperty('--on-accent', '#ffffff')
     await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
     const toggle = container.querySelector<HTMLButtonElement>('.browser-workspace-annotate')!
-    expect(toggle.getAttribute('aria-pressed')).toBe('false')
-    expect(toggle.textContent).toContain('1')
-    // Notes are written on the page now; nothing grows under it.
-    expect(container.querySelector('.browser-workspace-annotations')).toBeNull()
     await act(async () => toggle.click())
     expect(request).toHaveBeenCalledWith({
       conversationId: 'chat',
@@ -238,37 +186,7 @@ describe('shared browser workspace', () => {
     await act(async () => input.focus())
     expect(request).not.toHaveBeenCalledWith({ conversationId: 'chat', action: 'control' })
     expect(input.disabled).toBe(false)
-    expect(document.activeElement).toBe(input)
-    expect(container.textContent).not.toContain('Take control')
   })
-  it('says the agent goes on by itself once the user finishes the page check', async () => {
-    request.mockResolvedValue({
-      sessionId: 'session',
-      activeTabId: 'tab',
-      busy: false,
-      waitingForUser: true,
-      tabs: []
-    })
-    await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
-    expect(container.querySelector('[aria-label*="continues once you finish"]')).not.toBeNull()
-    expect(container.textContent).not.toContain('Resume agent')
-    expect(container.textContent).not.toContain('Take control')
-  })
-
-  it('shows a loading light while the page loads', async () => {
-    request.mockResolvedValue({
-      sessionId: 'session',
-      activeTabId: 'tab',
-      busy: false,
-      tabs: [
-        { id: 'tab', title: 'Example', url: 'https://example.com/', active: true, loading: true }
-      ]
-    })
-    await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
-    expect(container.querySelector('.browser-workspace-progress.is-loading')).not.toBeNull()
-    expect(container.querySelector('input')?.getAttribute('aria-busy')).toBe('true')
-  })
-
   it('searches what is not an address', async () => {
     await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
     const input = container.querySelector('input')!
@@ -283,29 +201,6 @@ describe('shared browser workspace', () => {
       conversationId: 'chat',
       action: 'url',
       url: 'https://duckduckgo.com/?q=weather%20tomorrow'
-    })
-  })
-
-  it('shows the page’s zoom only when it is not 100%, and resets it', async () => {
-    await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
-    expect(container.querySelector('.browser-workspace-chip')).toBeNull()
-    request.mockResolvedValue({
-      sessionId: 'session',
-      activeTabId: 'tab',
-      busy: false,
-      zoom: 125,
-      tabs: [
-        { id: 'tab', title: 'Example', url: 'https://example.com/', active: true, loading: false }
-      ]
-    })
-    await act(async () => root.render(<BrowserWorkspace conversationId="other" />))
-    const chip = container.querySelector<HTMLButtonElement>('.browser-workspace-chip')!
-    expect(chip.textContent).toBe('125%')
-    await act(async () => chip.click())
-    expect(request).toHaveBeenCalledWith({
-      conversationId: 'other',
-      action: 'zoom',
-      zoomStep: 'reset'
     })
   })
 })

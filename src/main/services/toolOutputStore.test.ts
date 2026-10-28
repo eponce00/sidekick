@@ -124,11 +124,6 @@ describe('ToolOutputStore', () => {
     expect(cut.head + from(original, cut.omittedOffset, cut.omittedBytes) + cut.tail).toBe(original)
     expect(cut.omittedLines).toBe(0)
     expect(Buffer.byteLength(cut.head + cut.tail)).toBeLessThanOrEqual(8 * 1024)
-
-    // A line that fits the room still never shows cut.
-    const lines = planToolOutputCut(numbered(5_000), { maxLines: 200 })
-    expect(lines.head.endsWith('\n')).toBe(true)
-    expect(lines.tail.startsWith('line ')).toBe(true)
   })
 
   it('finds text in a kept result, with its offset and the text around it', async () => {

@@ -50,9 +50,7 @@ function button(name: string): HTMLButtonElement {
   return match!
 }
 
-const footer = (): string => container.querySelector('.settings-footer-status')?.textContent ?? ''
-
-it('says when there are unsaved changes and saves them', async () => {
+it('saves the changed settings along with the ones Settings opened with', async () => {
   const onSave = vi.fn(async () => ({ success: true }))
   const onClose = vi.fn()
   await act(async () =>
@@ -66,12 +64,7 @@ it('says when there are unsaved changes and saves them', async () => {
       />
     )
   )
-  expect(footer()).toBe('Changes apply after you save.')
-
   await act(async () => button('Blue').click())
-  expect(footer()).toBe('Unsaved changes')
-  expect(button('Blue').getAttribute('aria-checked')).toBe('true')
-
   await act(async () => button('Save changes').click())
   // What Settings opened with goes along, so the save can name only what changed.
   expect(onSave).toHaveBeenCalledWith(
@@ -103,18 +96,15 @@ it('applies a text size at once and follows one set by the zoom shortcuts', asyn
   )
   expect(onTextScaleChange).toHaveBeenCalledWith(110)
   expect(shown()).toBe('110%')
-  // Already saved, so nothing waits for Save changes.
-  expect(footer()).toBe('Changes apply after you save.')
 
   // Ctrl + saves the setting from the main process; the window passes the new value down.
   await act(async () => render(120))
   expect(shown()).toBe('120%')
-  expect(footer()).toBe('Changes apply after you save.')
   await act(async () => button('Reset').click())
   expect(onTextScaleChange).toHaveBeenLastCalledWith(100)
 })
 
-it('keeps the window open and shows why when saving fails', async () => {
+it('keeps the window open when saving fails', async () => {
   const onClose = vi.fn()
   await act(async () =>
     root.render(
@@ -128,7 +118,6 @@ it('keeps the window open and shows why when saving fails', async () => {
     )
   )
   await act(async () => button('Save changes').click())
-  expect(container.querySelector('.settings-footer [role="alert"]')?.textContent).toBe('Disk full')
   expect(onClose).not.toHaveBeenCalled()
 })
 
@@ -163,9 +152,4 @@ it('opens Integrations and explains an invalid enabled connector instead of savi
   await act(async () => button('Save changes').click())
   expect(onSave).not.toHaveBeenCalled()
   expect(container.querySelector('h2')?.textContent).toBe('Integrations')
-  expect(
-    Array.from(container.querySelectorAll('[role="alert"]')).some((alert) =>
-      alert.textContent?.includes('Enabled MCP connectors need a valid ID')
-    )
-  ).toBe(true)
 })

@@ -173,20 +173,6 @@ describe('workspace file IPC', () => {
     expect(result.attachments).toMatchObject([{ kind: 'file', relativePath: 'src/main.ts' }])
   })
 
-  it('moves a user-selected workspace file to the system trash', async () => {
-    const filePath = 'notes/draft.md'
-    const handler = handlers.get('workspace:trashFile') as TrashFileHandler
-
-    const result = await handler({}, workspaceState.root, filePath, {
-      requestedAccess: 'auto',
-      authorizationToken: 'authorized'
-    })
-
-    expect(result).toEqual({ ok: true })
-    expect(trashItem).toHaveBeenCalledWith(join(workspaceState.root, filePath))
-    expect(consume).toHaveBeenCalledOnce()
-  })
-
   it('moves a folder to the trash but never the project folder or Git’s own', async () => {
     const handler = handlers.get('workspace:trashFile') as TrashFileHandler
     const authorization = { requestedAccess: 'auto' as const, authorizationToken: 'authorized' }
@@ -247,43 +233,20 @@ describe('workspace file IPC', () => {
       const result = await handler({}, workspaceState.root, 'outside-link/secret.txt')
 
       expect(result.ok).toBe(false)
-      expect(result.error).toContain('escapes the project root')
       expect(result.content).toBeNull()
     } finally {
       await rm(outside, { recursive: true, force: true })
     }
   })
 
-  it('shows secure native actions for a workspace file', async () => {
+  it('copies the project-relative path of a workspace file from its menu', async () => {
     const handler = handlers.get('workspace:showPathMenu') as RegisteredHandler
     const shown = handler({ sender: {} }, 'notes/draft.md', workspaceState.root, false)
     await vi.waitFor(() => expect(menuTemplates).toHaveLength(1))
     menuClosers.at(-1)?.()
     expect(await shown).toBeUndefined()
-
-    const template = menuTemplates[0]
-    const revealLabel = process.platform === 'win32' ? 'Show in File Explorer' : 'Show in Folder'
-    expect(template.map((item) => item.label).filter(Boolean)).toEqual([
-      'Open in VS Code',
-      revealLabel,
-      'Open with',
-      'Copy Full Path',
-      'Copy Project-Relative Path'
-    ])
-    expect(
-      template
-        .find((item) => item.label === 'Open with')
-        ?.submenu?.map((item) => item.label)
-        .filter(Boolean)
-    ).toEqual([
-      'VS Code',
-      'Default app',
-      ...(process.platform === 'win32' ? ['Choose another app…'] : [])
-    ])
-    expect(template.find((item) => item.label === revealLabel)?.icon).toBe('file-manager-icon')
-    template.find((item) => item.label === 'Copy Project-Relative Path')?.click?.()
+    menuTemplates[0].find((item) => item.label === 'Copy Project-Relative Path')?.click?.()
     expect(clipboardWriteText).toHaveBeenCalledWith('notes/draft.md')
-    expect(menuPopup).toHaveBeenCalledOnce()
   })
 
   it('offers Move to the bin only where asked, and says when it was chosen', async () => {
@@ -349,23 +312,14 @@ describe('workspace:resolveFileReference', () => {
     await rm(workspaceState.root, { recursive: true, force: true })
   })
 
-  it('resolves a project-relative path directly', async () => {
+  it('resolves a project-relative path or a bare file name anywhere in the tree', async () => {
     const resolve = handlers.get('workspace:resolveFileReference') as RegisteredHandler
-    const result = (await resolve({}, './src/components/ChatPanel.tsx', workspaceState.root)) as {
-      ok: boolean
-      matches: string[]
+    for (const reference of ['./src/components/ChatPanel.tsx', 'ChatPanel.tsx']) {
+      expect(await resolve({}, reference, workspaceState.root)).toEqual({
+        ok: true,
+        matches: ['src/components/ChatPanel.tsx']
+      })
     }
-    expect(result).toEqual({ ok: true, matches: ['src/components/ChatPanel.tsx'] })
-  })
-
-  it('finds a bare file name anywhere in the tree', async () => {
-    const resolve = handlers.get('workspace:resolveFileReference') as RegisteredHandler
-    const result = (await resolve({}, 'ChatPanel.tsx', workspaceState.root)) as {
-      ok: boolean
-      matches: string[]
-    }
-    expect(result.ok).toBe(true)
-    expect(result.matches).toEqual(['src/components/ChatPanel.tsx'])
   })
 
   it('reports a mention the model imagined as unresolved so it stays plain text', async () => {

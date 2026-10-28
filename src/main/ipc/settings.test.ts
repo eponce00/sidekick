@@ -83,9 +83,6 @@ describe('provider secret persistence', () => {
       })
     ).toMatchObject({ success: false })
     expect(storeSet).not.toHaveBeenCalled()
-    expect(vi.mocked(dialog.showMessageBox).mock.calls.at(-1)?.at(-1)).toMatchObject({
-      detail: expect.stringContaining('Only choose an interpreter you trust')
-    })
   })
   it('requires native confirmation to leave shell isolation and respects cancellation', async () => {
     vi.mocked(dialog.showMessageBox).mockResolvedValue({ response: 0, checkboxChecked: false })
@@ -585,12 +582,6 @@ describe('text size', () => {
     expect(values.settings).toMatchObject({ textScale: 110, webSearchEnabled: false })
     expect(values.settings).not.toHaveProperty('contentFontSize')
     expect(storeDelete).toHaveBeenCalledWith('desktopZoomFactorV1')
-  })
-
-  it('leaves stored settings alone when there is nothing to move', () => {
-    storeWith({ settings: { textScale: 120 } })
-    migrateTextScale()
-    expect(storeSet).not.toHaveBeenCalled()
   })
 })
 

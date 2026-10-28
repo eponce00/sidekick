@@ -43,19 +43,12 @@ function userMessage(content: string): CompanionMessage {
 }
 
 describe('mergeRunEvents', () => {
-  it('adds new events in sequence order', () => {
-    const merged = mergeRunEvents([event(1), event(3)], [event(2), event(4)])
+  it('adds new events in sequence order, once each', () => {
+    const merged = mergeRunEvents([event(1), event(3)], [event(2), event(4), event(4)])
     expect(merged.map((item) => item.sequence)).toEqual([1, 2, 3, 4])
-  })
-
-  it('drops events already seen by id or by sequence', () => {
-    const current = [event(1), event(2)]
+    // A replay under another id is the same event.
     const replay = { ...event(2), id: 'another-id' }
-    expect(mergeRunEvents(current, [event(1), replay])).toBe(current)
-  })
-
-  it('keeps one copy of an event that arrives twice in the same batch', () => {
-    expect(mergeRunEvents([], [event(1), event(1)])).toHaveLength(1)
+    expect(mergeRunEvents(merged, [event(1), replay])).toBe(merged)
   })
 })
 
@@ -88,9 +81,6 @@ describe('runEventAction', () => {
     expect(runEventAction(other, 'chat-a', null)).toBe('ignore')
     expect(runEventAction(child, 'chat-a', 'run-1')).toBe('ignore')
     expect(runEventAction(event(4), 'chat-a', 'run-9')).toBe('ignore')
-  })
-
-  it('appends events of the run that is shown', () => {
     expect(runEventAction(event(4), 'chat-a', 'run-1')).toBe('append')
   })
 })

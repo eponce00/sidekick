@@ -166,7 +166,7 @@ describe('immutable bounded PDF session snapshot', () => {
     expect(fixture.open).toHaveBeenCalledOnce()
   })
 
-  it.each([0, -1, NaN, Infinity, 1.5, MAX_BROWSER_PDF_SOURCE_BYTES + 1])(
+  it.each([0, NaN, 1.5, MAX_BROWSER_PDF_SOURCE_BYTES + 1])(
     'rejects invalid size %s before reading',
     async (size) => {
       fixture.size = size

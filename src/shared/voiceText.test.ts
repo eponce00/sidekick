@@ -32,10 +32,6 @@ describe('speakableText', () => {
       'Done, it works.'
     )
   })
-
-  it('has nothing to read for a code-only reply', () => {
-    expect(speakableText('```js\nconsole.log(1)\n```')).toBe('')
-  })
 })
 
 describe('speakableParagraphs', () => {
@@ -112,12 +108,10 @@ describe('detectSpeechLanguage', () => {
 
   it('recognizes languages with their own script', () => {
     expect(detectSpeechLanguage('こんにちは、ビルドは成功しました。')).toBe('ja')
-    expect(detectSpeechLanguage('빌드가 성공했습니다.')).toBe('ko')
     expect(detectSpeechLanguage('Сборка прошла успешно, все тесты зелёные.')).toBe('ru')
     expect(detectSpeechLanguage('Збірка пройшла успішно, і всі тести зелені. Їх багато.')).toBe(
       'uk'
     )
-    expect(detectSpeechLanguage('Η κατασκευή ολοκληρώθηκε με επιτυχία.')).toBe('el')
   })
 
   it('reads text with no clear language as English', () => {

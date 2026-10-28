@@ -50,9 +50,4 @@ describe('microphone samples', () => {
     ])
     expect(Array.from(bytes.subarray(2, 4))).toEqual([0xff, 0x7f])
   })
-
-  it('come back to the same floats', () => {
-    const samples = pcm16ToFloat32(float32ToPcm16(new Float32Array([0.25, -0.75])))
-    expect(Array.from(samples)).toEqual([expect.closeTo(0.25, 4), -0.75])
-  })
 })

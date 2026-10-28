@@ -87,9 +87,6 @@ it('retains the schema-valid argument values prepared before an approval wait', 
 
 it.each([
   () => ({ extra: () => 'secret-native-error' }),
-  () => ({ extra: new Date() }),
-  () => ({ extra: new Map() }),
-  () => ({ extra: BigInt(1) }),
   () => {
     const cycle: Record<string, unknown> = {}
     cycle.self = cycle

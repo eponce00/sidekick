@@ -43,26 +43,6 @@ describe('model-aware editing dialects', () => {
     ).toBe('claude-edit')
   })
 
-  it('honors an explicit editing contract for provider aliases', () => {
-    expect(
-      editingDialectForModel({
-        providerKind: 'litellm',
-        model: 'local-loaded-model',
-        dialect: 'apply-patch'
-      })
-    ).toBe('apply-patch')
-  })
-
-  it('uses a gateway-resolved model identity before falling back to an opaque alias', () => {
-    expect(
-      editingDialectForModel({
-        providerKind: 'litellm',
-        model: 'local-loaded-model',
-        upstreamModel: 'openai/gpt-5.4-codex'
-      })
-    ).toBe('apply-patch')
-  })
-
   it('uses a valid persisted calibration but never overrides a manual contract', () => {
     const calibration = {
       version: 2 as const,

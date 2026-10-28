@@ -77,12 +77,6 @@ describe('auditRuns', () => {
     expect(finding('compaction-time').summary).toContain('median of 30 s')
   })
 
-  it('does not flag compactions near the end of the window', () => {
-    run('late-run')
-    compaction('late-run', 210_000, 2_000)
-    expect(finding('compaction-point').severity).toBe('info')
-  })
-
   it('flags a high share of fallback summaries and runs that compact again and again', () => {
     run('busy')
     for (let index = 0; index < 4; index++) {
@@ -125,9 +119,7 @@ describe('auditRuns', () => {
     expect(finding('compaction-at-start')).toMatchObject({
       severity: 'flag',
       count: 1,
-      examples: ['again (the previous run sent 21% of 260,000)'],
-      summary:
-        '1 of 2 runs that began by summarizing the chat followed a run that had sent less than 60% of the window.'
+      examples: ['again (the previous run sent 21% of 260,000)']
     })
   })
 
@@ -201,9 +193,7 @@ describe('auditRuns', () => {
     event('cancelled', 'run.completed', { phase: 'cancelled' }, 1_000)
     event('cancelled', 'run.finalized', { recovered: true }, 1_000 + 600 * 60_000)
 
-    const quiet = finding('quiet-run')
-    expect(quiet).toMatchObject({ severity: 'info', count: 0 })
-    expect(quiet.summary).toContain('1 runs ended because SideKick closed')
+    expect(finding('quiet-run')).toMatchObject({ severity: 'info', count: 0 })
   })
 
   it('flags a worker report that did not carry the whole reply', () => {
@@ -220,9 +210,7 @@ describe('auditRuns', () => {
     insertReport.run('cut-report', `Done.\n\n${reply.slice(0, 1_999)}…`)
     insertReport.run('whole-report', `Done.\n\n${reply}`)
 
-    const reports = finding('report-cut')
-    expect(reports).toMatchObject({ severity: 'flag', count: 1 })
-    expect(reports.summary).toContain('1 of 2 worker reports')
+    expect(finding('report-cut')).toMatchObject({ severity: 'flag', count: 1 })
   })
 
   it('counts a cut-off reply once, however many calls it refused, and flags a cut that repeats', () => {
@@ -235,13 +223,7 @@ describe('auditRuns', () => {
       { reason: 'truncated_tool_batch', doneReason: 'length', toolCallCount: 3 },
       2_001
     )
-    expect(finding('cut-off-turns')).toMatchObject({
-      severity: 'info',
-      count: 1,
-      summary: expect.stringContaining(
-        '1 reply was cut off while writing tool calls, with 3 calls refused.'
-      )
-    })
+    expect(finding('cut-off-turns')).toMatchObject({ severity: 'info', count: 1 })
 
     run('again')
     for (let index = 0; index < 2; index++) {
@@ -263,8 +245,6 @@ describe('auditRuns', () => {
     }
     const cut = finding('cut-off-turns')
     expect(cut).toMatchObject({ severity: 'flag', count: 3 })
-    expect(cut.summary).toContain('1 held several calls; 1 came right after another cut.')
-    expect(cut.summary).toContain('Limit: shrunk to the room left 2, the model')
     expect(cut.examples).toEqual([
       'again (2 cut-off replies, 2 calls refused, 1 right after another cut)',
       'one-cut (1 cut-off reply, 3 calls refused)'
@@ -308,8 +288,6 @@ describe('auditRuns', () => {
 
     const runaway = finding('runaway-tool-calls')
     expect(runaway).toMatchObject({ severity: 'flag', count: 2 })
-    expect(runaway.summary).toContain('(at most 784 calls, 781 of them the same)')
-    expect(runaway.summary).toContain('SideKick stopped 1 of them as they streamed.')
     expect(runaway.examples).toEqual([
       'runaway (1 runaway, up to 784 calls, 781 the same)',
       'stopped (1 runaway, up to 5 calls, 4 the same)'
@@ -352,12 +330,9 @@ describe('auditRuns', () => {
     expect(audit.findings.find((item) => item.check === 'compaction-point')?.count).toBe(0)
   })
 
-  it('formats a readable summary that never includes message content', () => {
+  it('formats a summary that never includes message content', () => {
     run('early-run')
     compaction('early-run', 95_000, 2_000, { summary: 'SECRET handoff text' })
-    const text = formatRunAudit(auditRuns(db))
-    expect(text).toContain('✗ compaction-point')
-    expect(text).toContain('checks flagged.')
-    expect(text).not.toContain('SECRET')
+    expect(formatRunAudit(auditRuns(db))).not.toContain('SECRET')
   })
 })

@@ -117,16 +117,6 @@ it('reports value-free insertion acknowledgement without implying page receipt',
   expect(JSON.stringify(traces)).not.toContain('private-value')
 })
 
-it('does not run failure diagnostics on successful input', async () => {
-  const { driver } = fixture()
-  let called = false
-  driver.failed = async () => {
-    called = true
-  }
-  await enterBrowserText({ text: 'ok', clear: true, platform: 'win32' }, driver)
-  expect(called).toBe(false)
-})
-
 it('preserves the original insertion failure even if diagnostics fail', async () => {
   const { driver, events } = fixture()
   const failure = new Error('native insertion rejected')

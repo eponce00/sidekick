@@ -41,7 +41,7 @@ function params(overrides: Partial<ContextMenuParams> = {}): ContextMenuParams {
 }
 
 describe('nativeTextMenuTemplate', () => {
-  it('provides native editing, spelling, and substitution actions on macOS', () => {
+  it('replaces a misspelled word and learns its spelling on macOS', () => {
     const replace = vi.fn()
     const add = vi.fn()
     const template = nativeTextMenuTemplate(
@@ -51,19 +51,6 @@ describe('nativeTextMenuTemplate', () => {
       'darwin'
     )
 
-    expect(template.map(({ label, role }) => label || role)).toEqual(
-      expect.arrayContaining([
-        'hello',
-        'Learn Spelling',
-        'cut',
-        'copy',
-        'paste',
-        'selectAll',
-        'Spelling',
-        'Substitutions',
-        'services'
-      ])
-    )
     ;(template.find(({ label }) => label === 'hello')?.click as () => void)()
     ;(template.find(({ label }) => label === 'Learn Spelling')?.click as () => void)()
     expect(replace).toHaveBeenCalledWith('hello')
@@ -103,7 +90,7 @@ describe('nativeTextMenuTemplate', () => {
     )
   })
 
-  it('adds relevant link, image, lookup, speech, and services actions', () => {
+  it('wires link, image, and lookup actions to their handlers', () => {
     const openLink = vi.fn()
     const copyImage = vi.fn()
     const lookUpSelection = vi.fn()
@@ -122,17 +109,6 @@ describe('nativeTextMenuTemplate', () => {
       { openLink, copyImage, lookUpSelection }
     )
 
-    expect(template.map(({ label, role }) => label || role)).toEqual(
-      expect.arrayContaining([
-        'Open Link in Browser',
-        'Copy Link',
-        'Copy Image',
-        'Copy Image Address',
-        'Look Up “SideKick desktop experience”',
-        'Speech',
-        'services'
-      ])
-    )
     ;(template.find(({ label }) => label === 'Open Link in Browser')?.click as () => void)()
     ;(template.find(({ label }) => label === 'Copy Image')?.click as () => void)()
     ;(

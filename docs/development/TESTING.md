@@ -105,7 +105,7 @@ reproduce it; one that needs the built app's windows, settings or storage belong
 ## Continuous integration
 
 CI runs its work in parallel jobs: one Linux job for the platform-independent checks and coverage,
-the suite on macOS and on two Windows machines (it runs on one worker there), and a packaging job
+the suite on macOS and on two Windows machines, and a packaging job
 per platform for the runtime journey and smoke tests. The `Validate (…)` checks that branch
 protection requires pass only when every one of those jobs passed. Installed dependencies are cached
 by the locked dependencies and the Node version; the key leaves out SideKick's own version, so a
@@ -308,3 +308,46 @@ consumes the value, not only the helper that creates it.
 Keep tests isolated: use temporary directories, synthetic content, fake credentials, deterministic
 clocks or IDs where relevant, and local HTTP servers instead of live internet dependencies. A
 passing live provider run supplements these checks; it never replaces them.
+
+### What earns a test
+
+Every test costs time on each run and work on each change, so it has to guard something. These
+earn one:
+
+- the smallest deterministic test that fails for a defect that happened;
+- an allowed and a denied case at a security or trust boundary;
+- a boundary test where a shared schema, IPC payload, persisted record, prompt, or tool value is
+  consumed.
+
+These do not:
+
+- UI layout, styling, copy, or wording; check those in the running app;
+- small pure helpers that their callers' tests already exercise;
+- what a library or the type checker already guarantees;
+- another test of the same behavior with different inputs; a table (`it.each`) is for inputs that
+  take different branches;
+- tests that restate the implementation: expected values computed by the code under test, every
+  collaborator mocked, assertions that only check a call happened, or `toBeDefined` where the exact
+  value is known.
+
+Ask of each test whether it would fail if the code were wrong. Coding agents tend to write many
+near-duplicate, heavily mocked tests that pass for wrong code; review their tests against this list
+like any other change.
+
+Delete a test when the code it guards is gone, when another test covers the same behavior, or when
+it pins wording or structure rather than behavior. Keep the only test for a past defect or a
+security boundary; `git log -S` on a line of it finds why it was added.
+
+### Speed budget
+
+`npm test` finishes in a few minutes on a developer machine, and no test file takes more than
+about 30 seconds unless a comment at its top says why. Build a git or file fixture once per file and
+copy it rather than once per test, use fake timers instead of waiting, and start real processes only
+where the process is what is tested.
+
+`vitest.config.ts` splits the suite into three projects, which on Windows share half the cores
+(`scripts/run-vitest.cjs`). `unit` runs in parallel. `git` holds the
+files that run git in repositories of their own, in parallel with longer timeouts. `processes` holds
+the files that start shells or helper programs, and runs them one file at a time on Windows, where
+side-by-side runs left orphaned PowerShell trees. A new file that starts a process belongs in that
+list.

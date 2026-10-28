@@ -145,8 +145,7 @@ it('uses actual registry/runtime skill activation and returns reports without pr
   expect(getAgentToolDefinitions(f.session.catalog()).map((x) => x.function.name)).not.toContain(
     'office_preflight'
   )
-  const skill = await f.invoke('use_skill', { skill_id: 'xlsx' })
-  expect(JSON.stringify(skill)).toContain('Prefer advertised office_preflight')
+  await f.invoke('use_skill', { skill_id: 'xlsx' })
   const result = await f.invoke('office_preflight', { workflow: 'xlsx' })
   expect(result).toMatchObject({
     status: 'success',

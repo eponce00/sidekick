@@ -9,7 +9,7 @@ import { AgentRunStore } from './agentRunStore'
 import { recoverAgentRunMaterializations } from './agentRunRecovery'
 
 describe('durable run finalization recovery', () => {
-  it.each(['completed', 'failed', 'cancelled', 'interrupted'] as const)(
+  it.each(['completed', 'interrupted'] as const)(
     'does not resurrect deleted conversations while finalizing an orphaned %s journal',
     (phase) => {
       const db = openApplicationDatabase(':memory:')

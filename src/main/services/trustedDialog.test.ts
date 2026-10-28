@@ -159,18 +159,6 @@ describe('SideKick-styled trusted dialog', () => {
     ])
   })
 
-  it('marks the default as the main action when it is not Cancel', () => {
-    const page = trustedDialogPage(
-      { message: 'Install?', buttons: ['Restart and update', 'Later'], defaultId: 0, cancelId: 1 },
-      darkLook
-    )
-    const buttons = [...page.matchAll(/data-index="(\d)" class="([^"]*)"/g)]
-    expect(buttons.map((button) => [button[1], button[2]])).toEqual([
-      ['1', ''],
-      ['0', 'primary']
-    ])
-  })
-
   it('falls back to the system dialog without a visible window to attach to', async () => {
     await showTrustedDialog(null, settingsOptions)
     expect(dialog.showMessageBox).toHaveBeenCalledWith(settingsOptions)
@@ -291,16 +279,6 @@ describe('SideKick-styled trusted dialog', () => {
     expect(notices[0].options.look).toEqual(darkLook)
     dialogs[0].navigate('sidekick-dialog:respond/0/0')
     await answer
-  })
-
-  it('puts the chosen accent in the page, as a colour and nothing else', () => {
-    const page = trustedDialogPage(settingsOptions, {
-      theme: 'dark',
-      accent: '#e98e9c',
-      onAccent: '#111111'
-    })
-    expect(page).toContain('--accent: #e98e9c;')
-    expect(page).toContain('color-scheme: dark;')
   })
 
   it('keeps waiting for the answer when its load is reported failed after it came up', async () => {

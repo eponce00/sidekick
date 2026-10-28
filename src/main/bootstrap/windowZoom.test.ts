@@ -59,11 +59,13 @@ function fakeSetting(initial: unknown): TextScaleSetting & { value: unknown } {
 }
 
 describe('window zoom shortcuts', () => {
-  it('supports conventional keyboard and numpad shortcuts', () => {
+  it('maps Ctrl shortcuts, including the numpad, and leaves unmodified or Alt keys alone', () => {
     expect(zoomActionForInput(input('+', 'Equal'))).toBe('in')
     expect(zoomActionForInput(input('-', 'Minus'))).toBe('out')
     expect(zoomActionForInput(input('0', 'Digit0'))).toBe('reset')
     expect(zoomActionForInput(input('Add', 'NumpadAdd'))).toBe('in')
+    expect(zoomActionForInput(input('+', 'Equal', { control: false }))).toBeNull()
+    expect(zoomActionForInput(input('+', 'Equal', { alt: true }))).toBeNull()
   })
 
   it('starts fresh installs at 100%, which the design draws at 90% of Chromium’s size', () => {
@@ -109,10 +111,5 @@ describe('window zoom shortcuts', () => {
     setting.save(80)
     window.press('-', 'Minus')
     expect(setting.value).toBe(80)
-  })
-
-  it('does not capture unmodified or Alt-modified keys', () => {
-    expect(zoomActionForInput(input('+', 'Equal', { control: false }))).toBeNull()
-    expect(zoomActionForInput(input('+', 'Equal', { alt: true }))).toBeNull()
   })
 })

@@ -458,18 +458,6 @@ describe('reports and wakes', () => {
     expect(report?.body).toContain(reply)
   })
 
-  it('carries a reply of up to 50,000 characters whole', async () => {
-    const [worker] = await startWorkers('Thorough')
-    const reply = `${'detail '.repeat(6_000)}Conclusion: add HS 7.`
-    expect(reply.length).toBeGreaterThan(40_000)
-    runtime.finish(lastRunId(worker.conversationId), 'completed', reply)
-    await service.idle()
-
-    const report = service.messages(MANAGER).find(({ intent }) => intent === 'report')
-    expect(report?.body).toContain(reply)
-    expect(savedReplies).toEqual([])
-  })
-
   it('keeps the start and the end of a longer reply, and the rest readable', async () => {
     const [worker] = await startWorkers('Verbose')
     const reply = `START ${'a'.repeat(30_000)}${'m'.repeat(30_000)}${'z'.repeat(10_000)} END`
@@ -664,7 +652,6 @@ describe('restart recovery', () => {
       .filter(({ intent, toConversationId }) => intent === 'status' && toConversationId === MANAGER)
     expect(notes).toHaveLength(1)
     expect(notes[0].body).toContain('port-schedules')
-    expect(notes[0].body).toContain('will not resume on its own')
     expect(runsOf(MANAGER)).toHaveLength(managerRuns)
 
     // A worker interrupted before this start was already reported last time.
@@ -830,16 +817,6 @@ describe('chat tools', () => {
     await expect(
       call(MANAGER, 'start_session', { sessions: [{ title: 'X', brief: 'y', project: 'nope' }] })
     ).rejects.toThrow(/No project named nope/)
-  })
-
-  it('suggests chats without starting them', async () => {
-    const result = await call(MANAGER, 'start_session', {
-      mode: 'propose',
-      sessions: [{ title: 'Flaky test', brief: 'Fix it' }]
-    })
-    expect(result).toMatchObject({ conversationId: MANAGER, suggested: [{ title: 'Flaky test' }] })
-    expect(runtime.started).toEqual([])
-    expect(decisions).toEqual([])
   })
 
   it('lists the family and stops a chat by name', async () => {

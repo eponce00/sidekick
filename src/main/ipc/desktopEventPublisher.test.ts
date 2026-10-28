@@ -50,9 +50,6 @@ describe('desktop event publication', () => {
     expect(racing.webContents.send).toHaveBeenCalledTimes(2)
     expect(healthy.webContents.send).toHaveBeenCalledTimes(2)
     expect(warn).toHaveBeenCalledTimes(1)
-    expect(warn.mock.calls[0]).toEqual([
-      '[DesktopEvents] A renderer event could not be delivered; later deliveries remain enabled.'
-    ])
     expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private-|payload|secret/)
   })
 

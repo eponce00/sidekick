@@ -3,13 +3,7 @@ import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { BROWSER_IMPORT_LIMITS } from '../../../shared/browserLibrary'
-import {
-  chromiumTime,
-  parseChromiumBookmarks,
-  parseChromiumLocalState,
-  readChromiumHistory
-} from './chromiumProfile'
+import { chromiumTime, parseChromiumBookmarks, readChromiumHistory } from './chromiumProfile'
 import { writeChromiumHistory } from './fixtures'
 import { readSqliteSnapshot } from './profileFiles'
 
@@ -100,32 +94,6 @@ describe('parseChromiumBookmarks', () => {
       { folder: ['Bookmarks bar'], title: 'Shallow', url: 'https://shallow.example/' }
     ])
   })
-
-  it('stops at the bookmark limit', () => {
-    const children = Array.from({ length: BROWSER_IMPORT_LIMITS.bookmarks + 500 }, (_, index) => ({
-      type: 'url',
-      name: `B${index}`,
-      url: `https://example.com/${index}`
-    }))
-    expect(parseChromiumBookmarks(bookmarksFile({ bookmark_bar: { children } }))).toHaveLength(
-      BROWSER_IMPORT_LIMITS.bookmarks
-    )
-  })
-})
-
-describe('parseChromiumLocalState', () => {
-  it('names profile folders, falling back to the folder name', () => {
-    const names = parseChromiumLocalState(
-      JSON.stringify({
-        profile: { info_cache: { Default: { name: 'Personal' }, 'Profile 3': { name: 5 } } }
-      })
-    )
-    expect([...names]).toEqual([
-      ['Default', 'Personal'],
-      ['Profile 3', 'Profile 3']
-    ])
-    expect(parseChromiumLocalState('{}').size).toBe(0)
-  })
 })
 
 describe('chromiumTime', () => {
@@ -170,14 +138,5 @@ describe('readChromiumHistory', () => {
       CREATE VIEW urls AS SELECT * FROM real`)
     db.close()
     await expect(readSqliteSnapshot(path, readChromiumHistory, directory)).rejects.toThrow(/urls/)
-  })
-
-  it('refuses a file that is not a database', async () => {
-    const path = join(directory, 'History')
-    const { writeFileSync } = await import('fs')
-    writeFileSync(path, 'SQLite format 3\0 but not really'.repeat(100))
-    await expect(readSqliteSnapshot(path, readChromiumHistory, directory)).rejects.toMatchObject({
-      failure: 'unreadable'
-    })
   })
 })

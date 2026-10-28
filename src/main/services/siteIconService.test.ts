@@ -76,15 +76,4 @@ describe('SiteIconService', () => {
     // ico + html-fallback root fetch on the first pass only.
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
-
-  it('reads the first icon link in the head only', () => {
-    expect(
-      SiteIconService.declaredIconHref(
-        '<head><link rel="stylesheet" href="a.css"><link rel="icon" type="image/png" href="/b.png"><link rel="apple-touch-icon" href="/c.png"></head>'
-      )
-    ).toBe('/b.png')
-    expect(
-      SiteIconService.declaredIconHref('<head></head><body><link rel="icon" href="/x"></body>')
-    ).toBeNull()
-  })
 })

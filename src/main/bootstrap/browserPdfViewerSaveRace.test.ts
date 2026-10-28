@@ -92,7 +92,6 @@ it.each(['serialization', 'network'] as const)(
       expect(document.documentElement.dataset.sidekickPdfOutput).toBe('/synthetic/older-copy.pdf')
     )
     expect(document.documentElement.dataset.sidekickPdfSaved).toBe('false')
-    expect(document.querySelector('#status')!.textContent).toContain('Unsaved')
     expect(button.disabled).toBe(false)
     button.click()
     await vi.waitFor(() => expect(document.documentElement.dataset.sidekickPdfSaved).toBe('true'))

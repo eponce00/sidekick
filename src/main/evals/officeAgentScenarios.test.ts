@@ -14,22 +14,14 @@ import {
   summarizeOfficeTrace
 } from './officeAgentScenarios'
 
-it('composes the real skills/runtime prompt and keeps generation separate from read-only probes', () => {
+it('composes the prompt from the real skills catalog', () => {
   const prompt = officeAgentSystemPrompt(
     '/synthetic/project',
     '/app/resources/skills',
     'fixture-model'
   )
-  expect(prompt).toContain('Available Skills')
   expect(prompt).toContain('id: `docx`')
   expect(prompt).toContain('SIDEKICK_SKILLS')
-  if (process.platform === 'win32') {
-    expect(prompt).toContain('Short read-only Python or Node probes')
-    expect(prompt).toContain('use apply_patch to create a uniquely named project-relative script')
-    expect(prompt).not.toContain(
-      'instead of nesting quotes in `-c` or creating a temporary project file'
-    )
-  }
 })
 
 it('requires successful skill -> preflight -> helper stdout signals in that order', () => {

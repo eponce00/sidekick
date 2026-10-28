@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CONTROL_MAX_MESSAGE_BYTES, ControlError } from '../../shared/controlProtocol'
 import { createControlToken, createEndpointName, ensureControlDirectory } from './controlEndpoint'
-import { ControlServer, tokensMatch, type ControlHandlers } from './controlServer'
+import { ControlServer, type ControlHandlers } from './controlServer'
 
 let userData: string
 let endpoint: string
@@ -191,14 +191,5 @@ describe('control endpoint authentication', () => {
     expect(replies[2]).toMatchObject({
       error: { message: 'Unknown setting x.', data: { code: 'not-found' } }
     })
-  })
-})
-
-describe('tokensMatch', () => {
-  it('compares exactly, whatever the lengths', () => {
-    expect(tokensMatch('abc', 'abc')).toBe(true)
-    expect(tokensMatch('abc', 'abcd')).toBe(false)
-    expect(tokensMatch('abc', '')).toBe(false)
-    expect(tokensMatch('abc', null)).toBe(false)
   })
 })

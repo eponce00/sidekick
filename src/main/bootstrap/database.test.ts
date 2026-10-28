@@ -713,77 +713,10 @@ describe('database schema migrations', () => {
     const compactionColumns = db
       .prepare('PRAGMA table_info(conversation_compactions)')
       .all() as Array<{ name: string }>
-    const conversationColumns = db.prepare('PRAGMA table_info(conversations)').all() as Array<{
-      name: string
-    }>
-    const messageColumns = db.prepare('PRAGMA table_info(messages)').all() as Array<{
-      name: string
-    }>
     expect(legacyRunColumns).toEqual([])
     expect(runColumns.map(({ name }) => name)).toContain('prompt_context_json')
     expect(compactionColumns.map(({ name }) => name)).toEqual(
       expect.arrayContaining(['strategy', 'prompt_version', 'provider', 'model'])
-    )
-    expect(conversationColumns.map(({ name }) => name)).toEqual(
-      expect.arrayContaining([
-        'title_source',
-        'title_version',
-        'title_backfill_attempted_at',
-        'title_backfill_attempted_version',
-        'title_backfill_error',
-        'unread_completion_at',
-        'forked_from_conversation_id',
-        'forked_from_message_id'
-      ])
-    )
-    expect(
-      db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'collaboration_%'").all()
-    ).toEqual([])
-    expect(messageColumns.map(({ name }) => name)).toEqual(
-      expect.arrayContaining(['run_mode', 'images', 'attachments', 'notice_tone', 'starts_goal'])
-    )
-    expect(
-      db.prepare('SELECT id, length(checksum) AS checksum_length FROM schema_migrations').all()
-    ).toEqual([
-      { id: '20260829_001_canonical_runtime', checksum_length: 64 },
-      { id: '20260829_002_prompt_admission', checksum_length: 64 },
-      { id: '20260829_003_journal_materializations', checksum_length: 64 },
-      { id: '20260830_001_managed_worktrees', checksum_length: 64 },
-      { id: '20260830_002_conversation_pins', checksum_length: 64 },
-      { id: '20260830_003_title_backfill_attempt_versions', checksum_length: 64 },
-      { id: '20260830_004_message_context_attachments', checksum_length: 64 },
-      { id: '20260923_001_message_notice_tone', checksum_length: 64 },
-      { id: '20260923_002_message_goal_origin', checksum_length: 64 },
-      { id: '20261016_001_schedules', checksum_length: 64 },
-      { id: '20261016_002_worktree_base_ref', checksum_length: 64 },
-      { id: '20261016_003_sessions', checksum_length: 64 },
-      { id: '20261016_004_group_chats_to_chats', checksum_length: 64 },
-      { id: '20261018_001_schedule_starters', checksum_length: 64 },
-      { id: '20261020_001_detached_worktrees', checksum_length: 64 },
-      { id: '20261020_002_set_aside_worktrees', checksum_length: 64 },
-      { id: '20261021_001_worktrees_belong_to_chats', checksum_length: 64 }
-    ])
-    expect(
-      db
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'managed_worktrees'"
-        )
-        .get()
-    ).toEqual({ name: 'managed_worktrees' })
-    const checkpointLabelColumns = db
-      .prepare('PRAGMA table_info(checkpoint_labels)')
-      .all() as Array<{
-      name: string
-    }>
-    expect(checkpointLabelColumns.map(({ name }) => name)).toEqual(
-      expect.arrayContaining([
-        'workspace_root',
-        'checkpoint_hash',
-        'label',
-        'label_source',
-        'label_version',
-        'backfill_attempted_at'
-      ])
     )
   })
 

@@ -109,18 +109,11 @@ describe('imported browser data in the Browser panel', () => {
     })
     await act(async () => vi.advanceTimersByTimeAsync(100))
     expect(library.suggest).toHaveBeenLastCalledWith('git')
-    const options = container.querySelectorAll('[role="option"]')
-    expect([...options].map((option) => option.textContent)).toEqual([
-      'GitHubgithub.com',
-      'GitLabgitlab.com'
-    ])
-    expect(input.getAttribute('aria-expanded')).toBe('true')
 
     await act(async () => {
       key(input, 'ArrowDown')
       key(input, 'ArrowDown')
     })
-    expect(input.getAttribute('aria-activedescendant')).toBe('browser-suggestions-1')
     await act(async () => {
       input.form!.requestSubmit()
     })
@@ -132,25 +125,6 @@ describe('imported browser data in the Browser panel', () => {
     expect(container.querySelector('[role="listbox"]')).toBeNull()
   })
 
-  it('closes suggestions on Escape and leaves the typed address alone', async () => {
-    await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
-    const input = address()
-    await act(async () => {
-      input.focus()
-      type(input, 'git')
-    })
-    await act(async () => vi.advanceTimersByTimeAsync(100))
-    await act(async () => key(input, 'Escape'))
-    expect(container.querySelector('[role="listbox"]')).toBeNull()
-    expect(input.value).toBe('git')
-  })
-
-  it('keeps imported bookmarks to the address bar’s suggestions, with no menu of its own', async () => {
-    await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
-    expect(container.querySelector('button[aria-label="Bookmarks"]')).toBeNull()
-    expect(container.querySelector('#browser-bookmarks')).toBeNull()
-  })
-
   it('previews a profile, keeps a part it cannot read unchecked, and imports what is chosen', async () => {
     const onImported = vi.fn()
     await act(async () =>
@@ -158,8 +132,6 @@ describe('imported browser data in the Browser panel', () => {
     )
     expect(library.previewImport).toHaveBeenCalledWith('chrome', 'Default')
     const dialog = document.querySelector('[role="dialog"]')!
-    expect(dialog.textContent).toContain('12 bookmarks')
-    expect(dialog.textContent).toContain('Google Chrome is using its history file.')
     const [bookmarks, history] = [
       ...dialog.querySelectorAll('input[type="checkbox"]')
     ] as HTMLInputElement[]
@@ -177,20 +149,6 @@ describe('imported browser data in the Browser panel', () => {
       history: false
     })
     expect(onImported).toHaveBeenCalled()
-    expect(dialog.textContent).toContain('Imported 12 bookmarks from Google Chrome (Personal).')
-  })
-
-  it('says so when no browser is found, and still offers a bookmarks file', async () => {
-    library.importSources.mockResolvedValue([])
-    await act(async () => root.render(<BrowserImportDialog isOpen onClose={vi.fn()} />))
-    const dialog = document.querySelector('[role="dialog"]')!
-    expect(dialog.textContent).toContain('found no Chrome')
-    const file = [...dialog.querySelectorAll('button')].find((node) =>
-      node.textContent?.includes('bookmarks file')
-    )!
-    await act(async () => file.click())
-    expect(library.importBookmarksFile).toHaveBeenCalled()
-    expect(library.previewImport).not.toHaveBeenCalled()
   })
 
   it('shows the main process message without Electron’s prefix', async () => {
