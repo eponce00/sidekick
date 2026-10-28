@@ -348,7 +348,7 @@ function companionServer(): CompanionServer {
       publishDesktopEvent('conversations:messagesChanged', { conversationId })
       server?.broadcast({ type: 'messages.changed', conversationId })
     },
-    historyRewound: (conversationId) => coordinator.tools.forgetConversation(conversationId),
+    historyRewound: (conversationId) => coordinator.historyRewound(conversationId),
     queueChanged,
     shrinkImage,
     readArtifact: readBrowserArtifact,

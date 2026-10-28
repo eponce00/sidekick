@@ -401,6 +401,20 @@ export class AgentContextManager implements AgentKernelContextManager {
     }).shouldCompact
   }
 
+  /** How full the request is as a share of the point where it compacts; 0 when it never does. */
+  compactionPressure(messages: ProviderChatMessage[], tools: readonly unknown[]): number {
+    if (!this.options.enabled) return 0
+    const budget = calculateRequestBudget({
+      messages,
+      tools,
+      contextLength: this.options.contextLength,
+      reservedOutputTokens: this.options.maxOutputTokens,
+      compactionThreshold: this.options.threshold,
+      estimationBiasTokens: this.estimationBiasTokens
+    })
+    return budget.requestTokens / Math.max(1, budget.compactionTriggerTokens)
+  }
+
   replyLimit(
     messages: ProviderChatMessage[],
     tools: readonly unknown[],

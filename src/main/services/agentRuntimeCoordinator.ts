@@ -88,6 +88,19 @@ const SLOT_FREE_TOOLS: ReadonlySet<string> = new Set(['wait'])
 const SLOT_FREE_PHASES: ReadonlySet<string> = new Set(['awaiting_permission', 'awaiting_user'])
 // An artifact that still has a defect after three fixes needs the agent, not a fourth try.
 const ARTIFACT_BUILDER_FIXES = 3
+// A chat left alone this long after a reply is summarized ahead of time when its next run would
+// compact anyway, so the next message starts at once instead of waiting for the summary.
+export const IDLE_COMPACTION_DELAY_MS = 2 * 60_000
+// Near enough: one more ordinary turn would usually reach the compaction point.
+const IDLE_COMPACTION_PRESSURE = 0.85
+// Tries while other runs hold the slots, before the chat's next run is left to do it.
+const IDLE_COMPACTION_ATTEMPTS = 3
+
+interface IdleCompaction {
+  timer?: NodeJS.Timeout
+  controller?: AbortController
+  running?: Promise<void>
+}
 
 function checkpointLabel(content: string): string {
   const normalized = content.replace(/\s+/g, ' ').trim()
@@ -108,6 +121,7 @@ export class AgentRuntimeCoordinator {
   private readonly outputs: ToolOutputStore
   private readonly activeConversations = new Map<string, ActiveConversationRun>()
   private readonly preparations = new Map<string, PreparingRun>()
+  private readonly idleCompactions = new Map<string, IdleCompaction>()
   private closing = false
   private readonly observers = new Map<string, Set<(event: AgentRunEvent) => void>>()
   private readonly publishExternal: (event: AgentRunEvent) => void
@@ -515,6 +529,8 @@ export class AgentRuntimeCoordinator {
       if (!input.mode || input.mode === 'conversation') {
         preparation.goalId = this.goals.runnable(input.conversationId)?.id
       }
+      // A summary already being written for this chat is the one this run would write first.
+      await this.awaitPreparation(this.settleIdleCompaction(input.conversationId), preparation)
       let queued = false
       await this.awaitPreparation(
         this.acquireRunSlot(
@@ -674,6 +690,130 @@ export class AgentRuntimeCoordinator {
     }
   }
 
+  /**
+   * After a reply, waits for the chat to be left alone, then summarizes it the way its next run
+   * would if that run would compact anyway. It uses only slots nobody else is waiting for and gives
+   * them up as soon as someone is, so it never holds back a reply.
+   */
+  private scheduleIdleCompaction(input: StartConversationAgentRunInput, attempt = 1): void {
+    const { conversationId } = input
+    this.cancelIdleCompaction(conversationId)
+    if (this.closing || attempt > IDLE_COMPACTION_ATTEMPTS) return
+    const lastMessageId = this.lastMessageId(conversationId)
+    const idle: IdleCompaction = {}
+    idle.timer = setTimeout(() => {
+      idle.timer = undefined
+      if (
+        this.idleCompactions.get(conversationId) !== idle ||
+        this.settings().autoCompactEnabled === false ||
+        this.conversationBusy(conversationId) ||
+        this.goals.runnable(conversationId) ||
+        this.lastMessageId(conversationId) !== lastMessageId
+      ) {
+        if (this.idleCompactions.get(conversationId) === idle)
+          this.idleCompactions.delete(conversationId)
+        return
+      }
+      const { key, limit } = this.slotTarget({
+        providerInstanceId: input.model.providerInstanceId,
+        providerKind: input.model.providerKind ?? providerKindForTransport(input.model.provider),
+        model: input.model.providerModelId || input.model.name
+      })
+      const id = randomUUID()
+      const lease = this.runSlots.tryAcquire({
+        runId: id,
+        conversationId,
+        providerKey: key,
+        providerLimit: limit
+      })
+      if (!lease) {
+        this.scheduleIdleCompaction(input, attempt + 1)
+        return
+      }
+      const controller = new AbortController()
+      idle.controller = controller
+      // Someone waiting for a slot comes first; this chat's next run can summarize instead.
+      const unsubscribe = this.runSlots.subscribe(() => {
+        if (this.runSlots.queued().length) controller.abort()
+      })
+      idle.running = new ConversationRunPreparer(
+        this.db,
+        this.tools,
+        this.goals,
+        this.settings,
+        this.skillAssetsPath,
+        this.sessionTools
+      )
+        .compactAhead(
+          { ...input, id, assistantMessageId: id, continuesRunId: undefined },
+          IDLE_COMPACTION_PRESSURE,
+          controller.signal
+        )
+        .then(
+          () => undefined,
+          (error) => {
+            if (!controller.signal.aborted)
+              console.warn('[Compaction] Could not summarize the idle chat:', error)
+          }
+        )
+        .finally(() => {
+          unsubscribe()
+          lease.release()
+          if (this.idleCompactions.get(conversationId) !== idle) return
+          this.idleCompactions.delete(conversationId)
+          // Given way to another run: try again at the next quiet moment.
+          if (controller.signal.aborted && !this.closing)
+            this.scheduleIdleCompaction(input, attempt + 1)
+        })
+    }, IDLE_COMPACTION_DELAY_MS)
+    idle.timer.unref?.()
+    this.idleCompactions.set(conversationId, idle)
+  }
+
+  private cancelIdleCompaction(conversationId: string): void {
+    const idle = this.idleCompactions.get(conversationId)
+    if (!idle) return
+    this.idleCompactions.delete(conversationId)
+    clearTimeout(idle.timer)
+    idle.controller?.abort()
+  }
+
+  /** A run is starting in the chat: no summary is written ahead now, and one underway finishes. */
+  private async settleIdleCompaction(conversationId: string): Promise<void> {
+    const idle = this.idleCompactions.get(conversationId)
+    if (!idle) return
+    // The run takes over from here, so nothing is tried again after it.
+    this.idleCompactions.delete(conversationId)
+    clearTimeout(idle.timer)
+    await idle.running
+  }
+
+  /** The chat's history was rewound or edited: what it read and any summary underway are void. */
+  historyRewound(conversationId: string): void {
+    this.cancelIdleCompaction(conversationId)
+    this.tools.forgetConversation(conversationId)
+  }
+
+  private conversationBusy(conversationId: string): boolean {
+    const latest = this.store.latest(conversationId)
+    return (
+      (latest !== null &&
+        !['completed', 'failed', 'cancelled', 'interrupted'].includes(latest.phase)) ||
+      [...this.preparations.values()].some(
+        (pending) => pending.identity.threadId === conversationId
+      )
+    )
+  }
+
+  private lastMessageId(conversationId: string): string | null {
+    const row = this.db
+      .prepare(
+        'SELECT id FROM messages WHERE conversation_id = ? ORDER BY timestamp DESC, rowid DESC LIMIT 1'
+      )
+      .get(conversationId) as { id: string } | undefined
+    return row?.id ?? null
+  }
+
   private async finalizeConversation(runId: string, result: AgentKernelRunResult): Promise<void> {
     const active = this.activeConversations.get(runId)
     if (!active) return
@@ -706,6 +846,8 @@ export class AgentRuntimeCoordinator {
         }
       })
       this.publishEvent(finalized)
+      if (result.phase === 'completed' && (active.input.mode ?? 'conversation') === 'conversation')
+        this.scheduleIdleCompaction(active.input)
     } finally {
       if (active.prepared.goalId) {
         const goal = this.goals.get(active.prepared.goalId)
@@ -1268,6 +1410,8 @@ export class AgentRuntimeCoordinator {
 
   async close(): Promise<void> {
     this.closing = true
+    for (const conversationId of [...this.idleCompactions.keys()])
+      this.cancelIdleCompaction(conversationId)
     const preparing = [...this.preparations.values()]
     const errors: unknown[] = []
     for (const preparation of preparing) {

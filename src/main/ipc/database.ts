@@ -632,7 +632,7 @@ export function registerDatabaseHandlers(): void {
       const stmt = db.prepare('DELETE FROM messages WHERE conversation_id = ? AND timestamp > ?')
       stmt.run(conversationId, timestamp)
       compactions.invalidateAfterTimestamp(conversationId, timestamp)
-      existingAgentRuntimeCoordinator()?.tools.forgetConversation(conversationId)
+      existingAgentRuntimeCoordinator()?.historyRewound(conversationId)
 
       const updateStmt = db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
       updateStmt.run(Date.now(), conversationId)

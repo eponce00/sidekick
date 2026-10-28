@@ -23,6 +23,9 @@
   model this can take a minute or more, and nothing is written meanwhile. A **Context compacted**
   row marks the point in the reply. A finished summary is kept even if you then stop the reply,
   retry it or edit your message, so the next reply does not summarize the same messages again.
+  A chat left alone for two minutes after a reply, close enough to that point that the next
+  reply would summarize first, is summarized then instead, so your next message starts at once.
+  This uses the model only while no other reply needs it, and steps aside when one does.
   When the latest tool results alone outgrow a small window and there is little earlier history,
   SideKick shortens those results instead, and a **Context fitted** row says how many.
 - **Waiting on you:** a conversation that needs an approval or an answer is marked in the sidebar,

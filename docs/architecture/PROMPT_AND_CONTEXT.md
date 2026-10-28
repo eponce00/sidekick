@@ -64,6 +64,14 @@ discards it, and records how many of that reply's provider messages it replaced
 is sent only the rest of the reply; sent the whole reply again, it compacted as soon as it
 started. A summary the run was stopped in the middle of is not recorded at all.
 
+A chat is also summarized between runs. Two minutes after a conversation-mode reply completes,
+if the chat has not changed, has no runnable goal and nothing is starting in it, the coordinator
+prepares the run its next message would get, with the last run's model, and compacts it when that
+request is at 85% or more of the compaction point; the summary is saved as any other. It takes
+slots only when they are free and nobody waits (`RunSlots.tryAcquire`), and stops when any run
+joins the slot queue, trying again later up to three times. A run starting in the chat waits for
+a summary already underway instead of writing its own, and a rewind or edit cancels it.
+
 At request time, the main-process `ConversationRunPreparer` emits:
 
 1. the composed system prompt;

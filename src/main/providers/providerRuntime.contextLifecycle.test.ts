@@ -72,6 +72,7 @@ function fixture() {
     store,
     messages: new AgentMessageMaterializer(db, store),
     preparations: new Map(),
+    idleCompactions: new Map(),
     activeConversations: new Map(),
     observers: new Map(),
     settings: () => ({}),
