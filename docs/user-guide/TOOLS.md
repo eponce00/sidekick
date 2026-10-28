@@ -155,8 +155,13 @@ unavailable even when the global policy is Full access.
   silently inserted into the prompt.
 - A command's result reaches the agent as text: its exit code, then stdout and stderr (or, in a
   terminal, the output) as plain lines, each shortened on its own. The note says the command's own
-  output was complete, so a shortened download log is not taken for a short file. The command row
-  in the chat shows the same result, with **Copy** copying the output as text.
+  output was complete, so a shortened download log is not taken for a short file. When SideKick
+  itself kept only part of it, the first 256 KB over pipes or the last lines a terminal keeps, the
+  note says so and names the log file that holds all of it. The command row in the chat shows the
+  same result, with **Copy** copying the output as text.
+- On Windows, a program's exit code decides whether a command failed even when its stderr was
+  redirected with `2>&1`, which Windows PowerShell otherwise counts as an error; a cmdlet's error
+  still fails it. Errors point at the command's own lines.
 - When a reply reaches its output limit while it writes tool calls, none of them run, and the
   model is asked for fewer, smaller calls. A reply that writes more than 64 calls, or the same call
   a fourth time, is stopped as it streams; none of its calls run, and the model is told why and
