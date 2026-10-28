@@ -1,5 +1,5 @@
 import { createReadStream, promises as fs } from 'fs'
-import { join, relative, sep } from 'path'
+import { basename, join, relative, sep } from 'path'
 import { createInterface } from 'readline'
 import { estimateTextTokens } from '../../shared/contextBudget'
 import { workspaceFileVersion } from '../utils/workspaceFileVersion'
@@ -327,7 +327,13 @@ export class WorkspaceReadService {
         if (entry.isDirectory()) {
           if (!filter) collected.push(`${path}/`)
           childDirectories.push(absolute)
-        } else if (!filter || filter.test(path)) {
+        } else if (
+          !filter ||
+          // Read against the listed folder, as an agent means `*.ts` in `src`; a pattern written
+          // from the project root, such as `src/**/*.ts`, still matches.
+          filter.test(normalizePath(relative(targetDir, absolute))) ||
+          filter.test(path)
+        ) {
           collected.push(path)
         }
       }
@@ -379,9 +385,9 @@ export class WorkspaceReadService {
       }
       if (stat.isFile()) {
         const relativePath = normalizePath(relative(workspaceRoot, target))
-        const matchesPattern = options.filePattern
-          ? globToRegex(options.filePattern).test(relativePath)
-          : true
+        const pattern = options.filePattern ? globToRegex(options.filePattern) : null
+        const matchesPattern =
+          !pattern || pattern.test(basename(target)) || pattern.test(relativePath)
         listed = {
           files: matchesPattern ? [relativePath] : [],
           truncated: false,
