@@ -1,7 +1,20 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { chmod, lstat, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'fs/promises'
+import {
+  chmod,
+  link,
+  lstat,
+  mkdtemp,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { workspacePathKey } from '../utils/workspacePaths'
 import { executeWorkspaceMutation, previewWorkspaceMutation } from './workspaceMutationService'
 import { credentialRedactor } from './credentialRedaction'
 import { WorkspaceReadService } from './workspaceReadService'
@@ -273,6 +286,161 @@ describe('workspace mutation service', () => {
       expect(result.ok).toBe(true)
       expect(await readFile(join(root, 'w.txt'), 'utf8')).toBe('new\r\nlines\r\n')
     })
+  })
+
+  describe('file encodings', () => {
+    const BOM = String.fromCharCode(0xfeff)
+    const REPLACEMENT = String.fromCharCode(0xfffd)
+    const patch = (path: string, from: string, to: string) => ({
+      kind: 'apply-patch' as const,
+      patch: `*** Begin Patch\n*** Update File: ${path}\n@@\n-${from}\n+${to}\n*** End Patch`,
+      accessLevel: 'auto' as const
+    })
+
+    it('refuses to edit a file that is not text, and rolls back its bytes exactly', async () => {
+      const root = await workspace()
+      // Latin-1 text: valid bytes, not UTF-8. Decoding it as UTF-8 replaced each é with U+FFFD.
+      const latin1 = Buffer.from('caf\xe9 = 1\n', 'latin1')
+      await writeFile(join(root, 'legacy.txt'), latin1)
+      for (const request of [
+        {
+          kind: 'replace' as const,
+          filePath: 'legacy.txt',
+          oldText: '1',
+          newText: '2',
+          replaceAll: false,
+          accessLevel: 'auto' as const
+        },
+        patch('legacy.txt', `caf${REPLACEMENT} = 1`, `caf${REPLACEMENT} = 2`)
+      ]) {
+        const result = await executeWorkspaceMutation(root, request)
+        expect(result, request.kind).toMatchObject({ ok: false, changed: false })
+        expect(result.error).toContain('not UTF-8 or UTF-16 text')
+      }
+      // A failed patch restores the binary file it deleted byte for byte.
+      const failed = await executeWorkspaceMutation(root, {
+        kind: 'apply-patch',
+        accessLevel: 'auto',
+        patch: `*** Begin Patch
+*** Delete File: legacy.txt
+*** Add File: generated/parent.txt
++parent
+*** Add File: generated/parent.txt/child.txt
++child
+*** End Patch`
+      })
+      expect(failed.ok).toBe(false)
+      expect(await readFile(join(root, 'legacy.txt'))).toEqual(latin1)
+    })
+
+    it('keeps a UTF-8 byte order mark through write and apply_patch', async () => {
+      const root = await workspace()
+      await writeFile(join(root, 'bom.txt'), `${BOM}first\nsecond\n`, 'utf8')
+      expect((await executeWorkspaceMutation(root, patch('bom.txt', 'first', 'one'))).ok).toBe(true)
+      expect(await readFile(join(root, 'bom.txt'), 'utf8')).toBe(`${BOM}one\nsecond\n`)
+      const written = await executeWorkspaceMutation(root, {
+        kind: 'write',
+        filePath: 'bom.txt',
+        content: 'rewritten\n',
+        accessLevel: 'auto'
+      })
+      expect(written.ok).toBe(true)
+      expect(await readFile(join(root, 'bom.txt'), 'utf8')).toBe(`${BOM}rewritten\n`)
+    })
+
+    it('edits the lines of a file that ends lines with a lone CR', async () => {
+      const root = await workspace()
+      await writeFile(join(root, 'mac.txt'), 'one\rtwo\rthree\r', 'utf8')
+      expect((await executeWorkspaceMutation(root, patch('mac.txt', 'two', '2'))).ok).toBe(true)
+      const edited = await executeWorkspaceMutation(root, {
+        kind: 'replace',
+        filePath: 'mac.txt',
+        oldText: 'one\n2',
+        newText: '1\n2',
+        replaceAll: false,
+        accessLevel: 'auto'
+      })
+      expect(edited.ok).toBe(true)
+      expect(await readFile(join(root, 'mac.txt'), 'utf8')).toBe('1\r2\rthree\r')
+    })
+
+    it('reads and edits UTF-16LE text without rewriting it as UTF-8', async () => {
+      const root = await workspace()
+      const utf16 = (text: string) =>
+        Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, 'utf16le')])
+      await writeFile(join(root, 'out.txt'), utf16('alpha\r\nbeta\r\n'))
+      const read = await new WorkspaceReadService().readPath(root, 'out.txt')
+      expect(read).toMatchObject({ kind: 'file', content: '1: alpha\n2: beta' })
+      expect((await executeWorkspaceMutation(root, patch('out.txt', 'beta', 'gamma'))).ok).toBe(
+        true
+      )
+      expect(await readFile(join(root, 'out.txt'))).toEqual(utf16('alpha\r\ngamma\r\n'))
+    })
+  })
+
+  it('reports a patch hunk that does not match as input to correct, not a stale read', async () => {
+    const root = await workspace()
+    await writeFile(join(root, 'a.txt'), 'actual\n', 'utf8')
+    const result = await executeWorkspaceMutation(root, {
+      kind: 'apply-patch',
+      patch: '*** Begin Patch\n*** Update File: a.txt\n@@\n-imagined\n+changed\n*** End Patch',
+      accessLevel: 'auto'
+    })
+    expect(result).toMatchObject({ ok: false, failure: { code: 'text_not_found' } })
+  })
+
+  it('gives one file one read receipt under every spelling of its path', async () => {
+    const root = await workspace()
+    await mkdir(join(root, 'src'))
+    await writeFile(join(root, 'src/Name.txt'), 'one\n', 'utf8')
+    const { version } = await new WorkspaceReadService().readFile(root, 'src/Name.txt')
+    const spelling = process.platform === 'linux' ? 'src/../src/Name.txt' : 'src/../SRC/name.TXT'
+    const result = await executeWorkspaceMutation(
+      root,
+      {
+        kind: 'replace',
+        filePath: spelling,
+        oldText: 'one',
+        newText: 'two',
+        replaceAll: false,
+        accessLevel: 'auto'
+      },
+      {
+        requireReadReceipt: true,
+        expectedVersions: { [workspacePathKey('src/Name.txt')]: version }
+      }
+    )
+    expect(result).toMatchObject({ ok: true })
+  })
+
+  it.skipIf(process.platform === 'linux')('renames a file to a different letter case', async () => {
+    const root = await workspace()
+    await writeFile(join(root, 'readme.md'), 'old\n', 'utf8')
+    const result = await executeWorkspaceMutation(root, {
+      kind: 'apply-patch',
+      patch:
+        '*** Begin Patch\n*** Update File: readme.md\n*** Move to: README.md\n@@\n-old\n+new\n*** End Patch',
+      accessLevel: 'auto'
+    })
+    expect(result).toMatchObject({ ok: true })
+    expect(await readdir(root)).toEqual(['README.md'])
+    expect(await readFile(join(root, 'README.md'), 'utf8')).toBe('new\n')
+  })
+
+  it('refuses to write through a file with another hard link', async () => {
+    const root = await workspace()
+    const elsewhere = await workspace()
+    await writeFile(join(elsewhere, 'shared.txt'), 'outside\n', 'utf8')
+    await link(join(elsewhere, 'shared.txt'), join(root, 'shared.txt'))
+    const result = await executeWorkspaceMutation(root, {
+      kind: 'write',
+      filePath: 'shared.txt',
+      content: 'changed\n',
+      accessLevel: 'auto'
+    })
+    expect(result).toMatchObject({ ok: false, changed: false })
+    expect(result.error).toContain('hard link')
+    expect(await readFile(join(elsewhere, 'shared.txt'), 'utf8')).toBe('outside\n')
   })
 
   it('adapts exact multi-line edits to the file line ending without changing its style', async () => {
