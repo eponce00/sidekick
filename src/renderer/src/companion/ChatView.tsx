@@ -1,6 +1,7 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { ArrowUpRight, EllipsisVertical, Loader2, Menu, SquarePen } from 'lucide-react'
 import type { CompanionChat, CompanionProject } from '../../../shared/companion'
+import { useAutoScroll } from '../hooks/useAutoScroll'
 import { ChatMenu } from './ChatMenu'
 import type { CompanionConnection } from './chatState'
 import { FindBar } from './FindBar'
@@ -70,12 +71,9 @@ export function ChatView({
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null)
   const [finding, setFinding] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
-  // Follows new output while the reader is at the bottom, and leaves them alone once they scroll up.
-  const following = useRef(true)
-  useLayoutEffect(() => {
-    const element = scroller.current
-    if (element && following.current) element.scrollTop = element.scrollHeight
-  }, [chat.messages, chat.error, chat.queue])
+  // Follows new output, as the desktop's chat does, until the reader scrolls up to read; the
+  // message box growing under the chat, as a run's queue does, keeps the end in view too.
+  const { scrollToBottom } = useAutoScroll(scroller, chat.messages, 'smooth', chat.conversationId)
 
   const home = !chat.conversationId
   const empty = !chat.loading && !chat.messages.length
@@ -132,10 +130,6 @@ export function ChatView({
         <main
           ref={scroller}
           className={`messages-container cp-messages${home && empty ? ' is-home' : ''}`}
-          onScroll={(event) => {
-            const element = event.currentTarget
-            following.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80
-          }}
         >
           {chat.loading ? (
             <p className="cp-placeholder">
@@ -184,7 +178,7 @@ export function ChatView({
                 })
               }
               onRetry={(message) => {
-                following.current = true
+                scrollToBottom()
                 void chat.retry(message.id)
               }}
             />
@@ -211,13 +205,13 @@ export function ChatView({
           onSubmitEdit={async (text) => {
             const target = editing
             if (!target) return false
-            following.current = true
+            scrollToBottom()
             const sent = await chat.retry(target.messageId, text)
             if (sent) setEditing(null)
             return sent
           }}
           onSend={(message) => {
-            following.current = true
+            scrollToBottom()
             return chat.send(
               home && where.projectId
                 ? { ...message, projectId: where.projectId, workIn: where.workIn }

@@ -138,6 +138,8 @@ export function useAutoScroll<T>(
       }
     }
     observeTimelineChildren()
+    // The view itself shrinks when the composer under it grows, which hides the end just the same.
+    resizeObserver.observe(container)
 
     const mutationObserver = new MutationObserver(() => {
       observeTimelineChildren()

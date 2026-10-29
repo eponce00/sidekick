@@ -357,6 +357,7 @@ export function PhoneComposer({
         autoFocus={false}
         minRows={1}
         maxRows={6}
+        // Each fits one line on a narrow phone: the box grows to fit its placeholder as its text.
         placeholder={
           activeEdit
             ? 'Edit your message'
@@ -365,7 +366,7 @@ export function PhoneComposer({
               : mode === 'plan'
                 ? 'What should SideKick plan?'
                 : runActive
-                  ? 'Queue a message for SideKick'
+                  ? 'Queue a message'
                   : 'Message SideKick'
         }
         queueTray={queueTray}
