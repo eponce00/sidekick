@@ -803,7 +803,10 @@ interface MessageItemProps {
     cancelled?: boolean
   ) => void | Promise<void>
   workspaceFolder?: string | null
-  onUndoCheckpoint?: (hash: string) => void
+  /** The project's other folders: a reply's changes there can be undone too. */
+  otherFolders?: readonly string[]
+  /** Undoes a reply's file changes, by the reply's message ID. */
+  onUndoCheckpoint?: (messageId: string) => void
   editActionTitle?: string
   retryActionTitle?: string
   readOnly?: boolean
@@ -830,6 +833,7 @@ function MessageItemInner({
   onDenyToolLimitDecision,
   onResolveAgentInteraction,
   workspaceFolder,
+  otherFolders,
   onUndoCheckpoint,
   editActionTitle = 'Edit message',
   retryActionTitle = 'Rewind and retry from here',
@@ -843,8 +847,10 @@ function MessageItemInner({
   const workCompletedAt = msg.tokenUsage?.runCompletedAt
   const canUndoChanges = Boolean(
     !readOnly &&
-    msg.checkpointHash &&
-    msg.checkpointWorkspaceRoot === workspaceFolder &&
+    msg.checkpoints?.some(
+      ({ workspaceRoot }) =>
+        workspaceRoot === workspaceFolder || otherFolders?.includes(workspaceRoot)
+    ) &&
     onUndoCheckpoint
   )
   // The changed-files card carries Undo itself; the footer keeps it only for replies without one.
@@ -1262,8 +1268,8 @@ function MessageItemInner({
                     undo={
                       canUndoChanges
                         ? {
-                            onUndo: () => onUndoCheckpoint!(msg.checkpointHash!),
-                            undone: msg.restoredFrom === msg.checkpointHash,
+                            onUndo: () => onUndoCheckpoint!(msg.id),
+                            undone: msg.restored === true,
                             disabled: isLoading
                           }
                         : undefined
@@ -1593,18 +1599,12 @@ function MessageItemInner({
                 <button
                   type="button"
                   className="message-action icon"
-                  onClick={() => onUndoCheckpoint?.(msg.checkpointHash!)}
+                  onClick={() => onUndoCheckpoint?.(msg.id)}
                   title={
-                    msg.restoredFrom === msg.checkpointHash
-                      ? 'Changes already undone'
-                      : 'Undo file changes from this response'
+                    msg.restored ? 'Changes already undone' : 'Undo file changes from this response'
                   }
-                  aria-label={
-                    msg.restoredFrom === msg.checkpointHash
-                      ? 'Changes already undone'
-                      : 'Undo file changes'
-                  }
-                  disabled={isLoading || msg.restoredFrom === msg.checkpointHash}
+                  aria-label={msg.restored ? 'Changes already undone' : 'Undo file changes'}
+                  disabled={isLoading || msg.restored === true}
                 >
                   <RotateCcw size={13} />
                 </button>

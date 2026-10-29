@@ -7,6 +7,9 @@ import {
   installArtifactProtocol
 } from './bootstrap/artifactProtocol'
 import { openApplicationDatabase } from './bootstrap/database'
+import { addMessageCheckpoints } from './services/messageCheckpoints'
+import { ProjectStore } from './services/projectStore'
+import { setWorkspaceFolderLookup } from './utils/workspacePaths'
 import { createMainWindow, textScaleSetting } from './bootstrap/mainWindow'
 import { stepTextScale } from './bootstrap/windowZoom'
 import { initializeWorkspaceState } from './bootstrap/workspace'
@@ -227,21 +230,16 @@ async function bootstrapApplication(): Promise<void> {
   appState.db = openApplicationDatabase(join(app.getPath('userData'), 'conversations.db'))
   configureCheckpointStorageRoot(join(app.getPath('userData'), 'history'))
   configureChatFoldersRoot(join(app.getPath('userData'), 'chat-folders'))
+  const projects = new ProjectStore(appState.db)
+  setWorkspaceFolderLookup((root) => projects.foldersForRoot(root))
   // Chats deleted while SideKick was closed, or by a path that does not clean up, leave folders.
   setImmediate(() => removeOrphanChatFolders(appState.db!))
   const recoveredCaptures = await recoverInterruptedCheckpointCaptures()
   if (recoveredCaptures.length) {
-    const linkMessage = appState.db.prepare(
-      `UPDATE messages SET checkpoint_hash = ?, checkpoint_workspace_root = ?
-       WHERE id = ? AND conversation_id = ?`
-    )
     for (const recovered of recoveredCaptures) {
-      linkMessage.run(
-        recovered.checkpoint.hash,
-        recovered.workspaceRoot,
-        recovered.agentMessageId,
-        recovered.conversationId
-      )
+      addMessageCheckpoints(appState.db, recovered.agentMessageId, recovered.conversationId, [
+        { workspaceRoot: recovered.workspaceRoot, hash: recovered.checkpoint.hash }
+      ])
     }
     console.log(`[History] Recovered ${recoveredCaptures.length} interrupted file change set(s)`)
   }

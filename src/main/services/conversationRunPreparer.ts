@@ -1,3 +1,4 @@
+import { sandboxFolderMounts } from './dockerShellIsolation'
 import {
   reasoningOptions,
   resolveReasoningLevel,
@@ -6,7 +7,7 @@ import {
 import type Database from 'better-sqlite3'
 import { agentRunProfile, getAgentToolDefinitions } from '../../shared/agentToolCatalog'
 import { normalizeToolCallLimit } from '../../shared/agentLimits'
-import { projectStartCommands } from './projectHooks'
+import { projectHookCommands } from './projectHooks'
 import { imageContentType } from '../../shared/imageContent'
 import type { StartConversationAgentRunInput } from '../../shared/agentRunApi'
 import { effectivePermissionMode } from '../../shared/permissions'
@@ -81,7 +82,7 @@ export interface PreparedConversationAgentRun {
   toolSession: AgentToolRuntimeSession
   workspaceRoot: string | null
   latestUserMessage: MessageRow | null
-  onWorkspaceWillMutate: () => Promise<void>
+  onWorkspaceWillMutate: (folderRoots?: readonly string[]) => Promise<void>
   goalId?: string
   /** The least reasoning the run's model offers, for work that needs little, such as an artifact's review. */
   lightestReasoningLevel?: ReasoningLevel
@@ -828,7 +829,7 @@ export class ConversationRunPreparer {
 
   async prepare(
     input: StartConversationAgentRunInput,
-    onWorkspaceWillMutate: () => Promise<void>,
+    onWorkspaceWillMutate: (folderRoots?: readonly string[]) => Promise<void>,
     signal?: AbortSignal
   ): Promise<PreparedConversationAgentRun> {
     signal?.throwIfAborted()
@@ -956,6 +957,7 @@ export class ConversationRunPreparer {
         model: createPromptModelProfile(model),
         project: {
           workspaceRoot,
+          folders: project.folders,
           instructions: rules.content,
           instructionSources: rules.sources,
           memory,
@@ -977,10 +979,17 @@ export class ConversationRunPreparer {
         activeSkillIds: runtimeCatalog.activeSkillIds ?? activeSkillIds,
         skillAssetsPath: this.skillAssetsPath()
       })
+      const mounts =
+        workspaceRoot && project.folders.length
+          ? sandboxFolderMounts(workspaceRoot, project.folders)
+          : []
+      const mounted = mounts.length
+        ? `project folders mounted at ${mounts.map(({ target }) => target).join(', ')} (commands start in ${mounts[0].target}, the workspace root)`
+        : 'project mounted at /workspace'
       return currentSettings.shellIsolation === 'docker'
         ? {
             ...composed,
-            content: `${composed.content}\nShell isolation is enabled. Shell commands run in Linux /bin/sh with Node.js, project mounted at /workspace, no network, read-only container root, and writable /tmp. Use POSIX syntax and project-relative paths, not host Windows paths. Background commands are unavailable. If required host tools or network are missing, explain the limitation; do not attempt to escape the sandbox. File/browser tools retain their own policies.`
+            content: `${composed.content}\nShell isolation is enabled. Shell commands run in Linux /bin/sh with Node.js, ${mounted}, no network, read-only container root, and writable /tmp. Use POSIX syntax and project-relative paths, not host Windows paths. Background commands are unavailable. If required host tools or network are missing, explain the limitation; do not attempt to escape the sandbox. File/browser tools retain their own policies.`
           }
         : composed
     }
@@ -1181,13 +1190,15 @@ export class ConversationRunPreparer {
         ?.levels[0],
       toolSession,
       kernelInput: {
-        projectStartCommands: projectStartCommands(
+        projectStartCommands: projectHookCommands(
           currentSettings.projectStartHooks,
-          workspaceRoot
+          workspaceRoot,
+          project.folders
         ),
-        projectCompletionCommands: projectStartCommands(
+        projectCompletionCommands: projectHookCommands(
           currentSettings.projectCompletionHooks,
-          workspaceRoot
+          workspaceRoot,
+          project.folders
         ),
         preloadReads: parseMessageContextAttachments(latestUserMessage?.attachments)
           .filter(isProjectContextAttachment)

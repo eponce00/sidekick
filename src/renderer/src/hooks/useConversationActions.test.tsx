@@ -14,7 +14,7 @@ describe('useConversationActions', () => {
   let controller: ReturnType<typeof useConversationActions>
   const rerunStream = vi.fn(async () => undefined)
   const deleteMessagesAfter = vi.fn(async () => ({ success: true }))
-  const rewindToBeforeCheckpoint = vi.fn(async () => ({ ok: true, parentHash: null }))
+  const restoreHistory = vi.fn(async () => ({ ok: true }))
   const authorize = vi.fn(async () => ({ approved: true, token: 'undo-token' }))
 
   const researchRequest: Message = {
@@ -67,7 +67,7 @@ describe('useConversationActions', () => {
         },
         permissions: { authorize },
         workspace: {
-          rewindToBeforeCheckpoint
+          restoreHistory
         }
       }
     })
@@ -115,15 +115,19 @@ describe('useConversationActions', () => {
     expect(latestMessages.at(-1)?.content).toContain('database is locked')
   })
 
-  it('undoes the changes owned by the response instead of restoring its after-state', async () => {
+  it('undoes the changes owned by the response in every folder, instead of restoring its after-state', async () => {
     await act(async () => root.unmount())
     function WorkspaceHarness(): null {
       const [messages, setMessages] = useState<Message[]>([
         researchRequest,
         {
           ...researchResponse,
-          checkpointHash: 'abcdef123456',
-          checkpointWorkspaceRoot: 'C:\\project'
+          checkpoints: [
+            { workspaceRoot: 'C:\\project', hash: 'abcdef123456' },
+            { workspaceRoot: 'C:\\shared', hash: 'fedcba654321' },
+            // A folder the project no longer has is left alone.
+            { workspaceRoot: 'C:\\removed', hash: 'aaaaaa111111' }
+          ]
         }
       ])
       const value = useConversationActions({
@@ -132,6 +136,7 @@ describe('useConversationActions', () => {
         conversationId: 'conversation-1',
         selectedModel: 'model-1',
         workspaceFolder: 'C:\\project',
+        otherFolders: ['C:\\shared'],
         rerunStream
       })
       useEffect(() => {
@@ -141,31 +146,33 @@ describe('useConversationActions', () => {
     }
     root = createRoot(container)
     await act(async () => root.render(<WorkspaceHarness />))
-    act(() => controller.requestCheckpointRestore('abcdef123456'))
+    act(() => controller.requestCheckpointRestore(researchResponse.id))
     await act(async () => controller.confirmCheckpointRestore())
 
     expect(authorize).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'checkpoint', requestedAccess: 'auto' })
     )
-    expect(rewindToBeforeCheckpoint).toHaveBeenCalledWith('C:\\project', 'abcdef123456', {
-      requestedAccess: 'auto',
-      authorizationToken: 'undo-token'
-    })
+    expect(restoreHistory).toHaveBeenCalledWith(
+      [
+        { workspaceRoot: 'C:\\project', hashes: ['abcdef123456'] },
+        { workspaceRoot: 'C:\\shared', hashes: ['fedcba654321'] }
+      ],
+      { requestedAccess: 'auto', authorizationToken: 'undo-token' }
+    )
   })
 
   it.each([true, false])(
     'rewinds to before a message without answering, back into the message box (files: %s)',
     async (restoreFiles) => {
       await act(async () => root.unmount())
-      rewindToBeforeCheckpoint.mockClear()
+      restoreHistory.mockClear()
       const restoreDraft = vi.fn()
       function RewindHarness(): null {
         const [messages, setMessages] = useState<Message[]>([
           researchRequest,
           {
             ...researchResponse,
-            checkpointHash: 'abcdef123456',
-            checkpointWorkspaceRoot: 'C:\\project'
+            checkpoints: [{ workspaceRoot: 'C:\\project', hash: 'abcdef123456' }]
           }
         ])
         const value = useConversationActions({
@@ -195,18 +202,18 @@ describe('useConversationActions', () => {
       expect(latestMessages).toEqual([])
       expect(restoreDraft).toHaveBeenCalledWith(researchRequest, false)
       expect(rerunStream).not.toHaveBeenCalled()
-      expect(rewindToBeforeCheckpoint).toHaveBeenCalledTimes(restoreFiles ? 1 : 0)
+      expect(restoreHistory).toHaveBeenCalledTimes(restoreFiles ? 1 : 0)
     }
   )
 
   it('keeps the messages and starts no reply when the files could not be restored', async () => {
     // A retry deleted the reply and answered again over the files it had changed.
     await act(async () => root.unmount())
-    rewindToBeforeCheckpoint.mockResolvedValueOnce({ ok: false, error: 'History is busy' } as never)
+    restoreHistory.mockResolvedValueOnce({ ok: false, error: 'History is busy' } as never)
     function RetryHarness(): null {
       const [messages, setMessages] = useState<Message[]>([
         researchRequest,
-        { ...researchResponse, checkpointHash: 'abcdef123456', checkpointWorkspaceRoot: 'C:\\p' }
+        { ...researchResponse, checkpoints: [{ workspaceRoot: 'C:\\p', hash: 'abcdef123456' }] }
       ])
       const value = useConversationActions({
         messages,

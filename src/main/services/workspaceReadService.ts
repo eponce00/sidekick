@@ -3,7 +3,12 @@ import { basename, join, relative, sep } from 'path'
 import { createInterface } from 'readline'
 import { estimateTextTokens } from '../../shared/contextBudget'
 import { workspaceFileVersion } from '../utils/workspaceFileVersion'
-import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
+import {
+  locateWorkspacePath,
+  projectRelativePath,
+  resolveSecureWorkspacePath,
+  workspacePathSpeller
+} from '../utils/workspacePaths'
 import {
   byteOrderMarkLength,
   sampleTextEncoding,
@@ -304,6 +309,9 @@ export class WorkspaceReadService {
   ): Promise<WorkspaceListResult> {
     abortIfNeeded(options.signal)
     const targetDir = await resolveSecureWorkspacePath(workspaceRoot, options.subPath || '')
+    // Paths read as the project spells them, so one in another project folder starts with its name.
+    const folder = locateWorkspacePath(workspaceRoot, options.subPath || '')
+    const spell = workspacePathSpeller(workspaceRoot, folder.folder)
     const filter = options.glob ? globToRegex(options.glob) : null
     const cursor = Math.max(0, Math.trunc(options.cursor ?? 0))
     const maxResults = Math.max(
@@ -323,7 +331,7 @@ export class WorkspaceReadService {
         if (entry.isSymbolicLink() || SKIPPED_DIRECTORIES.has(entry.name)) continue
         if (!entry.isDirectory() && SKIPPED_FILES.has(entry.name)) continue
         const absolute = join(directory, entry.name)
-        const path = normalizePath(relative(workspaceRoot, absolute))
+        const path = spell(normalizePath(relative(folder.root, absolute)))
         if (entry.isDirectory()) {
           if (!filter) collected.push(`${path}/`)
           childDirectories.push(absolute)
@@ -384,7 +392,7 @@ export class WorkspaceReadService {
         throw error
       }
       if (stat.isFile()) {
-        const relativePath = normalizePath(relative(workspaceRoot, target))
+        const relativePath = projectRelativePath(workspaceRoot, target)
         const pattern = options.filePattern ? globToRegex(options.filePattern) : null
         const matchesPattern =
           !pattern || pattern.test(basename(target)) || pattern.test(relativePath)

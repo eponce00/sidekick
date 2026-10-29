@@ -139,6 +139,10 @@ interface ProjectsAPI {
     id: string,
     input: { name?: string; isPinned?: boolean }
   ) => Promise<import('../shared/projects').Project>
+  /** Adds folders picked in the folder picker, removes folders, or swaps the primary folder. */
+  updateFolders: (
+    input: import('../shared/projects').UpdateProjectFoldersInput
+  ) => Promise<import('../shared/projects').Project>
   remove: (id: string) => Promise<{ success: boolean }>
   getConversationContext: (
     conversationId: string
@@ -296,6 +300,16 @@ interface WorkspaceAPI {
     subPath?: string,
     glob?: string
   ) => Promise<{ ok: boolean; files: string[]; error?: string }>
+  /**
+   * Every folder of the project the root is the primary folder of, and their files: the primary's
+   * by their own paths, another folder's starting with its name.
+   */
+  listProjectFiles: (workspaceRoot: string) => Promise<{
+    ok: boolean
+    folders: import('../shared/projects').WorkspaceFolder[]
+    files: string[]
+    error?: string
+  }>
   /** Saved prompts from the project's and your own prompt folders, offered as `/` commands. */
   listPrompts: (workspaceRoot: string | null) => Promise<{
     ok: boolean
@@ -352,18 +366,11 @@ interface WorkspaceAPI {
     captureVersion?: number
     error?: string
   }>
-  hardResetCheckpoint: (
-    workspaceRoot: string,
-    hash: string,
+  /** Puts project folders back to History points together: all of them, or none. */
+  restoreHistory: (
+    targets: import('../shared/workspaceHistory').HistoryRestoreTarget[],
     authorization: import('../shared/types').CheckpointMutationAuthorization
   ) => Promise<import('../shared/workspaceHistory').HistoryMutationResult>
-  rewindToBeforeCheckpoint: (
-    workspaceRoot: string,
-    hash: string,
-    authorization: import('../shared/types').CheckpointMutationAuthorization
-  ) => Promise<
-    import('../shared/workspaceHistory').HistoryMutationResult & { parentHash: string | null }
-  >
   openFolder: (folderPath: string, workspaceRoot?: string) => Promise<void>
   openFile: (filePath: string, workspaceRoot?: string) => Promise<void>
   openFileReference: (

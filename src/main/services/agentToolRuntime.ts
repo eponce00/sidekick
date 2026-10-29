@@ -4,9 +4,13 @@ import { statSync } from 'fs'
 import { delimiter, isAbsolute, join, relative, resolve } from 'path'
 import { stat } from 'node:fs/promises'
 import {
+  locateWorkspacePath,
   OutsideProjectError,
   projectRelativePath,
   resolveSecureWorkspacePath,
+  workspaceAbsolutePath,
+  workspaceFolderRoots,
+  workspaceFolders,
   workspacePathKey
 } from '../utils/workspacePaths'
 import {
@@ -198,7 +202,11 @@ export interface AgentToolRuntimeSessionInput {
   goal?: AgentGoalToolHandler
   plan?: AgentPlanToolHandler
   instructionScopeId?: string
-  onWorkspaceWillMutate?: () => Promise<void>
+  /**
+   * Called before a tool may change files, with the project folders it may change: History
+   * captures each one, and another run writing there refuses the change.
+   */
+  onWorkspaceWillMutate?: (folderRoots: readonly string[]) => Promise<void>
 }
 
 export interface AgentToolRuntimeSession {
@@ -315,6 +323,19 @@ export function resolveProgram(
     }
   }
   return null
+}
+
+/** The project folders a change to these paths touches; a path outside them adds none. */
+function mutationFolderRoots(workspaceRoot: string, paths: readonly string[]): string[] {
+  const roots = new Set<string>()
+  for (const path of paths) {
+    try {
+      roots.add(locateWorkspacePath(workspaceRoot, path).root)
+    } catch {
+      // The mutation service refuses it before anything is written.
+    }
+  }
+  return roots.size ? [...roots] : [resolve(workspaceRoot)]
 }
 
 function isInside(path: string, root: string): boolean {
@@ -535,13 +556,17 @@ export class AgentToolRuntime {
     const mcpByFunction = new Map<string, McpToolInfo>()
     const enabledMcpByFunction = new Map<string, McpToolInfo>()
     const baselineRevision = this.verification.beginSession(input.workspaceRoot)
-    const intelligenceStatus = input.workspaceRoot
-      ? this.languageIntelligence.workspaceStatus(input.workspaceRoot)
-      : null
-    const codeIntelligenceAvailable = intelligenceStatus?.available === true
+    // Every project folder can start its own language servers; one the project ships itself runs
+    // its code, so any such folder makes the tool a command.
+    const intelligenceStatuses = input.workspaceRoot
+      ? workspaceFolderRoots(input.workspaceRoot).map((root) =>
+          this.languageIntelligence.workspaceStatus(root)
+        )
+      : []
+    const codeIntelligenceAvailable = intelligenceStatuses.some((status) => status.available)
     const sessionState: AgentToolRuntimeSessionState = {
-      codeIntelligenceRisk: intelligenceStatus?.availableServers.some(
-        (server) => server.origin === 'workspace'
+      codeIntelligenceRisk: intelligenceStatuses.some((status) =>
+        status.availableServers.some((server) => server.origin === 'workspace')
       )
         ? 'execute'
         : 'read',
@@ -811,7 +836,12 @@ export class AgentToolRuntime {
     // installed program the user allowed or approved.
     const program = simpleCommandProgram(command)
     const found = program ? resolveProgram(program, where.cwd) : null
-    if (found && [where.workspaceRoot, where.cwd].some((root) => isInside(found, root))) {
+    if (
+      found &&
+      [...workspaceFolderRoots(where.workspaceRoot), where.cwd].some((root) =>
+        isInside(found, root)
+      )
+    ) {
       return refuse(
         `${program} would run ${relative(where.workspaceRoot, found) || found}, a file in this project rather than an installed program, so it is not given credentials.`,
         true
@@ -1001,10 +1031,19 @@ export class AgentToolRuntime {
       )
       if (result.kind === 'directory') {
         const metadata = `[Directory: ${path} | next_cursor ${result.nextCursor ?? 'none'}]\n`
+        // The project root lists the primary folder; the other folders are read by their names.
+        const located = locateWorkspacePath(this.requireWorkspace(input), path)
+        const others =
+          !located.folder && !located.path && !args.cursor
+            ? workspaceFolders(this.requireWorkspace(input)).map(({ name }) => `${name}/`)
+            : []
+        const otherFolders = others.length
+          ? `\n[Other project folders, read as <name>/path: ${others.join(', ')}]`
+          : ''
         return this.success(
           title,
           result,
-          instructions.content + metadata + result.files.join('\n')
+          instructions.content + metadata + result.files.join('\n') + otherFolders
         )
       }
       // Keyed like change records, so ./a.ts, an absolute path, src/../a.ts and (where names
@@ -1072,8 +1111,8 @@ export class AgentToolRuntime {
         )
         const checkedPaths = changedPaths.filter(
           (path) =>
-            resolve(this.requireWorkspace(input), path) ===
-            resolve(this.requireWorkspace(input), filePath)
+            workspaceAbsolutePath(this.requireWorkspace(input), path) ===
+            workspaceAbsolutePath(this.requireWorkspace(input), filePath)
         )
         if (checkedPaths.length) {
           this.verification.recordDiagnostics(
@@ -1106,7 +1145,9 @@ export class AgentToolRuntime {
             'New directory-scoped project instructions apply. Review them, re-read the target if needed, then retry the mutation.'
         )
       }
-      await input.onWorkspaceWillMutate?.()
+      await input.onWorkspaceWillMutate?.(
+        mutationFolderRoots(this.requireWorkspace(input), workspaceMutationTargetPaths(request))
+      )
       const result = await executeWorkspaceMutation(this.requireWorkspace(input), request, {
         requireReadReceipt: true,
         expectedVersions: Object.fromEntries(readReceipts)
@@ -1233,9 +1274,10 @@ export class AgentToolRuntime {
     if (name === 'shell') {
       const command = stringArg(args, 'command')
       const workspaceRoot = this.requireWorkspace(input)
+      const cwdFolder = locateWorkspacePath(workspaceRoot, stringArg(args, 'cwd'))
       const secrets = this.commandSecrets(title, command, args.secrets, context, {
         workspaceRoot,
-        cwd: resolve(workspaceRoot, stringArg(args, 'cwd') || '.')
+        cwd: resolve(cwdFolder.root, cwdFolder.path || '.')
       })
       if ('refused' in secrets) return secrets.refused
       const instructions = await this.scopedInstructions(input, stringArg(args, 'cwd'), true, true)
@@ -1252,7 +1294,8 @@ export class AgentToolRuntime {
       // still-valid receipts; an actually changed file is rejected as stale without forcing
       // redundant reads after every diagnostic command.
       const verificationSnapshot = this.verification.captureCommandWorkspace(workspaceRoot, command)
-      await input.onWorkspaceWillMutate?.()
+      // A command may write anywhere, but History keeps the folders it starts in.
+      await input.onWorkspaceWillMutate?.([...new Set([resolve(workspaceRoot), cwdFolder.root])])
       const commandStartedAt = Date.now()
       const result = await this.commands.execute({
         runId: context.runId,
@@ -1450,7 +1493,7 @@ export class AgentToolRuntime {
     }
     if (input.sessions && (SESSION_TOOL_NAMES as readonly string[]).includes(name)) {
       if (name === 'import_attachment') {
-        await input.onWorkspaceWillMutate?.()
+        await input.onWorkspaceWillMutate?.([resolve(this.requireWorkspace(input))])
         readReceipts.clear()
       }
       return this.success(title, await input.sessions.execute(name, args, context))

@@ -1,4 +1,5 @@
 // Chat-related types for messages, content segments, and tool executions
+import type { HistoryPoint } from '../../../shared/workspaceHistory'
 
 import type { ConversationRunMode } from '../../../shared/agentRunApi'
 import type { MessageImageAttachment } from '../../../shared/messageImages'
@@ -164,9 +165,10 @@ export interface Message {
   /** Durable execution profile used for this request/response. */
   runMode?: ConversationRunMode
   tokenUsage?: TokenUsage // Token usage and cost info for this response
-  checkpointHash?: string // Shadow-git checkpoint hash (set after workspace file writes)
-  checkpointWorkspaceRoot?: string // Workspace that owns checkpointHash; never inferred after a move
-  restoredFrom?: string // Set after a successful checkpoint restore (for 'Restored' badge)
+  /** The reply's History points, one for each project folder whose files it changed. */
+  checkpoints?: HistoryPoint[]
+  /** Set once the reply's file changes were undone. */
+  restored?: boolean
 }
 
 // Helper type for grouped segments (thinking + tools grouped together, text/artifacts separate)

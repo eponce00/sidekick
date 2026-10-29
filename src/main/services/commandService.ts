@@ -1,9 +1,9 @@
 import type Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
 import { mkdirSync } from 'fs'
-import { isAbsolute, join, relative, resolve, sep } from 'path'
+import { join } from 'path'
 import type { BackgroundTask, ShellCommandResult } from '../../shared/types'
-import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
+import { resolveSecureWorkspacePath, workspaceFolders } from '../utils/workspacePaths'
 import { CommandRunner } from './commandRunner'
 import { isolatedShellProcess } from './dockerShellIsolation'
 import { TerminalSessionStore } from './terminalSessions'
@@ -90,6 +90,13 @@ export function shellChildEnvironment(
   }
   safe.WORKSPACE_FOLDER = workspaceRoot
   safe.SIDEKICK_WORKSPACE = workspaceRoot
+  // The project's other folders, by name, as JSON; WORKSPACE_FOLDER stays the primary one.
+  const folders = workspaceFolders(workspaceRoot)
+  if (folders.length) {
+    safe.SIDEKICK_PROJECT_FOLDERS = JSON.stringify(
+      Object.fromEntries(folders.map(({ name, path }) => [name, path]))
+    )
+  } else delete safe.SIDEKICK_PROJECT_FOLDERS
   safe.SIDEKICK_SCRATCH = scratchDirectory
   if (skillAssetsPath) safe.SIDEKICK_SKILLS = skillAssetsPath
   return safe
@@ -133,21 +140,6 @@ function compactResult(result: ShellCommandResult | undefined): ShellCommandResu
     stderr: result.stderr.slice(0, MAX_PERSISTED_OUTPUT),
     outputPath: undefined
   }
-}
-
-/**
- * Models occasionally echo the absolute project path shown in the system context back as cwd.
- * Accept that harmless form while keeping the secure project-relative resolver as the authority.
- */
-export function projectRelativeCommandCwd(workspaceRoot: string, cwd = ''): string {
-  if (!isAbsolute(cwd)) return cwd
-  const root = resolve(workspaceRoot)
-  const target = resolve(cwd)
-  const withinProject = relative(root, target)
-  if (withinProject === '..' || withinProject.startsWith(`..${sep}`) || isAbsolute(withinProject)) {
-    return cwd
-  }
-  return withinProject
 }
 
 /** How the agent is told background commands ended, kept apart from anything the user wrote. */
@@ -302,10 +294,9 @@ export class CommandService {
   async execute(input: CommandServiceRunInput): Promise<ShellCommandResult | OwnedBackgroundTask> {
     if (input.signal?.aborted) throw new Error('Command cancelled before execution')
     if (!input.command.trim()) throw new Error('Command is required')
-    const cwd = await resolveSecureWorkspacePath(
-      input.workspaceRoot,
-      projectRelativeCommandCwd(input.workspaceRoot, input.cwd)
-    )
+    // Relative to the primary folder; `<name>/...` or an absolute path starts in another project
+    // folder. Models often echo the absolute project path from the system context.
+    const cwd = await resolveSecureWorkspacePath(input.workspaceRoot, input.cwd ?? '')
     const id = randomUUID()
     const isolate = this.isolationEnabled()
     if (isolate && input.background)
@@ -322,6 +313,7 @@ export class CommandService {
           id,
           cwd,
           workspaceRoot: input.workspaceRoot,
+          folders: workspaceFolders(input.workspaceRoot),
           command: input.command,
           timeoutSecs: input.timeoutSecs,
           env,

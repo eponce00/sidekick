@@ -130,6 +130,8 @@ interface SidebarProps {
   onToggleConversationPin: (id: string, pinned: boolean) => void
   onToggleProjectPin: (id: string, pinned: boolean) => void
   onRemoveProject: (id: string) => void
+  /** Opens the project's Edit project dialog: its name and folders. */
+  onEditProject?: (id: string) => void
   /** The conversations as listed, top to bottom, for keyboard navigation. */
   onVisibleConversationOrderChange?: (conversationIds: string[]) => void
   /** Schedule names by id, for the rows that group each schedule's runs. */
@@ -186,6 +188,7 @@ function Sidebar({
   onToggleConversationPin,
   onToggleProjectPin,
   onRemoveProject,
+  onEditProject,
   onVisibleConversationOrderChange,
   scheduleNames,
   onOpenSchedules,
@@ -1440,7 +1443,7 @@ function Sidebar({
                                     className="project-name"
                                     onClick={() => toggleProject(project.id)}
                                     onDoubleClick={() => beginProjectRename(project)}
-                                    title={`${project.folder_path} — double-click to rename`}
+                                    title={`${[project.folder_path, ...(project.folders ?? []).map((folder) => folder.path)].join('\n')}\nDouble-click to rename`}
                                   >
                                     {project.name}
                                   </button>
@@ -1481,6 +1484,16 @@ function Sidebar({
                                             beginProjectRename(project)
                                           }}
                                         />
+                                        {onEditProject && (
+                                          <MenuItem
+                                            icon={<FolderPlus size={14} />}
+                                            label="Edit project…"
+                                            onClick={() => {
+                                              setOpenActionsMenu(null)
+                                              onEditProject(project.id)
+                                            }}
+                                          />
+                                        )}
                                         <MenuItem
                                           icon={
                                             project.is_pinned ? (

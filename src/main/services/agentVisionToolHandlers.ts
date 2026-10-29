@@ -1,5 +1,6 @@
 import { open, realpath, stat } from 'fs/promises'
 import { extname, isAbsolute, relative, resolve, sep } from 'path'
+import { workspaceAbsolutePath, workspaceFolderRoots } from '../utils/workspacePaths'
 import {
   toolExecutionFailed,
   toolExecutionSucceeded,
@@ -70,11 +71,25 @@ export function registerVisionToolHandlers(
         message: 'Choose an absolute image path or an active project image.'
       })
     try {
-      const path = await realpath(resolve(context.workspaceRoot ?? '', requested))
-      const root = context.workspaceRoot ? await realpath(context.workspaceRoot) : undefined
-      const rel = root ? relative(root, path) : undefined
-      const external =
-        rel === undefined || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)
+      // A relative path may name another project folder, as `<name>/image.png`.
+      const path = await realpath(
+        context.workspaceRoot && !isAbsolute(requested)
+          ? workspaceAbsolutePath(context.workspaceRoot, requested)
+          : resolve(context.workspaceRoot ?? '', requested)
+      )
+      // An image in any of the project's folders is the project's own.
+      const roots = context.workspaceRoot
+        ? await Promise.all(
+            workspaceFolderRoots(context.workspaceRoot).map((root) =>
+              realpath(root).catch(() => null)
+            )
+          )
+        : []
+      const external = !roots.some((root) => {
+        if (!root) return false
+        const rel = relative(root, path)
+        return !(rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel))
+      })
       if (!TYPES[extname(path).toLowerCase()])
         return toolExecutionFailed({
           title,

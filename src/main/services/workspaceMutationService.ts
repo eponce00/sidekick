@@ -16,6 +16,7 @@ import { createWorkspaceFileChange } from '../utils/workspaceDiff'
 import { credentialRedactor } from './credentialRedaction'
 import { workspaceFileVersion } from '../utils/workspaceFileVersion'
 import {
+  locateWorkspacePath,
   OutsideProjectError,
   projectRelativePath,
   resolveSecureWorkspacePath,
@@ -95,12 +96,7 @@ interface FileSnapshot {
 
 const workspaceQueues = new Map<string, Promise<void>>()
 
-async function withWorkspaceLock<T>(
-  workspaceRoot: string,
-  operation: () => Promise<T>
-): Promise<T> {
-  const resolvedRoot = resolve(workspaceRoot)
-  const key = await fs.realpath(resolvedRoot).catch(() => resolvedRoot)
+async function withFolderLock<T>(key: string, operation: () => Promise<T>): Promise<T> {
   const previous = workspaceQueues.get(key) ?? Promise.resolve()
   let release!: () => void
   const current = new Promise<void>((resolvePromise) => {
@@ -115,6 +111,33 @@ async function withWorkspaceLock<T>(
     release()
     if (workspaceQueues.get(key) === queued) workspaceQueues.delete(key)
   }
+}
+
+/**
+ * Holds the lock of every project folder the request names. Two changes that span the same
+ * folders take their locks in one order, sorted by real path, so neither waits on the other.
+ */
+async function withWorkspaceLock<T>(
+  workspaceRoot: string,
+  request: WorkspaceMutationRequest,
+  operation: () => Promise<T>
+): Promise<T> {
+  const roots = new Set([resolve(workspaceRoot)])
+  for (const target of workspaceMutationTargetPaths(request)) {
+    try {
+      roots.add(locateWorkspacePath(workspaceRoot, target).root)
+    } catch {
+      // Planning refuses a path outside the project; it needs no lock.
+    }
+  }
+  const keys = [
+    ...new Set(await Promise.all([...roots].map((root) => fs.realpath(root).catch(() => root))))
+  ].sort()
+  const locked = keys.reduceRight<() => Promise<T>>(
+    (inner, key) => () => withFolderLock(key, inner),
+    operation
+  )
+  return locked()
 }
 
 async function secureWorkspacePath(workspaceRoot: string, filePath: string): Promise<string> {
@@ -905,7 +928,7 @@ export async function previewWorkspaceMutation(
   workspaceRoot: string,
   request: WorkspaceMutationRequest
 ): Promise<WorkspaceMutationResult> {
-  return withWorkspaceLock(workspaceRoot, async () => {
+  return withWorkspaceLock(workspaceRoot, request, async () => {
     try {
       return resultFromChanges(await planMutation(workspaceRoot, request))
     } catch (error) {
@@ -919,7 +942,7 @@ export async function executeWorkspaceMutation(
   request: WorkspaceMutationRequest,
   options: WorkspaceMutationExecutionOptions = {}
 ): Promise<WorkspaceMutationResult> {
-  return withWorkspaceLock(workspaceRoot, async () => {
+  return withWorkspaceLock(workspaceRoot, request, async () => {
     try {
       let changes: PlannedChange[]
       try {

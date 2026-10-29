@@ -3,8 +3,8 @@ import { promises as fs } from 'fs'
 import { basename, resolve } from 'path'
 import { getDb } from './state'
 import { ProjectStore } from '../services/projectStore'
-import { assertPickedFolder } from './workspaceUtils'
-import type { MoveConversationInput } from '../../shared/projects'
+import { assertNotAppFolder, assertPickedFolder } from './workspaceUtils'
+import type { MoveConversationInput, UpdateProjectFoldersInput } from '../../shared/projects'
 
 async function normalizeProjectFolder(folderPath: string): Promise<string> {
   const normalized = resolve(folderPath)
@@ -29,6 +29,47 @@ export function registerProjectHandlers(): void {
     'projects:update',
     async (_, id: string, input: { name?: string; isPinned?: boolean }) => store.update(id, input)
   )
+
+  // Every folder of a project is trusted like its primary one, so each must be one the user picked.
+  ipcMain.handle('projects:updateFolders', async (_, raw: unknown) => {
+    const input = raw as UpdateProjectFoldersInput
+    const names = (value: unknown): value is string[] | undefined =>
+      value === undefined ||
+      (Array.isArray(value) &&
+        value.length <= 50 &&
+        value.every((item) => typeof item === 'string' && item.length > 0 && item.length <= 4_096))
+    if (
+      !input ||
+      typeof input !== 'object' ||
+      typeof input.projectId !== 'string' ||
+      !input.projectId ||
+      input.projectId.length > 100 ||
+      !names(input.add) ||
+      !names(input.remove) ||
+      (input.makePrimary !== undefined &&
+        (typeof input.makePrimary !== 'string' || input.makePrimary.length > 4_096))
+    ) {
+      throw new Error('Invalid project folder change')
+    }
+    const project = store.get(input.projectId)
+    if (!project) throw new Error('Project not found')
+    const add: Array<{ path: string }> = []
+    for (const folderPath of input.add ?? []) {
+      assertPickedFolder(folderPath)
+      assertNotAppFolder(folderPath)
+      add.push({ path: await normalizeProjectFolder(folderPath) })
+    }
+    // A name that matches a folder at the top of the primary folder would hide it from the agent.
+    const reservedNames = add.length
+      ? await fs.readdir(project.folder_path).catch(() => [] as string[])
+      : []
+    return store.updateFolders({
+      projectId: project.id,
+      add: add.map((folder) => ({ ...folder, reservedNames })),
+      remove: input.remove,
+      makePrimary: input.makePrimary
+    })
+  })
 
   ipcMain.handle('projects:remove', async (_, id: string) => {
     store.remove(id)

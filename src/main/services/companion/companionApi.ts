@@ -1,5 +1,10 @@
 import type Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
+import {
+  historyRestoreTargets,
+  parseHistoryPoints,
+  type HistoryRestoreTarget
+} from '../../../shared/workspaceHistory'
 import type {
   AgentRunEventsResult,
   ConversationRunMode,
@@ -125,14 +130,10 @@ export interface CompanionApiDependencies {
   /** Moves a chat into its own worktree of its project, as the window's Work in does. */
   createWorktree: (conversationId: string) => Promise<void>
   /**
-   * Puts a chat's folder back to a history point, as the window's Retry and Edit do: `hard-reset`
-   * returns to it, `rewind` to before it. Permission settings decide whether the computer asks.
+   * Puts a chat's folders back to History points together, as the window's Retry and Edit do.
+   * Permission settings decide whether the computer asks.
    */
-  restoreFiles: (input: {
-    workspaceRoot: string
-    action: 'hard-reset' | 'rewind'
-    hash: string
-  }) => Promise<void>
+  restoreFiles: (targets: HistoryRestoreTarget[]) => Promise<void>
   /** A chat's place in the lists changed, or it is gone; the window and the phones list it again. */
   chatChanged: (conversationId: string, removed: boolean) => void
   /** Archives a chat as the window's Chats tab does; it refuses one that is working. */
@@ -234,8 +235,7 @@ interface HistoryRow {
   timestamp: number
   run_mode: ConversationRunMode | null
   starts_goal: number | null
-  checkpoint_hash: string | null
-  checkpoint_workspace_root: string | null
+  checkpoints: string | null
 }
 
 /** A phone's live dictation; the voice service knows it by an ID of its own. */
@@ -807,8 +807,7 @@ export class CompanionApi {
       throw new Error('SideKick is still working in this chat. Stop it first.')
     const rows = this.deps.db
       .prepare(
-        `SELECT id, role, content, timestamp, run_mode, starts_goal, checkpoint_hash,
-                checkpoint_workspace_root
+        `SELECT id, role, content, timestamp, run_mode, starts_goal, checkpoints
          FROM messages WHERE conversation_id = ? ORDER BY timestamp ASC`
       )
       .all(conversationId) as HistoryRow[]
@@ -861,30 +860,24 @@ export class CompanionApi {
   }
 
   /**
-   * The chat's folder as it was before the message at `index`: back to the last earlier history
-   * point there, or, with none, to before the first one after it.
+   * The chat's folders as they were before the message at `index`: each back to its last earlier
+   * History point, or, with none, to before the first one after it.
    */
   private async restoreFilesBefore(
     conversationId: string,
     rows: HistoryRow[],
     index: number
   ): Promise<void> {
-    const workspaceRoot = new ProjectStore(this.deps.db).getConversationContext(
-      conversationId
-    ).workspaceRoot
-    if (!workspaceRoot) return
-    const here = (row: HistoryRow): boolean =>
-      Boolean(row.checkpoint_hash) && row.checkpoint_workspace_root === workspaceRoot
-    const prior = rows.slice(0, index).reverse().find(here)
-    const own = prior ? undefined : rows.slice(index + 1).find(here)
-    const point = prior ?? own
-    if (!point?.checkpoint_hash) return
+    const project = new ProjectStore(this.deps.db).getConversationContext(conversationId)
+    if (!project.workspaceRoot) return
+    const targets = historyRestoreTargets(
+      rows.map((row) => ({ checkpoints: parseHistoryPoints(row.checkpoints) })),
+      index,
+      [project.workspaceRoot, ...project.folders.map(({ path }) => path)]
+    )
+    if (!targets.length) return
     try {
-      await this.deps.restoreFiles({
-        workspaceRoot,
-        action: prior ? 'hard-reset' : 'rewind',
-        hash: point.checkpoint_hash
-      })
+      await this.deps.restoreFiles(targets)
     } catch (error) {
       // As in the window: the chat is answered again even when its files could not go back.
       console.warn('[Companion] Files could not be put back:', error)

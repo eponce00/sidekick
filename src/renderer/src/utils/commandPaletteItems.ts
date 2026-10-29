@@ -37,6 +37,8 @@ export interface CommandPaletteActions {
   openConversation: (conversationId: string) => void
   openProjectConversations: (projectId: string) => void
   manageWorktrees: () => void
+  /** Edits the current chat's project; absent when the chat has none. */
+  editProject?: () => void
 }
 
 export interface CommandPaletteContext {
@@ -84,6 +86,18 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       shortcut: label('open-project'),
       run: actions.openProject
     },
+    ...(actions.editProject
+      ? [
+          {
+            id: 'action:edit-project',
+            group: 'actions' as const,
+            title: 'Edit project…',
+            icon: FolderPlus,
+            keywords: 'folders add folder primary rename repository',
+            run: actions.editProject
+          }
+        ]
+      : []),
     {
       id: 'action:manage-worktrees',
       group: 'actions',
@@ -196,8 +210,12 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       id: `project:${project.id}`,
       group: 'projects',
       title: project.name,
-      detail: project.folder_path,
-      keywords: 'project folder',
+      detail: project.folders?.length
+        ? `${project.folder_path} and ${project.folders.length} more ${project.folders.length === 1 ? 'folder' : 'folders'}`
+        : project.folder_path,
+      keywords: ['project folder', ...(project.folders ?? []).map((folder) => folder.name)].join(
+        ' '
+      ),
       recency: project.last_activity_at ?? project.updated_at,
       run: () => actions.openProjectConversations(project.id)
     })

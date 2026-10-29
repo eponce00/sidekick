@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { basename, isAbsolute, relative, resolve, sep } from 'path'
 import Database from 'better-sqlite3'
 import type {
   ConversationProjectContext,
@@ -6,9 +7,37 @@ import type {
   MoveConversationInput,
   MoveConversationResult,
   Project,
-  ProjectConversation
+  ProjectConversation,
+  WorkspaceFolder
 } from '../../shared/projects'
 import { chatFolderPath } from './chatFolders'
+import { workspacePathKey } from '../utils/workspacePaths'
+
+/** One folder is the other, or inside it. */
+export function foldersOverlap(left: string, right: string): boolean {
+  const inside = (child: string, parent: string): boolean => {
+    const path = relative(parent, child)
+    return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`))
+  }
+  return inside(resolve(left), resolve(right)) || inside(resolve(right), resolve(left))
+}
+
+/**
+ * A short name for a folder, unique among the names taken: its own name, or that name with a
+ * number. The agent writes it as a path's first segment, so it must be one valid segment.
+ */
+export function folderNameFor(folderPath: string, taken: Iterable<string>): string {
+  const used = new Set([...taken].map(workspacePathKey))
+  const base =
+    basename(resolve(folderPath))
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\\/:*?"<>|\x00-\x1f]/g, '-')
+      .replace(/^\.+/, '')
+      .trim() || 'folder'
+  let name = base
+  for (let number = 2; used.has(workspacePathKey(name)); number++) name = `${base}-${number}`
+  return name
+}
 
 interface ProjectEventRow {
   id: string
@@ -40,7 +69,8 @@ export class ProjectStore {
   constructor(private readonly db: Database.Database) {}
 
   list(): Project[] {
-    return this.db
+    const folders = this.allFolders()
+    const projects = this.db
       .prepare(
         `SELECT
            p.*,
@@ -52,10 +82,187 @@ export class ProjectStore {
          ORDER BY p.is_pinned DESC, last_activity_at DESC, p.name COLLATE NOCASE ASC`
       )
       .all() as Project[]
+    return projects.map((project) => ({ ...project, folders: folders.get(project.id) ?? [] }))
   }
 
   get(id: string): Project | undefined {
-    return this.db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as Project | undefined
+    const project = this.db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as
+      | Project
+      | undefined
+    return project && { ...project, folders: this.folders(id) }
+  }
+
+  /** The project's extra folders, in the order they were added. */
+  folders(projectId: string): WorkspaceFolder[] {
+    return this.db
+      .prepare(
+        `SELECT name, folder_path AS path FROM project_folders
+         WHERE project_id = ? ORDER BY position ASC, added_at ASC`
+      )
+      .all(projectId) as WorkspaceFolder[]
+  }
+
+  private allFolders(): Map<string, WorkspaceFolder[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT project_id, name, folder_path AS path FROM project_folders
+         ORDER BY position ASC, added_at ASC`
+      )
+      .all() as Array<WorkspaceFolder & { project_id: string }>
+    const byProject = new Map<string, WorkspaceFolder[]>()
+    for (const { project_id, ...folder } of rows) {
+      byProject.set(project_id, [...(byProject.get(project_id) ?? []), folder])
+    }
+    return byProject
+  }
+
+  /**
+   * The extra folders that go with a workspace root: a project's, for its primary folder. A chat's
+   * worktree copies one repository, so a project folder inside that repository is the worktree's
+   * copy of it, and every other folder goes with the chat as it is (the primary too, when it is
+   * another repository). Any other root has none.
+   */
+  foldersForRoot(workspaceRoot: string): WorkspaceFolder[] {
+    const root = resolve(workspaceRoot)
+    const project = this.db.prepare('SELECT id FROM projects WHERE folder_path = ?').get(root) as
+      | { id: string }
+      | undefined
+    if (project) return this.folders(project.id)
+    const worktree = this.db
+      .prepare(
+        `SELECT w.repository_root, w.worktree_root, p.id, p.folder_path FROM managed_worktrees w
+         JOIN projects p ON p.id = w.source_project_id
+         WHERE w.folder_path = ?`
+      )
+      .get(root) as
+      | { repository_root: string; worktree_root: string; id: string; folder_path: string }
+      | undefined
+    if (!worktree) return []
+    const extras = this.folders(worktree.id)
+    const primary: WorkspaceFolder = {
+      name: folderNameFor(
+        worktree.folder_path,
+        extras.map(({ name }) => name)
+      ),
+      path: worktree.folder_path
+    }
+    const repository = resolve(worktree.repository_root)
+    return [primary, ...extras].flatMap((folder) => {
+      const inRepository = relative(repository, resolve(folder.path))
+      if (inRepository === '..' || inRepository.startsWith(`..${sep}`) || isAbsolute(inRepository))
+        return [folder]
+      const copy = resolve(worktree.worktree_root, inRepository)
+      return workspacePathKey(copy) === workspacePathKey(root) ? [] : [{ ...folder, path: copy }]
+    })
+  }
+
+  /**
+   * Adds folders (the caller has checked each is a directory the user picked), removes extra
+   * folders by name, and makes an extra folder the primary one. A folder inside another of the
+   * project's folders is refused: a path in it would belong to both.
+   */
+  updateFolders(input: {
+    projectId: string
+    add?: Array<{ path: string; reservedNames?: string[] }>
+    remove?: string[]
+    makePrimary?: string
+  }): Project {
+    return this.db.transaction(() => {
+      const project = this.get(input.projectId)
+      if (!project) throw new Error('Project not found')
+      if (
+        (input.remove?.length || input.makePrimary) &&
+        this.listConversationPlacement(project.id).some(({ id }) => this.hasActiveRun(id))
+      ) {
+        throw new Error("Stop the project's active runs before removing or swapping its folders")
+      }
+      const now = Date.now()
+      for (const name of input.remove ?? []) {
+        this.db
+          .prepare('DELETE FROM project_folders WHERE project_id = ? AND name = ?')
+          .run(project.id, name)
+      }
+      for (const { path, reservedNames = [] } of input.add ?? []) {
+        const folderPath = resolve(path)
+        const current = this.get(project.id)!
+        const existing = [current.folder_path, ...current.folders!.map((folder) => folder.path)]
+        if (
+          existing.some(
+            (other) => workspacePathKey(resolve(other)) === workspacePathKey(folderPath)
+          )
+        )
+          continue
+        if (existing.some((other) => foldersOverlap(other, folderPath))) {
+          throw new Error(
+            `${folderPath} is inside one of the project's folders, or contains one. Add folders that sit side by side.`
+          )
+        }
+        const name = folderNameFor(folderPath, [
+          ...current.folders!.map((folder) => folder.name),
+          ...reservedNames
+        ])
+        const { last } = this.db
+          .prepare(
+            'SELECT COALESCE(MAX(position), -1) AS last FROM project_folders WHERE project_id = ?'
+          )
+          .get(project.id) as { last: number }
+        this.db
+          .prepare(
+            `INSERT INTO project_folders (project_id, name, folder_path, position, added_at)
+             VALUES (?, ?, ?, ?, ?)`
+          )
+          .run(project.id, name, folderPath, last + 1, now)
+      }
+      if (input.makePrimary) this.makePrimary(project.id, input.makePrimary, now)
+      this.db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(now, project.id)
+      return this.get(project.id)!
+    })()
+  }
+
+  /**
+   * Swaps the primary folder with an extra one, which takes the old primary's place in the list.
+   * The project's chats and memory follow the project, not the folder.
+   */
+  private makePrimary(projectId: string, name: string, now: number): void {
+    const project = this.get(projectId)!
+    const chosen = project.folders!.find((folder) => folder.name === name)
+    if (!chosen) throw new Error(`The project has no folder named ${name}`)
+    if (
+      this.db
+        .prepare('SELECT 1 FROM projects WHERE folder_path = ? AND id <> ?')
+        .get(chosen.path, projectId)
+    ) {
+      throw new Error(`${chosen.path} is already the main folder of another project`)
+    }
+    const { position } = this.db
+      .prepare('SELECT position FROM project_folders WHERE project_id = ? AND name = ?')
+      .get(projectId, name) as { position: number }
+    this.db
+      .prepare('DELETE FROM project_folders WHERE project_id = ? AND name = ?')
+      .run(projectId, name)
+    const formerName = folderNameFor(
+      project.folder_path,
+      project.folders!.filter((folder) => folder.name !== name).map((folder) => folder.name)
+    )
+    this.db
+      .prepare(
+        `INSERT INTO project_folders (project_id, name, folder_path, position, added_at)
+         VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(projectId, formerName, project.folder_path, position, now)
+    this.db.prepare('UPDATE projects SET folder_path = ? WHERE id = ?').run(chosen.path, projectId)
+    // A detached chat finds its way back to its project by the primary folder.
+    this.db
+      .prepare('UPDATE conversations SET home_workspace_root = ? WHERE home_workspace_root = ?')
+      .run(chosen.path, project.folder_path)
+    // Memory is the project's, so it moves to the new primary unless that folder has its own.
+    this.db
+      .prepare(
+        `UPDATE workspace_memory SET workspace_path = ?
+         WHERE workspace_path = ?
+           AND NOT EXISTS (SELECT 1 FROM workspace_memory WHERE workspace_path = ?)`
+      )
+      .run(chosen.path, project.folder_path, chosen.path)
   }
 
   create(folderPath: string, name: string): Project {
@@ -161,6 +368,7 @@ export class ProjectStore {
       projectName: conversation.name,
       // A chat in its own worktree works there, even if its project was removed since.
       workspaceRoot: projectRoot ?? chatFolder,
+      folders: projectRoot ? this.foldersForRoot(projectRoot) : [],
       ...(chatFolder ? { chatFolder: true } : {}),
       worktreeId: inWorktree ? conversation.worktree_id : null,
       worktree: inWorktree
@@ -205,7 +413,9 @@ export class ProjectStore {
       if (
         destination &&
         current.home_workspace_root &&
-        current.home_workspace_root !== destination.folder_path
+        current.home_workspace_root !== destination.folder_path &&
+        // The project's primary folder may have changed since the chat left it.
+        !destination.folders?.some(({ path }) => path === current.home_workspace_root)
       ) {
         throw new Error(
           `This chat belongs to ${current.home_project_name || current.home_workspace_root} and cannot move to another project`

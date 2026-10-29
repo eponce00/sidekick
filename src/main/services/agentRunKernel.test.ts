@@ -118,7 +118,7 @@ describe('AgentRunKernel', () => {
     const kernel = new AgentRunKernel(store, undefined, sampler)
     const running = kernel.start({
       ...input(router),
-      projectStartCommands: ['echo first', 'echo second']
+      projectStartCommands: [{ command: 'echo first' }, { command: 'echo second' }]
     })
     for (const command of ['echo first', 'echo second']) {
       await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
@@ -189,7 +189,10 @@ describe('AgentRunKernel', () => {
         kernel.resolveInteraction(String(event.payload.interactionId), { approved: true })
       if (event.type === 'permission.resolved') throw new Error('Observer disconnected')
     })
-    const result = await kernel.start({ ...input(router), projectStartCommands: ['echo fixture'] })
+    const result = await kernel.start({
+      ...input(router),
+      projectStartCommands: [{ command: 'echo fixture' }]
+    })
     expect(result.phase).toBe('completed')
     expect(router.execute).toHaveBeenCalledTimes(1)
     expect(sampler).toHaveBeenCalledTimes(1)
@@ -206,7 +209,10 @@ describe('AgentRunKernel', () => {
     const router = { execute: vi.fn() }
     const sampler = sampledTurn({ content: 'Must not run' })
     const kernel = new AgentRunKernel(store, undefined, sampler)
-    const running = kernel.start({ ...input(router), projectStartCommands: ['echo denied'] })
+    const running = kernel.start({
+      ...input(router),
+      projectStartCommands: [{ command: 'echo denied' }]
+    })
     await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
     kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, { approved: false })
     expect((await running).phase).toBe('failed')
@@ -221,7 +227,7 @@ describe('AgentRunKernel', () => {
     await kernel.start({
       ...runInput,
       profile: { ...runInput.profile, executionMode: 'plan' },
-      projectStartCommands: ['echo forbidden']
+      projectStartCommands: [{ command: 'echo forbidden' }]
     })
     expect(store.listEvents('run-1').some((event) => event.type === 'tool.running')).toBe(false)
   })
@@ -241,7 +247,7 @@ describe('AgentRunKernel', () => {
     const kernel = new AgentRunKernel(store, undefined, sampler)
     const running = kernel.start({
       ...input(router),
-      projectStartCommands: ['echo first', 'echo must-not-run']
+      projectStartCommands: [{ command: 'echo first' }, { command: 'echo must-not-run' }]
     })
     await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
     kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, { approved: true })
@@ -280,7 +286,7 @@ describe('AgentRunKernel', () => {
     const kernel = new AgentRunKernel(store, undefined, sequence(first, final))
     const running = kernel.start({
       ...input(router),
-      projectCompletionCommands: ['echo completion'],
+      projectCompletionCommands: [{ command: 'echo completion' }],
       verificationController,
       // Production prepares a plan controller even for an ordinary Act run.
       planController: {
@@ -329,7 +335,7 @@ describe('AgentRunKernel', () => {
       const kernel = new AgentRunKernel(store, undefined, sampler)
       const running = kernel.start({
         ...input(router),
-        projectCompletionCommands: ['echo first', 'echo second']
+        projectCompletionCommands: [{ command: 'echo first' }, { command: 'echo second' }]
       })
       await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
       kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, {
@@ -350,7 +356,7 @@ describe('AgentRunKernel', () => {
       profile: { ...runInput.profile, executionMode: mode === 'plan' ? 'plan' : 'act' },
       goalController:
         mode === 'goal' ? { afterTerminalTurn: async () => ({ continue: false }) } : undefined,
-      projectCompletionCommands: ['echo forbidden']
+      projectCompletionCommands: [{ command: 'echo forbidden' }]
     })
     expect(result.phase).toBe('completed')
     expect(router.execute).not.toHaveBeenCalled()

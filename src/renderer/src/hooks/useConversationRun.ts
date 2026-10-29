@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
+import { parseHistoryPoints } from '../../../shared/workspaceHistory'
 import type {
   AgentRunEventsResult,
   ConversationRunMode,
@@ -200,9 +201,9 @@ export function useConversationRun({
       const projection = snapshot.projection
       const finalizedEvent = events.find((event) => event.type === 'run.finalized')
       const finalized = Boolean(finalizedEvent)
-      const checkpoint = finalizedEvent?.payload as
-        | { checkpointHash?: unknown; checkpointWorkspaceRoot?: unknown }
-        | undefined
+      const checkpoints = parseHistoryPoints(
+        (finalizedEvent?.payload as { checkpoints?: unknown } | undefined)?.checkpoints
+      )
       const projectedPhase = projection.phase ?? 'streaming'
       setPhase(!finalized && TERMINAL_PHASES.has(projectedPhase) ? 'streaming' : projectedPhase)
       setMessages((previous) =>
@@ -217,13 +218,7 @@ export function useConversationRun({
                 tokenUsage: projection.tokenUsage,
                 runMode: active.mode,
                 // What the reply changed can be undone, or rewound, as soon as it ends.
-                ...(typeof checkpoint?.checkpointHash === 'string' &&
-                typeof checkpoint.checkpointWorkspaceRoot === 'string'
-                  ? {
-                      checkpointHash: checkpoint.checkpointHash,
-                      checkpointWorkspaceRoot: checkpoint.checkpointWorkspaceRoot
-                    }
-                  : {})
+                ...(checkpoints.length ? { checkpoints } : {})
               }
             : message
         )
