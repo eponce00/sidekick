@@ -63,10 +63,8 @@ describe('MarkdownTable', () => {
       window.dispatchEvent(new PointerEvent('pointerup', { clientX: 140 }))
     })
     const table = container.querySelector('table')!
-    expect([...table.querySelectorAll('col')].map((col) => col.style.width)).toEqual([
-      '100px',
-      '60px'
-    ])
+    // The last column takes whatever the card has left.
+    expect([...table.querySelectorAll('col')].map((col) => col.style.width)).toEqual(['100px', ''])
     expect(table.classList.contains('is-sized')).toBe(true)
     expect(table.style.width).toBe('160px')
 
