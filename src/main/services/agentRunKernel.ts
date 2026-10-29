@@ -209,6 +209,8 @@ export interface AgentKernelContextManager {
     tools: readonly unknown[],
     maxOutputTokens: number | undefined
   ): number | undefined
+  /** The calibrated size of a request, as compaction measures it. */
+  requestTokens?(messages: ProviderChatMessage[], tools: readonly unknown[]): number
   /** Adopt a window the provider reported about itself. */
   applyContextLength?(contextLength: number, maxOutputTokens: number): void
   /** Learns from the provider's real prompt count; returns the estimate it compared against. */
@@ -1719,6 +1721,12 @@ The user approved this exact plan revision. Act capabilities are now available a
             toolDefinitions,
             activeRequest.maxOutputTokens
           ) ?? activeRequest.maxOutputTokens
+        const requestEstimate = activeContextManager?.requestTokens?.(
+          requestMessages,
+          toolDefinitions
+        )
+        if (requestEstimate)
+          this.append(input.id, 'context.estimated', { promptTokens: requestEstimate })
         let pendingContent = separateNextTurn ? '\n\n' : ''
         let pendingThinking = ''
         let lastDeltaAt = Date.now()

@@ -175,6 +175,15 @@ function conversationTitlePrompt(message: Message): string {
   )
 }
 
+/** What the chat holds: the prompt sent, and the reply, estimated at about four characters a token
+ *  while it streams and its count is not known yet. */
+function contextTokens(usage: NonNullable<Message['tokenUsage']>): number {
+  return (
+    usage.promptTokens +
+    (usage.completionTokens || Math.round((usage.streaming?.characters ?? 0) / 4))
+  )
+}
+
 function ChatPanel({
   pinnedModels,
   onOpenModelSearch,
@@ -280,7 +289,7 @@ function ChatPanel({
       }
     }
     tokenCountUpdateRef.current?.(
-      latestUsage ? latestUsage.promptTokens + latestUsage.completionTokens : 0,
+      latestUsage ? contextTokens(latestUsage) : 0,
       selectedContextLength
     )
   }, [messages, openSubAgent, selectedContextLength])
@@ -405,10 +414,7 @@ function ChatPanel({
     onConversationCreated,
     onProjection: (projection) => {
       if (!openSubAgent)
-        onTokenCountUpdate?.(
-          projection.tokenUsage.promptTokens + projection.tokenUsage.completionTokens,
-          selectedContextLength
-        )
+        onTokenCountUpdate?.(contextTokens(projection.tokenUsage), selectedContextLength)
     }
   })
   const { goal, createGoal, pauseGoal, resumeGoal, clearGoal } = useConversationGoal(conversationId)

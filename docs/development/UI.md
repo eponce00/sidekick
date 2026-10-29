@@ -363,14 +363,15 @@ bounces or loops except something live, and everything stops under reduced motio
   one's white), since the send is the control the composer is built around. A meter on a control (the context ring, the
   dictation model's download) is a thin accent arc over a `--border-color` track, and draws no arc
   at zero.
-- The context ring is the first of the run controls, left of the model: a 16px ring with a 1.5px
-  stroke, the size of the icons beside it, in a 28px round hit target. It shows on every chat, an
-  empty one included, and never in Settings, which has no composer; the title bar holds only the
-  theme toggle and the settings button. It shows neither arc nor numeral until its rounded value
-  reaches 1%, drawing its track until then in the quieter `--border-subtle`, and no numeral once
-  it is full, where the whole `--color-error-mark` arc says so; it stays visible, and its
-  accessible name and tooltip, which opens upward, still give the exact value.
-- The dictation meter takes the context ring's geometry: a 16px ring with a 1.5px stroke over a
+- The context ring is the first of the run controls, left of the model: a 16px ring with a 2.25px
+  stroke and a round-ended arc, the size of the icons beside it, in a 28px round hit target, with no
+  numeral inside. It shows on every chat, an empty one included, and never in Settings, which has
+  no composer; the title bar holds only the theme toggle and the settings button. It draws no arc
+  until its rounded value reaches 1%, and its track until then in the quieter `--border-subtle`;
+  a full ring's whole `--color-error-mark` arc says so. Its accessible name and tooltip, which
+  opens upward, give the exact value. While a reply runs it shows the size of the prompt the run
+  is sending and an estimate of the reply so far, until the provider reports its count.
+- The dictation meter is a 16px ring with a 1.5px stroke over a
   `--border-color` track, around a 12px mic glyph, in the same 28px round target; Settings' Voice
   status line shows the same meter. A ready mic is the plain borderless 16px glyph in
   `--text-secondary`, with no ring. The download arc is drawn only while bytes are arriving. A download that is

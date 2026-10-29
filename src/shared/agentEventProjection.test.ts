@@ -56,6 +56,22 @@ describe('projectAgentRunEvents', () => {
     expect(projection.tokenUsage.streaming).toEqual({ startedAt: 4, updatedAt: 7, characters: 15 })
   })
 
+  it('counts the prompt being sent before the provider reports usage', () => {
+    // A local model reports usage only when the reply ends; the meter read 0 until then.
+    const sending = [event(1, 'context.estimated', { promptTokens: 1_200 })]
+    expect(projectAgentRunEvents(sending).tokenUsage.promptTokens).toBe(1_200)
+    const answered = [
+      ...sending,
+      event(2, 'usage.updated', { promptTokens: 1_000, completionTokens: 50 })
+    ]
+    expect(projectAgentRunEvents(answered).tokenUsage.promptTokens).toBe(1_000)
+    const next = [...answered, event(3, 'context.estimated', { promptTokens: 1_400 })]
+    expect(projectAgentRunEvents(next).tokenUsage).toMatchObject({
+      promptTokens: 1_400,
+      completionTokens: 0
+    })
+  })
+
   it('reports a compaction while it runs, and not once it ends', () => {
     const started = [
       event(1, 'run.started', {}),

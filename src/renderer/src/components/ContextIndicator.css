@@ -34,21 +34,6 @@
   box-shadow: var(--focus-ring);
 }
 
-/* Grey antialiasing: at 10px, subpixel text draws coloured fringes around the digits. macOS takes
-   the smoothing property; Chromium on Windows keeps subpixel text only on an opaque layer, so the
-   ring gets a transparent layer of its own. */
-.context-ring svg {
-  will-change: transform;
-}
-
-.context-ring text {
-  fill: var(--text-secondary);
-  font-size: var(--text-2xs);
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  -webkit-font-smoothing: antialiased;
-}
-
 .context-unknown-mark {
   color: var(--text-secondary);
 }
