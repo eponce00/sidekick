@@ -546,18 +546,23 @@ Keep building the app.
       ])
     })
 
-    it('shows a recorded note as the answer when the pass followed an empty answer', () => {
+    it('ends on the answer the pass closes with, the draft folded into the result above it', () => {
       const projection = projectAgentRunEvents([
-        event(2, 'verification.updated', { summary }),
-        event(3, 'assistant.completed', { content: '', provisional: true }),
-        event(4, 'run.retrying', { reason: 'workspace_verification_required' }),
-        event(5, 'assistant.completed', { content: 'Cleaned up the page.', verificationNote: true })
+        ...answered,
+        event(7, 'assistant.delta', { content: 'The whole answer.' }),
+        event(8, 'assistant.completed', { content: 'The whole answer.' })
       ])
-      expect(projection.content).toBe('Cleaned up the page.')
+      expect(projection.content).toBe('The whole answer.')
       expect(projection.segments).toEqual([
-        expect.objectContaining({ type: 'run_status' }),
-        { type: 'text', content: 'Cleaned up the page.' },
-        { type: 'verification', verification: summary }
+        {
+          type: 'verification',
+          verification: summary,
+          steps: [
+            { type: 'text', content: 'The answer.' },
+            expect.objectContaining({ type: 'tool' })
+          ]
+        },
+        { type: 'text', content: 'The whole answer.' }
       ])
     })
   })

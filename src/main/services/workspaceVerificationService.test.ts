@@ -204,7 +204,7 @@ describe('WorkspaceVerificationService', () => {
   })
 
   it('asks for a check and a look in one pass, and ignores tests and plain scripts', async () => {
-    // A second pass would keep the first pass's one-line result as the answer.
+    // One pass asks for both, so the model writes its answer once.
     await writeFile(join(root, 'package.json'), '{"scripts":{"test":"vitest"}}')
     service.recordChanges('run-8', root, 'workspace_tool', [
       { path: 'src/App.tsx', kind: 'update' }
@@ -215,7 +215,7 @@ describe('WorkspaceVerificationService', () => {
     expect(both.prompt).toContain('sidekick_verification_guard')
     expect(both.prompt).toContain('sidekick_visual_check')
     expect(both.prompt).toContain("project's dev server")
-    expect(both.prompt!.match(/Your previous reply stays the answer/g)).toHaveLength(1)
+    expect(both.prompt!.match(/Your previous reply was held back as a draft/g)).toHaveLength(1)
     expect((await controller.afterTerminalTurn()).continue).toBe(false)
 
     expect(isVisualPath('src/App.test.tsx')).toBe(false)
