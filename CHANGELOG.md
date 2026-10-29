@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.25.0 — 2026-10-29
+
+- Work across several folders in one project. **Edit project…** adds folders beside the primary
+  one, makes another primary, or removes one. The agent reads, searches and edits in every folder
+  (`<name>/path` names one), Files shows each folder, @-mentions cover them all, an extra folder's
+  own instructions load the first time the agent works there, and History undoes changes in every
+  folder together. Chats, Git, the pull request line and worktrees stay on the primary folder.
+- Rewinding to before a message no longer fails when an earlier reply in between was undone.
+- See the context meter move while a reply runs. It used to read 0 from the moment a message was
+  sent until the reply ended; it now shows the prompt being sent and the reply as it streams. The
+  ring loses its number and gets a thicker, round-ended arc.
+- Keep the page in view behind the Browser's menus. Opening the menu or the page tools sometimes
+  left the panel blank until the menu closed.
+- Get Microsoft Store updates. The Store had kept 0.14.0, because each release replaced the
+  previous submission while it was still in certification; releases now wait their turn. The
+  taskbar icon no longer sits on a square of your accent colour.
+
 ## 0.24.0 — 2026-10-28
 
 - A new look, reworked over fourteen rounds of review against the Claude Code and Codex desktop
