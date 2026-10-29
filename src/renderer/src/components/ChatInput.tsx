@@ -50,7 +50,6 @@ import {
   type MessageContextAttachment
 } from '../../../shared/messageContextAttachments'
 import { BrowserMarkChip } from './BrowserMarkChip'
-import { clipboardImageFiles } from '../utils/messageImageAttachments'
 import { ImageAttachmentPreview } from './ImageAttachmentPreview'
 import { DictationButton } from './DictationButton'
 import { useDictating } from '../services/voice/dictationControl'
@@ -215,6 +214,8 @@ interface ChatInputProps {
   modelMenuRef: React.RefObject<HTMLDivElement | null>
   onInputChange: (value: string) => void
   onAddImageFiles: (files: File[]) => void
+  /** Files dropped or pasted on the box, images and any other kind. */
+  onAddFiles: (files: File[]) => void
   onAddContextAttachments: () => void
   /** Attaches a project file named with `@` in the message, so it is read before the reply. */
   onAddFileMention?: (relativePath: string) => void
@@ -312,6 +313,7 @@ export function ChatInput({
   modelMenuRef,
   onInputChange,
   onAddImageFiles,
+  onAddFiles,
   onAddContextAttachments,
   onAddPastedText,
   onInsertPastedText,
@@ -868,10 +870,10 @@ export function ChatInput({
       onPaste={(event) => {
         const plainPaste = plainPasteRef.current
         plainPasteRef.current = false
-        const files = clipboardImageFiles(event.clipboardData.items)
+        const files = Array.from(event.clipboardData.files)
         if (files.length) {
           event.preventDefault()
-          onAddImageFiles(files)
+          onAddFiles(files)
           return
         }
         if (plainPaste) return
@@ -880,6 +882,7 @@ export function ChatInput({
         event.preventDefault()
         onAddPastedText(text)
       }}
+      onDropFiles={onAddFiles}
       onSend={onSendMessage}
       popover={
         commandMatch ? (
@@ -1130,7 +1133,7 @@ export function ChatInput({
                     description={
                       attachesToChatFolder
                         ? 'Attach files from your computer; this chat keeps a copy'
-                        : 'Attach files or a folder from the current project'
+                        : 'Attach files from anywhere, or a folder from this project'
                     }
                     icon={<Paperclip size={16} />}
                     onClick={() => runFeatureAction(onAddContextAttachments)}

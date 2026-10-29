@@ -1425,6 +1425,17 @@ export function installBrowserApiMock(): void {
         return { canceled: false, path: picks[(previewFolderPicks - 1) % picks.length] }
       },
       selectContextAttachments: async () => ({ ok: true, canceled: true, attachments: [] }),
+      attachFiles: async (_root: string, files: Array<{ name: string; bytes?: Uint8Array }>) => ({
+        ok: true,
+        attachments: files.map((file) => ({
+          id: crypto.randomUUID(),
+          kind: 'file' as const,
+          name: file.name,
+          relativePath: `.sidekick/uploads/${file.name}`,
+          size: file.bytes?.byteLength
+        }))
+      }),
+      pathForFile: () => '',
       getPath: async () => 'C:\\Projects\\sidekick-demo',
       getRules: async () => ({
         ok: true,

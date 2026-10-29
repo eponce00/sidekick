@@ -2,6 +2,9 @@ import { dataUrlByteLength, isReadableMessageImage } from './messageImages'
 
 export const MAX_MESSAGE_CONTEXT_ATTACHMENTS = 12
 
+/** The largest file attached as a copy, as for images. */
+export const MAX_ATTACHED_FILE_BYTES = 100 * 1024 * 1024
+
 /**
  * A paste this long becomes an attachment instead of filling the composer, as
  * long logs, documents, and code are easier to review and remove as one item.

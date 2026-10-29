@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { ClipboardEvent, KeyboardEvent, ReactNode, RefObject } from 'react'
+import type { ClipboardEvent, DragEvent, KeyboardEvent, ReactNode, RefObject } from 'react'
 import TextareaAutosize from 'react-textarea-autosize'
 import { ArrowUp } from 'lucide-react'
 import type { PromptRefinementConfig } from '../services/providers/promptRefinement'
@@ -35,6 +35,8 @@ interface ChatComposerProps {
   onChange: (value: string) => void
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void
   onPaste?: (event: ClipboardEvent<HTMLTextAreaElement>) => void
+  /** Files dropped on the box; without it, a drop does nothing. */
+  onDropFiles?: (files: File[]) => void
   onSend: () => void
 }
 
@@ -66,6 +68,7 @@ export function ChatComposer({
   onChange,
   onKeyDown,
   onPaste,
+  onDropFiles,
   onSend
 }: ChatComposerProps): React.JSX.Element {
   const promptRefiner = usePromptRefinement({
@@ -75,6 +78,9 @@ export function ChatComposer({
     onChange
   })
   const showPromptRefiner = promptRefiner.canRefine || promptRefiner.status !== 'idle'
+  const [dropping, setDropping] = useState(false)
+  const carriesFiles = (event: DragEvent): boolean =>
+    Boolean(onDropFiles) && !disabled && event.dataTransfer.types.includes('Files')
   // The autosizing textarea measures itself only when it renders or the window resizes. When the
   // chat narrows and widens again, as beside a full-size inspector, it would keep the height it
   // measured while narrow; a width change renders it again so it measures at the new width.
@@ -99,8 +105,27 @@ export function ChatComposer({
           <div className="composer-floating-accessory">{floatingAccessory}</div>
         )}
         <div
-          className={`input-container ${showPromptRefiner ? 'has-prompt-sharpen' : ''}`.trim()}
+          className={`input-container ${showPromptRefiner ? 'has-prompt-sharpen' : ''} ${dropping ? 'is-dropping' : ''}`.trim()}
           onClick={() => !disabled && inputRef.current?.focus()}
+          onDragOver={(event) => {
+            if (!carriesFiles(event)) return
+            event.preventDefault()
+            event.dataTransfer.dropEffect = 'copy'
+            setDropping(true)
+          }}
+          onDragLeave={(event) => {
+            // Moving onto a child also leaves the box; only leaving it altogether ends the drop.
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+              setDropping(false)
+          }}
+          onDrop={(event) => {
+            setDropping(false)
+            if (!carriesFiles(event)) return
+            event.preventDefault()
+            const files = Array.from(event.dataTransfer.files)
+            if (files.length) onDropFiles?.(files)
+            inputRef.current?.focus()
+          }}
         >
           {popover && <div className="composer-popover">{popover}</div>}
           {contextBar && <div className="composer-context-bar">{contextBar}</div>}
