@@ -1219,7 +1219,7 @@ body[data-theme='light'] .message-user .message-action:hover {
 .markdown-table-scroll {
   overflow-x: auto;
   border-radius: calc(var(--radius-sm) - 1px);
-  --table-fade: 16px;
+  --table-fade: 40px;
 }
 
 .markdown-table-scroll:focus-visible {
@@ -1253,8 +1253,11 @@ body[data-theme='light'] .message-user .message-action:hover {
   border-spacing: 0;
 }
 
-/* Columns sized by the user keep exactly the widths they were dragged to. */
+/* Columns sized by the user keep exactly the widths they were dragged to. The table still fills
+   its card, the last column taking what the others leave, so the header and rows never stop short
+   of the card's border. */
 .message-content .markdown-table table.is-sized {
+  min-width: 100%;
   table-layout: fixed;
 }
 

@@ -18,7 +18,11 @@ import type { HistoryRestoreTarget } from '../../shared/workspaceHistory'
 import { readBrowserArtifact } from '../bootstrap/artifactProtocol'
 import { restoreApprovedHistory, validHistoryTargets } from './checkpointHandlers'
 import { permissionBroker } from '../services/permissionBroker'
-import { CompanionApi, trimForPhone, type CompanionVoice } from '../services/companion/companionApi'
+import {
+  CompanionApi,
+  eventForPhone,
+  type CompanionVoice
+} from '../services/companion/companionApi'
 import {
   certificateServes,
   createCompanionCertificate,
@@ -481,8 +485,7 @@ export function registerCompanionHandlers(): void {
       if (run && run.surface !== 'subagent') companionApi?.runEnded(run.threadId)
     }
     // Phones get the same events the window does, small enough to carry.
-    if (server?.listening)
-      forwardRunEvent({ type: 'run.event', event: trimForPhone(event) as typeof event })
+    if (server?.listening) forwardRunEvent({ type: 'run.event', event: eventForPhone(event) })
   })
   // The window's own queue edits reach the phones too.
   observeAdmissionChanges((conversationId) =>

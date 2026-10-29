@@ -192,6 +192,46 @@ export function trimForPhone(value: unknown, depth = 0): unknown {
   return value
 }
 
+/** Events whose text is what the reader reads: a reply's words and thinking, and a steered message. */
+const READING_EVENTS = new Set<string>(['assistant.delta', 'assistant.completed', 'run.steered'])
+
+function readingText(value: unknown): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!value || typeof value !== 'object') return out
+  for (const key of ['content', 'thinking']) {
+    const text = (value as Record<string, unknown>)[key]
+    if (typeof text === 'string') out[key] = text
+  }
+  return out
+}
+
+/**
+ * A run's event for the phone. A reply's own text reaches it whole, as the desktop shows it; only
+ * what tools carry is cut.
+ */
+export function eventForPhone(event: AgentRunEvent): AgentRunEvent {
+  const trimmed = trimForPhone(event) as AgentRunEvent
+  if (!READING_EVENTS.has(event.type)) return trimmed
+  return { ...trimmed, payload: { ...trimmed.payload, ...readingText(event.payload) } }
+}
+
+/** Every event of a run, since the phone rebuilds the reply from all of them. */
+export function eventsForPhone(events: readonly AgentRunEvent[]): AgentRunEvent[] {
+  return events.map(eventForPhone)
+}
+
+/** Every part of a saved reply, with its text and thinking whole. */
+export function segmentsForPhone(segments: readonly unknown[]): unknown[] {
+  return segments.map((segment) => {
+    const trimmed = trimForPhone(segment)
+    const type =
+      segment && typeof segment === 'object' ? (segment as { type?: unknown }).type : null
+    return type === 'text' || type === 'thinking'
+      ? { ...(trimmed as object), ...readingText(segment) }
+      : trimmed
+  })
+}
+
 /** 16-bit little-endian samples, base64, half the size of the floats speech is made of. */
 export function pcm16Base64(samples: Float32Array): string {
   const out = Buffer.alloc(samples.length * 2)
@@ -324,7 +364,10 @@ export class CompanionApi {
         const run = this.conversationRun(input.runId)
         const after = Number(input.afterSequence)
         const result = await this.deps.runEvents(run.id, Number.isFinite(after) ? after : 0)
-        return trimForPhone(result) as CompanionCalls['run.events']['output']
+        return {
+          ...(trimForPhone(result) as object),
+          events: eventsForPhone(result.events)
+        } as CompanionCalls['run.events']['output']
       }
       case 'interaction.resolve':
         return this.resolve(input)
@@ -474,13 +517,13 @@ export class CompanionApi {
           id: row.id,
           // The desktop saves replies as `agent`; the phone's contract calls them `assistant`.
           role: row.role === 'agent' ? 'assistant' : row.role,
-          content: trimForPhone(row.content ?? '') as string,
+          content: row.content ?? '',
           timestamp: row.timestamp,
           ...(row.run_id ? { runId: row.run_id } : {}),
           ...(row.run_mode && MODES.includes(row.run_mode as ConversationRunMode)
             ? { runMode: row.run_mode as ConversationRunMode }
             : {}),
-          ...(Array.isArray(segments) ? { segments: trimForPhone(segments) as unknown[] } : {}),
+          ...(Array.isArray(segments) ? { segments: segmentsForPhone(segments) } : {}),
           ...(tokenUsage && typeof tokenUsage === 'object'
             ? { tokenUsage: tokenUsage as Record<string, unknown> }
             : {}),
@@ -507,8 +550,7 @@ export class CompanionApi {
     let run: CompanionChatDetail['run'] = null
     if (latest && ACTIVE_PHASES.has(latest.phase)) {
       const result = await this.deps.runEvents(latest.id, 0)
-      if (result.run)
-        run = { run: result.run, events: trimForPhone(result.events) as AgentRunEvent[] }
+      if (result.run) run = { run: result.run, events: eventsForPhone(result.events) }
     }
     return { chat, messages, run }
   }

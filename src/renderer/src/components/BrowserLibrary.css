@@ -137,83 +137,87 @@
   font-weight: 500;
 }
 
-/* Browsers found, one chosen. */
-.browser-import-browsers {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
-  gap: var(--space-3);
-}
-.browser-import-browser {
-  position: relative;
+/* Every browser profile found, one chosen: a row each, as the parts below are. */
+.browser-import-sources {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  padding: 12px 8px 10px;
+  gap: 2px;
+  padding: 3px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--surface-2);
+}
+.browser-import-source {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: 44px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: calc(var(--radius-md) - 3px);
+  background: none;
   color: var(--text-secondary);
   font: inherit;
+  text-align: left;
   cursor: pointer;
   transition: var(--transition-ui);
 }
-.browser-import-browser:hover:not(:disabled, .is-selected) {
-  background: var(--surface-3);
+.browser-import-source:hover:not(:disabled, .is-selected) {
+  background: var(--surface-2);
   color: var(--text-primary);
 }
-.browser-import-browser.is-selected {
-  border-color: var(--accent);
+.browser-import-source.is-selected {
   background: var(--accent-subtle);
   color: var(--text-primary);
 }
-/* The ring is drawn apart from box-shadow, which the global focus rules clear after a click. */
-.browser-import-browser.is-selected::after {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border: 2px solid var(--accent);
-  border-radius: inherit;
-  pointer-events: none;
-}
-.browser-import-browser:disabled {
+.browser-import-source:disabled {
   cursor: default;
 }
-.browser-import-browser:disabled:not(.is-selected) {
+.browser-import-source:disabled:not(.is-selected) {
   opacity: 0.55;
 }
 .browser-import-browser-icon {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   color: var(--text-muted);
 }
 .browser-import-browser-icon img {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   object-fit: contain;
 }
-.browser-import-browser-name {
-  max-width: 100%;
+.browser-import-source-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.browser-import-source-name,
+.browser-import-source-profile {
   overflow: hidden;
-  font-size: var(--text-xs);
-  line-height: 1.3;
-  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.browser-import-profile {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  color: var(--text-secondary);
+.browser-import-source-name {
   font-size: var(--text-sm);
+  line-height: 1.3;
 }
-.browser-import-profile > :last-child {
-  width: min(220px, 60%);
+.browser-import-source-profile {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.35;
+}
+/* A radio's ring, filled with the accent when chosen. */
+.browser-import-source-mark {
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  transition: var(--transition-ui);
+}
+.browser-import-source.is-selected .browser-import-source-mark {
+  border: 5px solid var(--accent);
 }
 
 /* What to import: one quiet row each. */
