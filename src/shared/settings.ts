@@ -99,9 +99,6 @@ export interface ProviderSettings {
   officeHelperInterpreter?: string
   /** Main-owned identity invalidates pending helper requests when configuration changes. */
   officeHelperConfigurationId?: string
-  projectStartHooks?: import('./projectHooks').ProjectStartHook[]
-  projectCompletionHooks?: import('./projectHooks').ProjectStartHook[]
-  projectWorktreeHooks?: import('./projectHooks').ProjectStartHook[]
   providerInstances?: ProviderInstance[]
   openRouterApiKey: string
   ollamaEndpoint: string

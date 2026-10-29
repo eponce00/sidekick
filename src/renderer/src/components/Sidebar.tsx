@@ -28,6 +28,7 @@ import {
   X
 } from 'lucide-react'
 import type { Conversation, Project } from '../types/app.types'
+import { AppVersionLabel } from './AppUpdateControls'
 import { SearchField } from './SearchField'
 import type { MoveConversationInput } from '../../../shared/projects'
 import { sidebarConversationOrder } from '../utils/sidebarConversationOrder'
@@ -1612,7 +1613,10 @@ function Sidebar({
             {moreMenu}
           </div>
         ) : (
-          phoneButton && <div className="sidebar-footer">{phoneButton}</div>
+          <div className="sidebar-footer">
+            {phoneButton || <span className="sidebar-footer-spacer" />}
+            <AppVersionLabel />
+          </div>
         )}
       </aside>
 

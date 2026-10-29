@@ -159,7 +159,7 @@
   --work-row-height: 28px;
   /* The longest a thought's one-line preview runs, so its chevron stays near the tool rows'. */
   --work-thought-max: 40ch;
-  /* Each level of the sidebar's tree: chats under a project, workers under their manager. */
+  /* A level of the sidebar's tree: workers under their manager, runs under their schedule. */
   --tree-indent: 16px;
   /* The sidebar's width, which the Settings navigation shares so its edge stays put. */
   --sidebar-width: 276px;

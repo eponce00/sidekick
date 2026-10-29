@@ -220,7 +220,6 @@ interface PermissionsAPI {
   authorize: (
     operation: import('../shared/permissions').PermissionOperation
   ) => Promise<import('../shared/permissions').PermissionAuthorization>
-  listAudit: () => Promise<import('../shared/permissions').PermissionAuditRecord[]>
 }
 
 interface WindowAPI {

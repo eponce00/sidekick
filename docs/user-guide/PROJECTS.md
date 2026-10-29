@@ -58,7 +58,7 @@ How the agent uses the folders:
   with the same read-before-edit rule, change review and checks. One patch may change files in
   several folders; it is checked whole before anything is written.
 - Commands start in the primary folder. The agent sets a command's working folder to another
-  folder's name to run it there, and project hooks set on another folder run in that folder.
+  folder's name to run it there.
 - Each folder's own instructions (`AGENTS.md`, `SIDEKICK.md`, `.sidekick/rules.md`) reach the agent
   the first time it uses that folder in a run, as nested instructions do.
 - History keeps each folder's changes in that folder's own private history, and Undo, Retry, Edit
@@ -116,55 +116,6 @@ group agents, and sub-agents use this same resolver and preserve the current use
 higher-priority task.
 
 ## Interface
-
-### Project hooks
-
-Agent settings include one **Project hooks** card for commands SideKick runs at
-set moments in an exact absolute project folder: when a run starts, before the
-final answer, or after creating a worktree. Choose the moment, the folder and
-the command, add the hook, switch it on in the list and save settings. New hooks
-are added switched off. A start or completion hook may name any folder of a
-project, the primary one or another, and runs in the folder it names.
-
-#### When a run starts
-
-Start hooks run setup commands before the agent begins. SideKick does not search repositories for
-executable hook files, and hooks do not automatically apply to subprojects or
-new worktree paths.
-
-Each matching hook requires approval before every agent run, including follow-up
-messages and full-access mode. Commands run in listed order through the normal
-command service, with output visible in the conversation. Denial or failure stops
-before model sampling; inspect any partial side effects before starting again.
-Plan mode and profiles without shell access do not run hooks. Commands use the
-selected host or Docker shell environment; only approve trusted commands.
-
-#### Before the final answer
-
-Completion hooks use the same exact-folder matching, switched-off default,
-ordered execution, and per-command approval. They run once before the final answer
-of an ordinary Act conversation, not Plan or goal-driven runs. The preliminary
-answer remains provisional while hooks run. Afterwards the agent receives the
-results and the workspace verification gate runs again before completion.
-Denial or failure stops the run rather than publishing a successful final answer.
-Interrupted commands are not automatically replayed; inspect their actual effects
-before retrying.
-
-#### After creating a worktree
-
-Worktree hooks are also added switched off. They match the
-original project's exact folder and run when a chat forks into a new worktree or
-starts in one, after the chat is saved there and before its first run.
-Commands execute inside the new worktree, in
-order, with a separate approval for each command in every permission mode.
-Skipping is the default. No repository Git hooks are discovered or enabled.
-
-Each command has a two-minute limit and uses the selected host or Docker shell;
-Docker failure never falls back to the host. Closing the requesting window or
-quitting the app cancels active setup. Completion or failure is reported with
-private output-log paths. Failure, denial, or interrupted setup preserves the
-fork and any files already changed. Inspect those files before manually retrying;
-commands are never automatically replayed. There are no automatic removal hooks.
 
 ### Worktrees
 

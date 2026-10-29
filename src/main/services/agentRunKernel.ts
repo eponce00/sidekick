@@ -1,6 +1,5 @@
 import { randomUUID } from 'crypto'
 import type { AgentArtifactDraft } from '../../shared/agentRunApi'
-import type { ProjectHookCommand } from './projectHooks'
 import {
   AgentToolLoopError,
   classifyAgentKernelFailure,
@@ -278,9 +277,6 @@ const PROVIDER_BUSY_STATUSES = new Set([429, 503, 529])
 const PROVIDER_RETRY_AFTER_LIMIT_MS = 60_000
 
 export interface StartAgentKernelRunInput extends StartAgentRunInput {
-  /** App-settings snapshot, never model/repository-discovered commands. Always requires approval. */
-  projectStartCommands?: ProjectHookCommand[]
-  projectCompletionCommands?: ProjectHookCommand[]
   /** Project files the user named in the message, read before the model's first turn. */
   preloadReads?: string[]
   catalog: AgentToolCatalogOptions | (() => AgentToolCatalogOptions)
@@ -655,19 +651,23 @@ export class AgentRunKernel {
   start(input: StartAgentKernelRunInput): Promise<AgentKernelRunResult> {
     if (this.active.has(input.id)) throw new Error(`Agent run is already active: ${input.id}`)
     const controller = new AbortController()
-    const promise = this.execute(input, controller.signal).finally(() => {
-      if (this.active.get(input.id)?.controller === controller) this.active.delete(input.id)
-      try {
-        input.toolRouter.releaseRun?.(input.id)
-      } catch (error) {
-        console.warn('[AgentRun] Could not release what the run was given:', error)
-      }
-      // A message the run ended before taking stays with the caller, who sends it next.
-      this.steers.delete(input.id)
-      for (const [id, pending] of this.pendingResolvers) {
-        if (pending.runId === input.id) this.pendingResolvers.delete(id)
-      }
-    })
+    // The run starts once it is registered below, so a steer or stop that arrives during its first
+    // model request finds it.
+    const promise = Promise.resolve()
+      .then(() => this.execute(input, controller.signal))
+      .finally(() => {
+        if (this.active.get(input.id)?.controller === controller) this.active.delete(input.id)
+        try {
+          input.toolRouter.releaseRun?.(input.id)
+        } catch (error) {
+          console.warn('[AgentRun] Could not release what the run was given:', error)
+        }
+        // A message the run ended before taking stays with the caller, who sends it next.
+        this.steers.delete(input.id)
+        for (const [id, pending] of this.pendingResolvers) {
+          if (pending.runId === input.id) this.pendingResolvers.delete(id)
+        }
+      })
     this.active.set(input.id, { controller, promise })
     return promise
   }
@@ -1485,118 +1485,11 @@ The user approved this exact plan revision. Act capabilities are now available a
       activeRequest = { ...activeRequest, maxOutputTokens: limit }
     }
     let activeContextManager = input.contextManager
-    let completionHooksRun = false
     // The answer a verification request held back. When the pass that follows
     // leaves the workspace as it was, that answer stays the response and the
     // pass's closing reply is only a note on the verification.
     let deferredAnswer: { content: string; contentBefore: string; revision: number } | undefined
 
-    const runProjectHooks = async (
-      commands: ProjectHookCommand[] | undefined,
-      title: string
-    ): Promise<void> => {
-      if (
-        input.profile.executionMode !== 'plan' &&
-        getAgentToolEntry(currentCatalog(input), 'shell')
-      ) {
-        // Snapshot before waiting for approval; changes to settings cannot replace reviewed commands.
-        const hooks = [...(commands ?? [])].slice(0, 10)
-        for (const { command, cwd } of hooks) {
-          // A hook set on another of the project's folders runs in that folder.
-          const call: AgentToolCall = {
-            id: randomUUID(),
-            name: 'shell',
-            arguments: { command, ...(cwd ? { cwd } : {}) }
-          }
-          const startedAt = Date.now()
-          this.append(input.id, 'tool.pending', {
-            toolCallId: call.id,
-            name: call.name,
-            title,
-            arguments: call.arguments
-          })
-          const approval = await this.suspendForInteraction(
-            input.id,
-            'permission',
-            {
-              toolCallId: call.id,
-              name: call.name,
-              title,
-              arguments: call.arguments,
-              requestedAccess: 'confirm',
-              mode: 'always-ask',
-              workspaceRoot: input.workspaceRoot
-            },
-            signal
-          )
-          if (
-            signal.aborted ||
-            approval.status !== 'resolved' ||
-            approval.response?.approved !== true
-          ) {
-            this.append(input.id, 'tool.completed', {
-              toolCallId: call.id,
-              name: call.name,
-              result: toolExecutionFailed({
-                title,
-                code: 'permission_denied',
-                message: `${title} was not approved`,
-                status: 'denied',
-                startedAt
-              })
-            })
-            throw new Error(`${title} was not approved; the run was stopped`)
-          }
-          this.transition(input.id, 'executing_tool')
-          this.append(input.id, 'tool.running', {
-            toolCallId: call.id,
-            name: call.name,
-            title,
-            arguments: call.arguments
-          })
-          const result = await this.tools.execute(
-            {
-              catalog: currentCatalog(input),
-              call,
-              title,
-              context: {
-                runId: input.id,
-                conversationId: input.threadId,
-                workspaceRoot: input.workspaceRoot,
-                signal,
-                onOutput: ({ chunk, stream }) =>
-                  this.append(input.id, 'tool.output.delta', { toolCallId: call.id, stream, chunk })
-              }
-            },
-            ((args, context) =>
-              input.toolRouter.execute('shell', args, context)) as AgentToolExecutor
-          )
-          if (result.status !== 'success') {
-            this.append(input.id, 'tool.completed', {
-              toolCallId: call.id,
-              name: call.name,
-              result
-            })
-            throw new Error(`${title} failed; inspect its output before retrying`)
-          }
-          this.appendCallBySideKick(input.id, call, result)
-          messages.push(
-            {
-              role: 'assistant',
-              content: null,
-              tool_calls: [
-                {
-                  id: call.id,
-                  type: 'function',
-                  function: { name: 'shell', arguments: JSON.stringify(call.arguments) }
-                }
-              ]
-            },
-            { role: 'tool', tool_call_id: call.id, content: result.modelContent }
-          )
-        }
-      }
-    }
     // Files the user named come back as reads the model already made, so its first turn starts
     // from their contents instead of spending a round opening them. They run through the read
     // tool, which records the receipts an edit of those files needs.
@@ -1654,7 +1547,6 @@ The user approved this exact plan revision. Act capabilities are now available a
     const rememberedOutputLimit = learnedOutputLimits.get(learnedKey)
     if (rememberedOutputLimit) applyOutputLimit(rememberedOutputLimit)
     try {
-      await runProjectHooks(input.projectStartCommands, 'Project start hook')
       if (input.preloadReads?.length) await preloadReads(input.preloadReads)
       this.transition(started.id, 'streaming')
       while (!signal.aborted) {
@@ -2051,23 +1943,12 @@ The user approved this exact plan revision. Act capabilities are now available a
             ? await input.planController?.afterTerminalTurn()
             : undefined
         const planDecision = planningDecision ?? executionPlanDecision
-        const completionHooksPending =
-          !completionHooksRun &&
-          input.profile.executionMode === 'act' &&
-          input.profile.surface === 'conversation' &&
-          !input.goalController &&
-          (!input.planController || input.planController.stage() === 'inactive') &&
-          !turn.toolCalls.length &&
-          verificationDecision?.continue !== true &&
-          Boolean(input.projectCompletionCommands?.length) &&
-          Boolean(getAgentToolEntry(currentCatalog(input), 'shell'))
         if (verificationDecision) {
           this.append(input.id, 'verification.updated', {
             summary: verificationDecision.summary
           })
         }
         const provisional =
-          completionHooksPending ||
           needsResearchSource ||
           verificationDecision?.continue === true ||
           planDecision?.continue === true ||
@@ -2200,17 +2081,6 @@ The user approved this exact plan revision. Act capabilities are now available a
               separateNextTurn = true
               continue
             }
-          }
-          if (completionHooksPending) {
-            completionHooksRun = true
-            await runProjectHooks(input.projectCompletionCommands, 'Project completion hook')
-            messages.push({
-              role: 'user',
-              content:
-                'The approved completion hooks finished. Inspect their results, reverify any changed workspace state, then give the final response. Do not repeat the hooks.'
-            })
-            this.transition(input.id, 'streaming')
-            continue
           }
           // A message the user sent during this last turn deserves a reply of its own.
           if (this.hasPendingSteer(input.id)) continue

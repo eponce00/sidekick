@@ -7,7 +7,6 @@ import {
 import type Database from 'better-sqlite3'
 import { agentRunProfile, getAgentToolDefinitions } from '../../shared/agentToolCatalog'
 import { normalizeToolCallLimit } from '../../shared/agentLimits'
-import { projectHookCommands } from './projectHooks'
 import { imageContentType } from '../../shared/imageContent'
 import type { StartConversationAgentRunInput } from '../../shared/agentRunApi'
 import { effectivePermissionMode } from '../../shared/permissions'
@@ -1190,16 +1189,6 @@ export class ConversationRunPreparer {
         ?.levels[0],
       toolSession,
       kernelInput: {
-        projectStartCommands: projectHookCommands(
-          currentSettings.projectStartHooks,
-          workspaceRoot,
-          project.folders
-        ),
-        projectCompletionCommands: projectHookCommands(
-          currentSettings.projectCompletionHooks,
-          workspaceRoot,
-          project.folders
-        ),
         preloadReads: parseMessageContextAttachments(latestUserMessage?.attachments)
           .filter(isProjectContextAttachment)
           .filter((attachment) => attachment.kind === 'file')

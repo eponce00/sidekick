@@ -17,7 +17,6 @@ import {
 import { validateMessageImages } from '../../shared/messageImages'
 import { validateMessageContextAttachments } from '../../shared/messageContextAttachments'
 import type { ForkConversationInput } from '../../shared/projects'
-import { setupCreatedWorktree } from './worktreeSetup'
 import { getManagedWorktrees } from './worktrees'
 import type { ManagedWorktreeSummary } from '../../shared/worktrees'
 import { refreshSessionStatuses, sessionStatusService } from './sessionStatus'
@@ -108,7 +107,7 @@ export function registerDatabaseHandlers(): void {
     }
   )
 
-  ipcMain.handle('conversations:fork', async (event, input: ForkConversationInput) => {
+  ipcMain.handle('conversations:fork', async (_event, input: ForkConversationInput) => {
     if (
       !input ||
       typeof input.sourceId !== 'string' ||
@@ -244,21 +243,6 @@ export function registerDatabaseHandlers(): void {
       }
     }
 
-    if (createdWorktree && source.project_id) {
-      const sourceProject = db
-        .prepare('SELECT folder_path FROM projects WHERE id = ?')
-        .get(source.project_id) as { folder_path: string } | undefined
-      if (sourceProject) {
-        // The fork is already durable. Setup denial or failure must never undo it.
-        await setupCreatedWorktree(
-          event.sender,
-          sourceProject.folder_path,
-          createdWorktree.folderPath
-        ).catch(() => {
-          console.warn('[Worktrees] Setup could not finish; created fork preserved')
-        })
-      }
-    }
     return {
       id,
       title,

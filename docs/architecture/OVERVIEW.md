@@ -741,7 +741,7 @@ Occupancy claims the primary folder when a writing run starts and each other fol
 the run may change files there, so a busy folder refuses that change instead of the run. The shell
 starts in the primary folder; `cwd` may name another, `SIDEKICK_PROJECT_FOLDERS` lists them, and
 Docker isolation mounts each folder at `/workspace/<name>` when there are several
-(`sandboxFolderMounts`). Start and completion hooks may name any folder and run there. Worktrees
+(`sandboxFolderMounts`). Worktrees
 copy the primary folder's repository only: setting aside, restoring and removing several
 repositories' worktrees as one could not be made atomic, and a chat's branch, base and pull request
 are one repository's.
