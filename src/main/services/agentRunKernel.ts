@@ -1485,10 +1485,6 @@ The user approved this exact plan revision. Act capabilities are now available a
       activeRequest = { ...activeRequest, maxOutputTokens: limit }
     }
     let activeContextManager = input.contextManager
-    // The answer a verification request held back. When the pass that follows
-    // leaves the workspace as it was, that answer stays the response and the
-    // pass's closing reply is only a note on the verification.
-    let deferredAnswer: { content: string; contentBefore: string; revision: number } | undefined
 
     // Files the user named come back as reads the model already made, so its first turn starts
     // from their contents instead of spending a round opening them. They run through the read
@@ -1953,13 +1949,6 @@ The user approved this exact plan revision. Act capabilities are now available a
           verificationDecision?.continue === true ||
           planDecision?.continue === true ||
           Boolean(planDecision?.error)
-        const closesVerification = Boolean(deferredAnswer && !turn.toolCalls.length && !provisional)
-        // A reply that changed nothing is a note on the answer it followed. When that answer was
-        // empty (the model went straight to checking), the reply is the answer.
-        const verificationNote =
-          closesVerification &&
-          Boolean(deferredAnswer?.content.trim()) &&
-          verificationDecision?.summary.currentRevision === deferredAnswer?.revision
         this.append(input.id, 'assistant.completed', {
           content: projectedTurnContent,
           thinking: turn.thinking,
@@ -1977,8 +1966,7 @@ The user approved this exact plan revision. Act capabilities are now available a
           usage: turn.usage,
           ...(cutOff ? { outputLimit: cutOff } : {}),
           generationId: turn.generationId,
-          provisional,
-          ...(verificationNote ? { verificationNote: true } : {})
+          provisional
         })
         // The estimate beside the real count lets the next run start calibrated.
         this.append(input.id, 'usage.updated', {
@@ -2014,16 +2002,13 @@ The user approved this exact plan revision. Act capabilities are now available a
           }
         }
 
-        if (verificationNote && deferredAnswer) {
-          finalContent = deferredAnswer.contentBefore + deferredAnswer.content
-          finalThinking += turn.thinking
-        } else if (!provisional) {
+        // A reply a verification request held back is a draft: the pass's closing reply is the
+        // whole answer, so the user reads the answer last.
+        if (!provisional) {
           finalContent += projectedTurnContent
           finalThinking += turn.thinking
         }
-        const finalResponse =
-          verificationNote && deferredAnswer ? deferredAnswer.content : turn.content
-        if (closesVerification) deferredAnswer = undefined
+        const finalResponse = turn.content
 
         if (!turn.toolCalls.length) {
           if (planDecision?.error) throw new AgentToolLoopError(planDecision.error)
@@ -2044,11 +2029,6 @@ The user approved this exact plan revision. Act capabilities are now available a
             continue
           }
           if (verificationDecision?.continue) {
-            deferredAnswer = {
-              content: projectedTurnContent,
-              contentBefore: finalContent,
-              revision: verificationDecision.summary.currentRevision
-            }
             this.append(input.id, 'run.retrying', { reason: 'workspace_verification_required' })
             messages = [
               ...messages,
