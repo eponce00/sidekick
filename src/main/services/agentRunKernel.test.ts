@@ -1947,6 +1947,13 @@ describe('AgentRunKernel', () => {
     expect(segments.map(({ type }) => type)).toEqual(['tool', 'steer', 'text'])
   })
 
+  it('has the run in the store as soon as it starts, as the coordinator reads it then', async () => {
+    const kernel = new AgentRunKernel(store, undefined, sampledTurn({ content: 'Hi.' }))
+    const run = kernel.start(input())
+    expect(store.get('run-1')?.phase).toBeDefined()
+    await run
+  })
+
   it('answers a message steered during what would have been the final turn', async () => {
     const kernel: AgentRunKernel = new AgentRunKernel(store, undefined, (...args) =>
       sampler(...args)
