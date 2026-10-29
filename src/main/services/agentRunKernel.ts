@@ -651,24 +651,26 @@ export class AgentRunKernel {
   start(input: StartAgentKernelRunInput): Promise<AgentKernelRunResult> {
     if (this.active.has(input.id)) throw new Error(`Agent run is already active: ${input.id}`)
     const controller = new AbortController()
-    // The run starts once it is registered below, so a steer or stop that arrives during its first
-    // model request finds it.
-    const promise = Promise.resolve()
-      .then(() => this.execute(input, controller.signal))
-      .finally(() => {
-        if (this.active.get(input.id)?.controller === controller) this.active.delete(input.id)
-        try {
-          input.toolRouter.releaseRun?.(input.id)
-        } catch (error) {
-          console.warn('[AgentRun] Could not release what the run was given:', error)
-        }
-        // A message the run ended before taking stays with the caller, who sends it next.
-        this.steers.delete(input.id)
-        for (const [id, pending] of this.pendingResolvers) {
-          if (pending.runId === input.id) this.pendingResolvers.delete(id)
-        }
-      })
+    // The run is registered as active before it executes, so a steer or stop during its first model
+    // request finds it, and it executes at once, so it is in the store when this returns.
+    let execute!: (run: Promise<AgentKernelRunResult>) => void
+    const promise = new Promise<AgentKernelRunResult>((resolve) => {
+      execute = resolve
+    }).finally(() => {
+      if (this.active.get(input.id)?.controller === controller) this.active.delete(input.id)
+      try {
+        input.toolRouter.releaseRun?.(input.id)
+      } catch (error) {
+        console.warn('[AgentRun] Could not release what the run was given:', error)
+      }
+      // A message the run ended before taking stays with the caller, who sends it next.
+      this.steers.delete(input.id)
+      for (const [id, pending] of this.pendingResolvers) {
+        if (pending.runId === input.id) this.pendingResolvers.delete(id)
+      }
+    })
     this.active.set(input.id, { controller, promise })
+    execute(this.execute(input, controller.signal))
     return promise
   }
 
