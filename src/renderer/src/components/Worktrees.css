@@ -1,9 +1,10 @@
 /* Where a chat works: the bar above the composer, the busy-folder prompt and the worktree list. */
 
+/* On the composer's own width and inset, so the bar's edges are the message box's. */
 .workspace-bar-area {
-  width: min(100%, 960px);
+  width: min(100%, calc(var(--chat-content-max) + 2 * (var(--chat-gutter))));
   margin-inline: auto;
-  padding: var(--space-2) clamp(18px, 4vw, 40px) 0;
+  padding: var(--space-2) max(var(--space-2), calc(var(--chat-gutter) - var(--composer-bleed))) 0;
 }
 
 .workspace-bar {

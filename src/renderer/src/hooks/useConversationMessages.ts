@@ -15,8 +15,11 @@ export function useConversationMessages({
   setMessages: Dispatch<SetStateAction<Message[]>>
   messagesRef: MutableRefObject<Message[]>
   skipNextLoadRef: MutableRefObject<boolean>
+  /** This chat's saved messages are in; until then an empty list says nothing about the chat. */
+  loaded: boolean
 } {
   const [messages, setMessages] = useState<Message[]>([])
+  const [loadedFor, setLoadedFor] = useState<string | null>(null)
   const messagesRef = useRef<Message[]>([])
   const skipNextLoadRef = useRef(false)
 
@@ -32,6 +35,9 @@ export function useConversationMessages({
     }
     if (skipNextLoadRef.current) {
       skipNextLoadRef.current = false
+      queueMicrotask(() => {
+        if (!cancelled) setLoadedFor(conversationId)
+      })
       return () => {
         cancelled = true
       }
@@ -40,7 +46,9 @@ export function useConversationMessages({
     window.api.conversations
       .getMessages(conversationId)
       .then((loadedMessages) => {
-        if (!cancelled) setMessages(loadedMessages as Message[])
+        if (cancelled) return
+        setMessages(loadedMessages as Message[])
+        setLoadedFor(conversationId)
       })
       .catch((error) => console.error('Error loading messages:', error))
     return () => {
@@ -80,5 +88,11 @@ export function useConversationMessages({
     onCostUpdate?.(totalCost)
   }, [messages, onCostUpdate])
 
-  return { messages, setMessages, messagesRef, skipNextLoadRef }
+  return {
+    messages,
+    setMessages,
+    messagesRef,
+    skipNextLoadRef,
+    loaded: !conversationId || loadedFor === conversationId
+  }
 }

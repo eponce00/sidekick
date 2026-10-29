@@ -227,7 +227,13 @@ function ChatPanel({
   onReasoningLevelChange,
   onOpenConversation
 }: ChatPanelProps): React.JSX.Element {
-  const { messages, setMessages, messagesRef, skipNextLoadRef } = useConversationMessages({
+  const {
+    messages,
+    setMessages,
+    messagesRef,
+    skipNextLoadRef,
+    loaded: messagesLoaded
+  } = useConversationMessages({
     conversationId,
     onCostUpdate: onConversationCostUpdate
   })
@@ -1819,9 +1825,10 @@ function ChatPanel({
   )
 
   const isEmptyChat = messages.length === 0 && !familyRows.size
-  // Before the first message a chat can still choose where it works.
+  // Before the first message a chat can still choose where it works. A chat whose history is still
+  // loading is not empty yet.
   const canChooseWorkspace =
-    (Boolean(conversationId) || !projectId) && messages.length === 0 && !isLoading
+    (Boolean(conversationId) || !projectId) && messagesLoaded && messages.length === 0 && !isLoading
   const panel = (
     <div className="chat-panel">
       {familyRole === 'worker' && familySelf && chatFamily && (
