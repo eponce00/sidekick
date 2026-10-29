@@ -267,6 +267,9 @@ function icns(entries) {
   return Buffer.concat([head, ...chunks])
 }
 
+// Sizes drawn from the small cut; everything larger uses the master.
+const SMALL_CUT_MAX = 32
+
 // Names electron-builder's AppX target reads from build/appx. The icon fills a square tile with a
 // margin; wide tiles centre it. Tiles that show it under 64 px use the small cut.
 const STORE_ASSETS = [
@@ -275,11 +278,18 @@ const STORE_ASSETS = [
   { name: 'Square150x150Logo.png', width: 150, height: 150, scale: 0.7, cut: 'master' },
   { name: 'Wide310x150Logo.png', width: 310, height: 150, scale: 0.7, cut: 'master' },
   { name: 'LargeTile.png', width: 310, height: 310, scale: 0.7, cut: 'master' },
-  { name: 'SmallTile.png', width: 71, height: 71, scale: 0.8, cut: 'small' }
+  { name: 'SmallTile.png', width: 71, height: 71, scale: 0.8, cut: 'small' },
+  // The taskbar, Start's app list and Alt+Tab draw the 44 px logo on an accent-coloured plate
+  // unless the package has unplated sizes, which they show bare, like the installer's icon.
+  ...[16, 24, 32, 48, 256].map((size) => ({
+    name: `Square44x44Logo.targetsize-${size}_altform-unplated.png`,
+    width: size,
+    height: size,
+    scale: 1,
+    cut: size <= SMALL_CUT_MAX ? 'small' : 'master',
+    unplated: true
+  }))
 ]
-
-// Sizes drawn from the small cut; everything larger uses the master.
-const SMALL_CUT_MAX = 32
 
 function main() {
   const write = (relativePath, contents) => {
@@ -330,7 +340,7 @@ function main() {
     )
   )
   for (const asset of STORE_ASSETS) {
-    const svg = asset.cut === 'small' ? small : master
+    const svg = asset.unplated ? windowsSvg(asset.cut) : asset.cut === 'small' ? small : master
     write(`build/appx/${asset.name}`, renderPng(svg, asset.width, asset.height, asset.scale))
   }
 }
