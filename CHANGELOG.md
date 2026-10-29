@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.25.2 — 2026-10-29
+
+- Send a message without it failing with "Cannot read properties of null (reading 'phase')". In
+  0.25.1 a reply could fail with that error the moment it started, until you pressed Retry.
+- Read the answer last when SideKick checks its work. A reply used to end on the check's closing
+  line ("fixed it", "all fine"), with the real answer above it; the agent now finishes with its
+  full answer, and its first draft and the check fold into **Checks passed**.
+- Open a saved chat at its end. It showed its top for a moment and then scrolled down, and the
+  folder and worktree choice for a new chat flashed while its messages loaded. That choice now
+  matches the message box's width.
+
 ## 0.25.1 — 2026-10-29
 
 - Read long replies in full on the phone. The computer cut every reply it sent the phone to 4,000
