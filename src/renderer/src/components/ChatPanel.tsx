@@ -70,6 +70,7 @@ import {
 import { createConversationTitleMessages } from '../services/prompts'
 import { MAX_MESSAGE_IMAGES, type MessageImageAttachment } from '../../../shared/messageImages'
 import {
+  MAX_ATTACHED_FILE_BYTES,
   MAX_MESSAGE_CONTEXT_ATTACHMENTS,
   pastedTextBudget,
   createPastedTextAttachment,
@@ -80,6 +81,7 @@ import {
   isReviewCommentAttachment,
   type BrowserAnnotationAttachment,
   type MessageContextAttachment,
+  type ProjectContextAttachment,
   type ReviewCommentInput
 } from '../../../shared/messageContextAttachments'
 import { fileToMessageImage } from '../utils/messageImageAttachments'
@@ -1462,6 +1464,26 @@ function ChatPanel({
     return context.chatFolder ? context.workspaceRoot : null
   }
 
+  const addAttachedFiles = (attachments: ProjectContextAttachment[]): void => {
+    setAttachedContext((previous) => {
+      const pastedAndComments = previous.filter(
+        (attachment) => !isProjectContextAttachment(attachment)
+      )
+      const byPath = new Map(
+        previous
+          .filter(isProjectContextAttachment)
+          .map((attachment) => [attachment.relativePath, attachment])
+      )
+      for (const attachment of attachments) byPath.set(attachment.relativePath, attachment)
+      return [...byPath.values(), ...pastedAndComments].slice(0, MAX_MESSAGE_CONTEXT_ATTACHMENTS)
+    })
+    setAttachmentError(
+      attachedContext.length + attachments.length > MAX_MESSAGE_CONTEXT_ATTACHMENTS
+        ? `A message can contain up to ${MAX_MESSAGE_CONTEXT_ATTACHMENTS} attachments`
+        : null
+    )
+  }
+
   const addContextAttachments = async (): Promise<void> => {
     const folder = await attachmentFolder()
     if (!folder) {
@@ -1474,23 +1496,46 @@ function ChatPanel({
       return
     }
     if (result.canceled) return
-    setAttachedContext((previous) => {
-      const pastedAndComments = previous.filter(
-        (attachment) => !isProjectContextAttachment(attachment)
-      )
-      const byPath = new Map(
-        previous
-          .filter(isProjectContextAttachment)
-          .map((attachment) => [attachment.relativePath, attachment])
-      )
-      for (const attachment of result.attachments) byPath.set(attachment.relativePath, attachment)
-      return [...byPath.values(), ...pastedAndComments].slice(0, MAX_MESSAGE_CONTEXT_ATTACHMENTS)
-    })
-    setAttachmentError(
-      attachedContext.length + result.attachments.length > MAX_MESSAGE_CONTEXT_ATTACHMENTS
-        ? `A message can contain up to ${MAX_MESSAGE_CONTEXT_ATTACHMENTS} attachments`
-        : null
+    addAttachedFiles(result.attachments)
+  }
+
+  /** Dropped or pasted files: images go in the message when the model sees them, the rest as files. */
+  const addFiles = async (files: File[]): Promise<void> => {
+    const asImage = (file: File): boolean =>
+      visionAvailable &&
+      Boolean(selectedPinnedModel) &&
+      file.type.toLowerCase().startsWith('image/')
+    const images = files.filter(asImage)
+    const others = files.filter((file) => !asImage(file))
+    if (images.length) await addImageFiles(images)
+    if (!others.length) return
+    const tooLarge = others.find((file) => file.size > MAX_ATTACHED_FILE_BYTES)
+    if (tooLarge) {
+      setAttachmentError(`${tooLarge.name} is over 100 MB`)
+      return
+    }
+    const folder = await attachmentFolder()
+    if (!folder) {
+      setAttachmentError('Open a project before attaching files')
+      return
+    }
+    const dropped = await Promise.all(
+      others.slice(0, MAX_MESSAGE_CONTEXT_ATTACHMENTS).map(async (file) => ({
+        name: file.name,
+        path: window.api.workspace.pathForFile(file),
+        // A folder has no bytes to read; only one inside the project can be attached.
+        bytes: await file
+          .arrayBuffer()
+          .then((buffer) => new Uint8Array(buffer))
+          .catch(() => undefined)
+      }))
     )
+    const result = await window.api.workspace.attachFiles(folder, dropped)
+    if (!result.ok) {
+      setAttachmentError(result.error || 'Could not attach the files')
+      return
+    }
+    addAttachedFiles(result.attachments)
   }
 
   const addFileMention = (relativePath: string): void => {
@@ -2031,6 +2076,7 @@ function ChatPanel({
         modelMenuRef={modelMenuRef}
         onInputChange={setInputValue}
         onAddImageFiles={(files) => void addImageFiles(files)}
+        onAddFiles={(files) => void addFiles(files)}
         onAddContextAttachments={() => void addContextAttachments()}
         onAddFileMention={addFileMention}
         contextMeter={contextMeter}

@@ -18,7 +18,8 @@ import {
   rememberPickedFolder,
   setStoredWorkspace
 } from './workspaceUtils'
-import { chatIdForFolder, copyUploadIntoChatFolder } from '../services/chatFolders'
+import { chatIdForFolder } from '../services/chatFolders'
+import { saveUpload } from '../services/attachmentUploads'
 import { promises as fs } from 'fs'
 import { spawn } from 'child_process'
 import { randomUUID } from 'crypto'
@@ -64,6 +65,26 @@ async function listEveryFolder(workspaceRoot: string, glob: string): Promise<str
   return listed.flat()
 }
 
+/** A file or folder the user chose, as a reference into the project when it is inside it. */
+async function projectReference(
+  workspaceRoot: string,
+  chosenPath: string
+): Promise<ProjectContextAttachment | null> {
+  const canonicalPath = await fs.realpath(chosenPath)
+  // Any of the project's folders; the path then starts with that folder's name.
+  const relativePath = await projectPathForRealPath(workspaceRoot, canonicalPath)
+  if (!relativePath || locateWorkspacePath(workspaceRoot, relativePath).path === '') return null
+  const stat = await fs.stat(canonicalPath)
+  if (!stat.isFile() && !stat.isDirectory()) return null
+  return {
+    id: randomUUID(),
+    kind: stat.isDirectory() ? 'folder' : 'file',
+    name: basename(canonicalPath),
+    relativePath,
+    ...(stat.isFile() ? { size: stat.size } : {})
+  }
+}
+
 export function registerWorkspaceHandlers(): void {
   // Workspace: native folder picker
   ipcMain.handle('workspace:selectFolder', async (event) => {
@@ -86,44 +107,27 @@ export function registerWorkspaceHandlers(): void {
     try {
       const workspaceRoot = resolveKnownWorkspace(passedRoot)
       const win = BrowserWindow.fromWebContents(event.sender)
-      // A chat with no project takes files from anywhere, as copies in its own folder.
-      if (chatIdForFolder(workspaceRoot)) {
-        const uploadOptions: OpenDialogOptions = {
+      const inChatFolder = Boolean(chatIdForFolder(workspaceRoot))
+      // A chat with no project takes only files, as copies in its own folder.
+      let selectFolder = false
+      if (!inChatFolder) {
+        const choice = await showTrustedDialog(win, {
+          type: 'question' as const,
           title: 'Attach files',
-          defaultPath: app.getPath('documents'),
-          buttonLabel: 'Attach',
-          properties: ['openFile', 'multiSelections']
-        }
-        const selection = win
-          ? await dialog.showOpenDialog(win, uploadOptions)
-          : await dialog.showOpenDialog(uploadOptions)
-        if (selection.canceled || !selection.filePaths.length) {
-          return { ok: true, canceled: true, attachments: [] }
-        }
-        const attachments: ProjectContextAttachment[] = []
-        for (const selectedPath of selection.filePaths.slice(0, 12)) {
-          const copied = await copyUploadIntoChatFolder(workspaceRoot, selectedPath)
-          attachments.push({ id: randomUUID(), kind: 'file' as const, ...copied })
-        }
-        return { ok: true, canceled: false, attachments }
+          message: 'Choose files from anywhere, or one folder from this project',
+          detail:
+            'Project files and folders are read where they are. A file from elsewhere is copied into the project’s .sidekick/uploads folder, which git ignores.',
+          buttons: ['Choose files', 'Choose folder', 'Cancel'],
+          defaultId: 0,
+          cancelId: 2,
+          noLink: true
+        })
+        if (choice.response === 2) return { ok: true, canceled: true, attachments: [] }
+        selectFolder = choice.response === 1
       }
-      const choiceOptions = {
-        type: 'question' as const,
-        title: 'Attach project context',
-        message: 'Choose files or one folder from this project',
-        detail: 'SideKick stores project-relative references and reads them only when relevant.',
-        buttons: ['Choose files', 'Choose folder', 'Cancel'],
-        defaultId: 0,
-        cancelId: 2,
-        noLink: true
-      }
-      const choice = await showTrustedDialog(win, choiceOptions)
-      if (choice.response === 2) return { ok: true, canceled: true, attachments: [] }
-
-      const selectFolder = choice.response === 1
       const openOptions: OpenDialogOptions = {
-        title: selectFolder ? 'Attach a project folder' : 'Attach project files',
-        defaultPath: workspaceRoot,
+        title: selectFolder ? 'Attach a project folder' : 'Attach files',
+        defaultPath: inChatFolder ? app.getPath('documents') : workspaceRoot,
         buttonLabel: 'Attach',
         properties: selectFolder ? ['openDirectory'] : ['openFile', 'multiSelections']
       }
@@ -136,27 +140,49 @@ export function registerWorkspaceHandlers(): void {
 
       const attachments: ProjectContextAttachment[] = []
       for (const selectedPath of selection.filePaths.slice(0, 12)) {
-        const canonicalPath = await fs.realpath(selectedPath)
-        // Any of the project's folders; the path then starts with that folder's name.
-        const relativePath = await projectPathForRealPath(workspaceRoot, canonicalPath)
-        if (!relativePath || locateWorkspacePath(workspaceRoot, relativePath).path === '') {
-          throw new Error('Choose files or folders inside the current project')
+        const reference = inChatFolder ? null : await projectReference(workspaceRoot, selectedPath)
+        if (reference) attachments.push(reference)
+        else if (selectFolder) throw new Error('Choose a folder inside the current project')
+        else {
+          const saved = await saveUpload(workspaceRoot, { path: selectedPath })
+          attachments.push({ id: randomUUID(), kind: 'file' as const, ...saved })
         }
-        const stat = await fs.stat(canonicalPath)
-        if (selectFolder ? !stat.isDirectory() : !stat.isFile()) {
-          throw new Error(selectFolder ? 'Choose a project folder' : 'Choose project files')
-        }
-        attachments.push({
-          id: randomUUID(),
-          kind: selectFolder ? ('folder' as const) : ('file' as const),
-          name: basename(canonicalPath),
-          relativePath,
-          ...(stat.isFile() ? { size: stat.size } : {})
-        })
       }
       return { ok: true, canceled: false, attachments }
     } catch (error) {
       return { ok: false, canceled: false, attachments: [], error: (error as Error).message }
+    }
+  })
+
+  // Files dropped or pasted on the message box. A project file is read where it is; anything else
+  // comes as its bytes and is saved as a copy, so a path from the window is never read as such.
+  ipcMain.handle('workspace:attachFiles', async (_event, passedRoot: string, files: unknown) => {
+    try {
+      const workspaceRoot = resolveKnownWorkspace(passedRoot)
+      if (!Array.isArray(files)) throw new Error('Invalid files')
+      const inChatFolder = Boolean(chatIdForFolder(workspaceRoot))
+      const attachments: ProjectContextAttachment[] = []
+      for (const file of files.slice(0, 12) as Array<Record<string, unknown>>) {
+        const name = typeof file?.name === 'string' ? file.name : 'File'
+        const reference =
+          !inChatFolder && typeof file?.path === 'string' && file.path
+            ? await projectReference(workspaceRoot, file.path).catch(() => null)
+            : null
+        if (reference) attachments.push(reference)
+        else if (file?.bytes instanceof Uint8Array) {
+          const saved = await saveUpload(workspaceRoot, { name, bytes: file.bytes })
+          attachments.push({ id: randomUUID(), kind: 'file' as const, ...saved })
+        } else {
+          throw new Error(
+            inChatFolder
+              ? `${name} is a folder; attach the files in it`
+              : `${name} is a folder outside the project; attach a folder from inside it`
+          )
+        }
+      }
+      return { ok: true, attachments }
+    } catch (error) {
+      return { ok: false, attachments: [], error: (error as Error).message }
     }
   })
 

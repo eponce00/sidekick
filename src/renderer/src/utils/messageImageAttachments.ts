@@ -6,16 +6,6 @@ import {
   type MessageImageAttachment
 } from '../../../shared/messageImages'
 
-export function clipboardImageFiles(items: ArrayLike<DataTransferItem>): File[] {
-  const files: File[] = []
-  for (const item of Array.from(items)) {
-    if (item.kind !== 'file' || !item.type.toLowerCase().startsWith('image/')) continue
-    const file = item.getAsFile()
-    if (file) files.push(file)
-  }
-  return files
-}
-
 // Enough for any header, including a JPEG's EXIF block and embedded thumbnail.
 const HEADER_BYTES = 1024 * 1024
 

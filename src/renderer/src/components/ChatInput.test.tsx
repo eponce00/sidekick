@@ -45,6 +45,7 @@ function baseProps(overrides: Partial<ChatInputProps> = {}): ChatInputProps {
     modelMenuRef: createRef<HTMLDivElement>(),
     onInputChange: vi.fn(),
     onAddImageFiles: vi.fn(),
+    onAddFiles: vi.fn(),
     onAddContextAttachments: vi.fn(),
     onAddPastedText: vi.fn(),
     onInsertPastedText: vi.fn(),
@@ -201,7 +202,7 @@ describe('ChatInput long pastes', () => {
   function paste(text: string): Event {
     const event = new Event('paste', { bubbles: true, cancelable: true })
     Object.defineProperty(event, 'clipboardData', {
-      value: { items: [], getData: (type: string) => (type === 'text/plain' ? text : '') }
+      value: { files: [], getData: (type: string) => (type === 'text/plain' ? text : '') }
     })
     container.querySelector('textarea.message-input')!.dispatchEvent(event)
     return event

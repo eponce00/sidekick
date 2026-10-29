@@ -2455,6 +2455,12 @@ body.is-resizing-table {
     background-color var(--duration-fast);
 }
 
+/* Files held over the box: it takes them when they are let go. */
+.input-container.is-dropping {
+  border-color: var(--accent);
+  border-style: dashed;
+}
+
 .composer-image-input {
   display: none;
 }

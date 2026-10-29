@@ -120,18 +120,21 @@ of its report.
 - **Comments on changes:** in a reply's file changes, click a line number (shift-click to extend
   the range) and write a comment. It is attached to your next message as a card, with the file,
   the lines, and the quoted change, for the agent to act on.
-- **Images:** paste an image or choose one with **+**: PNG, JPEG, WebP, GIF, AVIF, or BMP, up to
+- **Images:** paste or drop an image on the message box, or choose one with **+**: PNG, JPEG, WebP, GIF, AVIF, or BMP, up to
   100 MB each and four per message. Size is not something to manage: the chat keeps the image as
   you attached it, and each model receives a copy made to fit what it takes, shrunk to its size
   and byte limits and converted when it cannot read the format. When the selected model will get a
   smaller copy, the image's tooltip says so. HEIC photos are not read yet; export them as JPEG.
-- **Files:** type `@` to pick a project file, from any of the project's folders. Its path goes
-  into the message and the file is attached; a file in another folder's path starts with that
-  folder's name. Attached files, up to four per message, are read before the agent starts, so its first
-  step already has their contents; the reads show in the reply like any other. In a chat without
-  a project, **+** → **Files** attaches files from anywhere on your computer, up to 100 MB each:
-  the chat keeps a copy in the `uploads` folder of its own folder, so the original is never
-  changed, and the copies go when the chat is deleted.
+- **Files:** drop files on the message box, paste them, or choose them with **+** → **Files**, from
+  anywhere on your computer, up to 100 MB each; an image goes as an image when the model can see
+  it. Type `@` to pick a project file, from any of the project's folders: its path goes into the
+  message and the file is attached; a file in another folder's path starts with that folder's
+  name. A project's own files and folders are read where they are. A file from elsewhere is
+  copied, so the original is never changed: a project keeps the copy in `.sidekick/uploads`, which
+  git ignores, and a chat without a project in the `uploads` folder of its own folder, where the
+  copies go when the chat is deleted. Up to four attached files per message are read before the
+  agent starts, so its first step already has their contents; the reads show in the reply like
+  any other.
 - **Commands:** type `/` for the message box's own commands, such as the model, plan, research, and
   goal, and for your saved prompts.
 - **Saved prompts:** a Markdown file in `.sidekick/prompts`, in the project or in your home folder,

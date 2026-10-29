@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { desktopPlatform } from '../shared/platform'
 import { isAppCommand } from '../shared/appCommands'
 import type { DesktopApi } from './api'
@@ -537,6 +537,11 @@ const api = {
     selectFolder: () => ipcRenderer.invoke('workspace:selectFolder'),
     selectContextAttachments: (workspaceRoot: string) =>
       ipcRenderer.invoke('workspace:selectContextAttachments', workspaceRoot),
+    attachFiles: (
+      workspaceRoot: string,
+      files: Array<{ name: string; path?: string; bytes?: Uint8Array }>
+    ) => ipcRenderer.invoke('workspace:attachFiles', workspaceRoot, files),
+    pathForFile: (file: File) => webUtils.getPathForFile(file),
     getPath: () => ipcRenderer.invoke('workspace:getPath'),
     getRules: (workspaceRoot?: string, scopeId?: string) =>
       ipcRenderer.invoke('workspace:getRules', workspaceRoot, scopeId),

@@ -267,6 +267,17 @@ interface WorkspaceAPI {
     attachments: import('../shared/messageContextAttachments').ProjectContextAttachment[]
     error?: string
   }>
+  /** Attaches dropped or pasted files: a project file by its path, anything else as a copy of its bytes. */
+  attachFiles: (
+    workspaceRoot: string,
+    files: Array<{ name: string; path?: string; bytes?: Uint8Array }>
+  ) => Promise<{
+    ok: boolean
+    attachments: import('../shared/messageContextAttachments').ProjectContextAttachment[]
+    error?: string
+  }>
+  /** Where a dropped file is on disk, or an empty string for one that is not a file there. */
+  pathForFile: (file: File) => string
   getPath: () => Promise<string | null>
   getRules: (
     workspaceRoot?: string,
