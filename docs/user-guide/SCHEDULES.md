@@ -112,7 +112,6 @@ run that fails or waits for you is announced the same way any chat's is.
 A scheduled run never writes into a folder where another chat's agent is writing. If the project is
 a Git repository, the run starts in a new worktree instead, and its history says so with the branch
 name. Otherwise the run is skipped, and its history says it was skipped because the folder was busy.
-Worktree setup hooks need your approval, so they do not run for a scheduled run's worktree.
 
 When every run slot is in use, a scheduled run waits its turn and shows as queued. The next
 occurrence is skipped while the previous run still waits for a slot.

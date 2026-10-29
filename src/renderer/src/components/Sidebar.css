@@ -309,13 +309,30 @@
   border-radius: var(--radius-md);
 }
 
-/* The phone row sits under the list with no band, on the list's own inline padding plus, on the
-   right, its 10px scrollbar gutter, so the row's dot lines up with the chats' dots above it. */
+/* The foot under the list, set off by a hairline: the phone row on the list's own inline padding,
+   and the installed version in short at the right. */
 .sidebar-footer {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  padding: 4px 17px 8px 7px;
+  gap: var(--space-2);
+  margin: 0 7px;
+  padding: 6px 10px 8px 0;
+  border-top: 1px solid var(--border-color);
+}
+
+.sidebar-footer > .sidebar-phone-row,
+.sidebar-footer-spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-version {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* The global New chat row above the tree: fixed while the list scrolls, inset like the list so
@@ -671,9 +688,43 @@
   opacity: 1;
 }
 
+/* A project's chats start on its name's edge, as Codex lists them, so every chat title in the
+   sidebar shares one left edge with the project names, New chat and Phone. */
 .project-conversations {
-  margin-left: var(--tree-indent);
+  margin-left: 0;
   padding-left: 0;
+}
+
+/* The chevron column is the project's own, so a row inside it that opens keeps its chevron in the
+   icon column. A scheduled group shows its icon there, and the chevron on hover or while open. */
+.project-conversations .conversation-item > .session-family-toggle,
+.project-conversations .scheduled-run-group-row > svg:first-child {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: start;
+}
+
+.project-conversations .scheduled-run-group-row > .scheduled-run-group-icon {
+  grid-row: 1;
+}
+
+.project-conversations
+  .scheduled-run-group-row:not(:hover, :focus-visible, [aria-expanded='true'])
+  > svg:first-child,
+.project-conversations
+  .scheduled-run-group-row:is(:hover, :focus-visible, [aria-expanded='true'])
+  > .scheduled-run-group-icon {
+  visibility: hidden;
+}
+
+/* A chat's workers hang from its chevron in the icon column, one step in from its title's edge. */
+.project-conversations .session-family-workers {
+  margin-left: 35px;
+  padding-left: 0;
+}
+
+.project-conversations .session-family-workers .conversation-item {
+  grid-template-columns: 0 23px minmax(0, 1fr) auto auto;
 }
 
 /* An empty project's placeholder: on the tree's grid, so its title shares the chats' size and

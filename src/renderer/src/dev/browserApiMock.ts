@@ -71,35 +71,6 @@ let previewBrowserNetwork = [
   { origin: 'http://rno-l-024:8080', approvedAt: Date.now() - 3_600_000 }
 ]
 
-const previewPermissionAudit = [
-  {
-    id: 'preview-audit-1',
-    timestamp: Date.now() - 120_000,
-    event: 'authorization' as const,
-    operationKind: 'workspace' as const,
-    title: 'Edit renderer settings layout and responsive styles',
-    requestedAccess: 'auto' as const,
-    effectiveAccess: 'auto' as const,
-    mode: 'sensitive-only' as const,
-    fingerprint: 'a16e436d5507c0209be6',
-    outcome: 'auto-approved' as const,
-    reason: 'The requested edit stays inside the active project workspace.'
-  },
-  {
-    id: 'preview-audit-2',
-    timestamp: Date.now() - 3_600_000,
-    event: 'authorization' as const,
-    operationKind: 'command' as const,
-    title: 'Install a system-level package with a deliberately long descriptive title',
-    requestedAccess: 'confirm' as const,
-    effectiveAccess: 'confirm' as const,
-    mode: 'always-ask' as const,
-    fingerprint: 'c7ff19767ad9bec4f14c',
-    outcome: 'denied' as const,
-    reason: 'The user declined this operation.'
-  }
-]
-
 const previewModels = [
   {
     id: 'ollama:qwen3:8b',
@@ -1348,8 +1319,7 @@ export function installBrowserApiMock(): void {
         approved: true,
         token: 'ui-preview',
         effectiveAccess: operation.requestedAccess
-      }),
-      listAudit: async () => previewPermissionAudit
+      })
     },
     browserNetwork: {
       list: async () => [...previewBrowserNetwork],

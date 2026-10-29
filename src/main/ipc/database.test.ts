@@ -9,8 +9,7 @@ const mocks = vi.hoisted(() => ({
   db: null as Database.Database | null,
   createWorktree: vi.fn(),
   discardFresh: vi.fn(),
-  discardWithUnusedChat: vi.fn(),
-  setupCreatedWorktree: vi.fn()
+  discardWithUnusedChat: vi.fn()
 }))
 
 vi.mock('electron', () => ({
@@ -32,7 +31,6 @@ vi.mock('./worktrees', () => ({
     worktreeIdFor: () => null
   })
 }))
-vi.mock('./worktreeSetup', () => ({ setupCreatedWorktree: mocks.setupCreatedWorktree }))
 
 import { registerDatabaseHandlers } from './database'
 
@@ -41,7 +39,6 @@ describe('conversation fork IPC', () => {
     mocks.handlers.clear()
     mocks.createWorktree.mockReset()
     mocks.discardFresh.mockReset()
-    mocks.setupCreatedWorktree.mockReset()
     mocks.db = new Database(':memory:')
     applyDatabaseSchema(mocks.db)
     registerDatabaseHandlers()
@@ -151,7 +148,7 @@ describe('conversation fork IPC', () => {
     expect(modelOf(forked.id)).toBe('ollama:ollama-local/qwen3:8b')
   })
 
-  it('preserves the committed fork and copied messages when worktree setup fails', async () => {
+  it('forks into its own new worktree in the source project, with the history copied', async () => {
     const insertProject = mocks.db!.prepare(
       `INSERT INTO projects (id, name, folder_path, created_at, updated_at)
        VALUES (?, ?, ?, 1, 1)`
@@ -181,49 +178,21 @@ describe('conversation fork IPC', () => {
         .run()
       return { id: 'fork-worktree', folderPath: '/fork-worktree' }
     })
-    let committedForkId: string | undefined
-    mocks.setupCreatedWorktree.mockImplementation(async () => {
-      // The external setup boundary must only run after the transaction commits.
-      expect(mocks.db!.inTransaction).toBe(false)
-      const persisted = mocks
-        .db!.prepare('SELECT id FROM conversations WHERE forked_from_conversation_id = ?')
-        .get('source') as { id: string } | undefined
-      expect(persisted).toBeDefined()
-      committedForkId = persisted?.id
-      expect(
-        mocks
-          .db!.prepare('SELECT content FROM messages WHERE conversation_id = ?')
-          .all(committedForkId)
-      ).toEqual([{ content: 'Keep this durable history' }])
-      throw new Error('Injected setup failure after durable fork')
+    const handler = mocks.handlers.get('conversations:fork') as RegisteredHandler
+    const forked = (await handler(
+      { sender: { id: 42 } },
+      { sourceId: 'source', workspaceMode: 'worktree' }
+    )) as { id: string; project_id: string }
+    // The fork stays in its project and works in its own new worktree.
+    expect(forked).toMatchObject({
+      project_id: 'source-project',
+      worktree_id: 'fork-worktree',
+      worktree_folder: '/fork-worktree'
     })
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    try {
-      const sender = { id: 42 }
-      const handler = mocks.handlers.get('conversations:fork') as RegisteredHandler
-      const forked = (await handler(
-        { sender },
-        { sourceId: 'source', workspaceMode: 'worktree' }
-      )) as { id: string; project_id: string }
-      // The fork stays in its project and works in its own new worktree.
-      expect(forked).toMatchObject({
-        id: committedForkId,
-        project_id: 'source-project',
-        worktree_id: 'fork-worktree',
-        worktree_folder: '/fork-worktree'
-      })
-      expect(mocks.setupCreatedWorktree).toHaveBeenCalledWith(
-        sender,
-        '/source-project',
-        '/fork-worktree'
-      )
-      expect(mocks.discardFresh).not.toHaveBeenCalled()
-      expect(
-        mocks.db!.prepare('SELECT content FROM messages WHERE conversation_id = ?').all(forked.id)
-      ).toEqual([{ content: 'Keep this durable history' }])
-    } finally {
-      warning.mockRestore()
-    }
+    expect(mocks.discardFresh).not.toHaveBeenCalled()
+    expect(
+      mocks.db!.prepare('SELECT content FROM messages WHERE conversation_id = ?').all(forked.id)
+    ).toEqual([{ content: 'Keep this durable history' }])
   })
 
   it('persists typed file and folder references and pasted text separately from visible message text', async () => {

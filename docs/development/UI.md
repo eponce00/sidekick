@@ -268,8 +268,12 @@ keep their terminal glyph; an agent session, which would otherwise share one gly
 other, draws its place in the list (1, 2, 3) in the glyph's slot, `--text-xs` 500 tabular figures
 in `--text-secondary`, `--text-primary` when selected.
 
-**Sidebar tree**: every row uses one grid, chevron and icon columns then the title and its meta,
-so titles at one depth share a left edge; each level is indented by `--tree-indent`. Every one-line
+**Sidebar tree**: every row uses one grid, chevron and icon columns then the title and its meta.
+A project's chats start on its name's edge, as Codex lists them, so every chat title, project
+name, New chat and Phone share one left edge. A row inside a project that opens keeps its chevron
+in the icon column, since the chevron column is the project's; a scheduled group shows its icon
+there and the chevron on hover or while open. Workers under their manager are indented one
+`--tree-indent`. Every one-line
 row (a project, a chat, a schedule, Phone, New chat) is one 32px pitch (`--sidebar-row-height`),
 with no margin between rows; the Files tree is denser, at `--work-row-height` (28px). Text sizes
 are the same in both. A manager's two-line row keeps its own height. Above the tree, fixed while it
@@ -414,8 +418,11 @@ Settings opens in the app's own shell: the title bar stays, with the robot and "
 breadcrumb slot in the chat's type (it belongs to no project, so it has no slash), and its navigation column is the sidebar's width
 (`--sidebar-width`) with the sidebar tree's inline padding, so no edge moves when it opens. Its
 rows' hover and selected tint is inset to the search field's edges above it, while their icons
-and labels keep the tree's positions. Back to app sits on the same grid, its 16px arrow in the
-icon column and its label on the labels' edge, so the column has one text edge.
+and labels keep the tree's positions. Back to app sits over the search field, its 16px arrow
+above the magnifier and its label on the search text's edge.
+
+The sidebar's foot sits under a `--border-color` hairline: the Phone row, and the installed
+version in short (`v0.25.0`) in `--text-muted` at the right.
 
 Settings pages are built from the blocks in `components/SettingsLayout.tsx`, so a new setting looks
 like the rest without new CSS:

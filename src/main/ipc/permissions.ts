@@ -1,8 +1,6 @@
 import { ipcMain } from 'electron'
 import type { PermissionOperation } from '../../shared/permissions'
-import { listAgentPermissionAudit } from '../services/agentPermissionAudit'
 import { permissionBroker } from '../services/permissionBroker'
-import { getDb } from './state'
 
 function validateOperation(value: unknown): value is PermissionOperation {
   if (!value || typeof value !== 'object') return false
@@ -32,9 +30,4 @@ export function registerPermissionHandlers(): void {
     }
     return permissionBroker.authorize(operation, event.sender)
   })
-  ipcMain.handle('permissions:listAudit', () =>
-    [...permissionBroker.listAudit(), ...listAgentPermissionAudit(getDb())]
-      .sort((left, right) => left.timestamp - right.timestamp)
-      .slice(-500)
-  )
 }

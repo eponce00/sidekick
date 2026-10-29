@@ -386,8 +386,7 @@ const api = {
   },
   permissions: {
     authorize: (operation: import('../shared/permissions').PermissionOperation) =>
-      ipcRenderer.invoke('permissions:authorize', operation),
-    listAudit: () => ipcRenderer.invoke('permissions:listAudit')
+      ipcRenderer.invoke('permissions:authorize', operation)
   },
   browserNetwork: {
     list: () => ipcRenderer.invoke('browserNetwork:list'),

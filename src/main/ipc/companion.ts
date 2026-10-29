@@ -355,7 +355,7 @@ function companionServer(): CompanionServer {
     canUseWorktree: async (projectId) =>
       (await getManagedWorktrees().branchOptions(projectId)).isGitRepository,
     createWorktree: async (conversationId) => {
-      await createChatWorktree(mainWindowContents(), { conversationId })
+      await createChatWorktree({ conversationId })
     },
     restoreFiles,
     chatChanged: (conversationId, removed) => {

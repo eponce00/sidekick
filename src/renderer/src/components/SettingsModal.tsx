@@ -48,9 +48,7 @@ import { applyAccentPalette } from '../constants/accentPalettes'
 import { CommandLineToolSettings } from './CommandLineToolSettings'
 import { CredentialSettings } from './CredentialSettings'
 import { McpServerSettings } from './McpServerSettings'
-import { PermissionAuditPanel } from './PermissionAuditPanel'
 import { ProviderSettingsPanel } from './ProviderSettingsPanel'
-import { ProjectHooksPanel } from './ProjectHooksPanel'
 import { BrowserNetworkSettings } from './BrowserNetworkSettings'
 import { BrowserLibrarySettings } from './BrowserLibrarySettings'
 import { AppUpdateSettings, AppVersionButton } from './AppUpdateControls'
@@ -559,8 +557,8 @@ function SettingsModal({
             />
             <SettingsRow
               icon={FileCode2}
-              label="Python for Office documents"
-              description="Optional. Lets the Word, Excel, and PowerPoint skills check documents with this Python. It only reads, never installs anything, and is off when commands run in Docker."
+              label="Python for checking Office files"
+              description="Optional. After the agent makes a Word, Excel, or PowerPoint file, SideKick can open it with this Python to make sure it isn't broken. Pick a Python that already has lxml; SideKick installs nothing. Not used when commands run in Docker."
               stacked
               control={
                 <span className="settings-inline-field">
@@ -614,27 +612,9 @@ function SettingsModal({
                 </span>
               }
             />
-            <PermissionAuditPanel />
           </SettingsSection>
           <BrowserNetworkSettings />
           <BrowserLibrarySettings />
-          <ProjectHooksPanel
-            hooks={{
-              start: settings.projectStartHooks ?? [],
-              completion: settings.projectCompletionHooks ?? [],
-              worktree: settings.projectWorktreeHooks ?? []
-            }}
-            onChange={(stage, hooks) =>
-              setSettings({
-                ...settings,
-                ...(stage === 'start'
-                  ? { projectStartHooks: hooks }
-                  : stage === 'completion'
-                    ? { projectCompletionHooks: hooks }
-                    : { projectWorktreeHooks: hooks })
-              })
-            }
-          />
         </div>
       )
     }

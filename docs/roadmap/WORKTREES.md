@@ -117,9 +117,6 @@ last chat is deleted. Still open:
 
 - **Archive.** Chats can be archived in the main process but not yet from the interface. Archiving
   should set its worktree aside at once, as deleting the chat removes it.
-- **Setup on restore.** Restoring does not rerun the project's worktree setup hooks, which need
-  per-command approval, so ignored files such as installed dependencies come back only when the
-  agent reinstalls them.
 - **Git worktree locks** (Claude Code): `git worktree lock` while an agent runs, so tools outside
   SideKick cannot prune a worktree in use.
 - **Fresh base by default** (Claude Code, Conductor): optionally fetch the remote default branch,
@@ -131,7 +128,5 @@ last chat is deleted. Still open:
   to the user or the agent; a one-click flow would pair with the Git status bar.
 - **Settings.** The number kept on disk (15) and the worktree location are fixed. Claude Code and
   Codex make them configurable.
-- **Per-worktree environment** (Conductor): pass the worktree path, name and a free port range to
-  setup hooks so parallel dev servers do not collide.
 - **Concurrent writes inside one worktree.** "Work here anyway" relies on the transactional mutation
   service's per-workspace serialization and conflict checks; it does not merge two agents' intent.

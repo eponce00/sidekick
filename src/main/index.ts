@@ -19,7 +19,6 @@ import { appState } from './ipc/state'
 import { activeAgentConversationCount, shutdownAgentRuntime } from './ipc/agentRuns'
 import { setCompanionVoice, shutdownCompanion } from './ipc/companion'
 import { sessionStatusService } from './ipc/sessionStatus'
-import { shutdownWorktreeSetup } from './ipc/worktreeSetup'
 import { shutdownUserTerminals } from './ipc/userTerminals'
 import { registerAppUpdateHandlers } from './ipc/appUpdates'
 import {
@@ -78,8 +77,7 @@ function prepareApplicationShutdown(): Promise<void> {
     stopControlEndpoint?.(),
     shutdownCompanion(),
     shutdownAgentRuntime(),
-    closeMcpConnections(),
-    shutdownWorktreeSetup()
+    closeMcpConnections()
   ]).then((results) => {
     for (const result of results) {
       if (result.status === 'rejected') console.error('[Shutdown] Cleanup failed:', result.reason)

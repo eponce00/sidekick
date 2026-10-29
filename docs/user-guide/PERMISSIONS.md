@@ -109,8 +109,8 @@ mismatched operations are rejected.
 
 Settings → Agent → Permissions → **Where commands run** offers **In a Docker container**, a
 Linux container with no network. This is opt-in; the default remains **On this computer**.
-Switching back to this computer requires a trusted confirmation. Isolation applies to shell commands, including project
-start hooks, not to browser, language-server, MCP, or other host processes.
+Switching back to this computer requires a trusted confirmation. Isolation applies to shell commands, not to browser,
+language-server, MCP, or other host processes.
 
 Install Docker with a local Linux-container daemon and explicitly pull the pinned image:
 
@@ -133,7 +133,5 @@ remains pending. This is command isolation, not a claim that the entire harness 
 ## Audit records
 
 Kernel decisions live in `agent_run_events`; broker authorization/consumption records live in the
-settings store. Settings projects the latest 500 entries from both authoritative sources into one
-chronological audit. Each row includes operation kind/title, requested/effective access, active
-mode, a safe operation fingerprint, outcome, timestamp, and failure reason when applicable. The
-latest records are under Settings → Agent → Permissions → **Recent approvals**.
+settings store. Each record includes operation kind/title, requested/effective access, active mode,
+a safe operation fingerprint, outcome, timestamp, and failure reason when applicable.

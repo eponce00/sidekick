@@ -358,30 +358,6 @@ test(
         })
       }
 
-      await page.getByRole('button', { name: /^Agent/ }).click()
-      const projectHooks = page.locator('section.settings-card').filter({
-        has: page.getByRole('heading', { name: 'Project hooks', exact: true })
-      })
-      for (const moment of ['Before the final answer', 'After creating a worktree']) {
-        // SideKick's dropdown opens a list of options instead of a native select.
-        await projectHooks.getByRole('combobox', { name: 'When' }).click()
-        await page.getByRole('option', { name: moment, exact: true }).click()
-        await projectHooks.getByRole('textbox', { name: 'Hook project folder' }).fill(profile)
-        await projectHooks.getByRole('textbox', { name: 'Hook command' }).fill('echo fixture-only')
-        await projectHooks.getByRole('button', { name: 'Add hook', exact: true }).click()
-        const hook = projectHooks.locator('li.project-hook')
-        assert.equal(await hook.count(), 1)
-        // Adding a hook never runs anything until it is switched on.
-        assert.equal(await hook.getByRole('checkbox').isChecked(), false)
-        assert.equal(
-          await hook.locator('.project-hook-stage').textContent(),
-          moment,
-          `${moment} hook is listed under its moment`
-        )
-        await hook.getByRole('button', { name: 'Remove hook' }).click()
-        assert.equal(await projectHooks.locator('li.project-hook').count(), 0)
-      }
-
       await page.getByRole('button', { name: /^Providers/ }).click()
       await waitForVisible(page.getByRole('heading', { name: 'Providers' }), 'provider settings')
       await waitForVisible(page.getByRole('heading', { name: 'Add a provider' }), 'provider picker')
