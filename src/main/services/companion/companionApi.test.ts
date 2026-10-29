@@ -1,6 +1,10 @@
 import Database from 'better-sqlite3'
 import { describe, expect, it, vi } from 'vitest'
-import type { AgentRunSnapshot, PendingAgentInteraction } from '../../../shared/agentRuntime'
+import type {
+  AgentRunEvent,
+  AgentRunSnapshot,
+  PendingAgentInteraction
+} from '../../../shared/agentRuntime'
 import type { PinnedModel } from '../../../shared/models'
 import { applyDatabaseSchema } from '../../bootstrap/database'
 import { createConversation } from '../conversationCreation'
@@ -8,6 +12,8 @@ import { PromptAdmissionStore } from '../promptAdmissionStore'
 import {
   CompanionApi,
   pcm16Base64,
+  eventsForPhone,
+  segmentsForPhone,
   trimForPhone,
   type CompanionApiDependencies,
   type CompanionVoice
@@ -940,6 +946,31 @@ describe('CompanionApi', () => {
     const bytes = Buffer.from(pcm16Base64(new Float32Array([0, 1, -1, 2])), 'base64')
     expect([0, 1, 2, 3].map((index) => bytes.readInt16LE(index * 2))).toEqual([
       0, 32767, -32768, 32767
+    ])
+  })
+
+  it('sends a long reply whole while still cutting what tools carry', () => {
+    const long = 'x'.repeat(5_000)
+    const event = (sequence: number, type: string, payload: Record<string, unknown>) =>
+      ({ id: `e${sequence}`, runId: 'r', sequence, type, timestamp: 0, payload }) as AgentRunEvent
+    const events = eventsForPhone([
+      ...Array.from({ length: 300 }, (_, index) =>
+        event(index + 1, 'assistant.delta', { content: 'a' })
+      ),
+      event(301, 'assistant.completed', { content: long, images: [1] }),
+      event(302, 'tool.completed', { output: long })
+    ])
+    expect(events).toHaveLength(302)
+    expect(events[300].payload).toEqual({ content: long })
+    expect(events[301].payload.output).toBe(`${'x'.repeat(4_000)}… (shortened)`)
+    expect(
+      segmentsForPhone([
+        { type: 'text', content: long },
+        { type: 'tool', tool: { result: long } }
+      ])
+    ).toEqual([
+      { type: 'text', content: long },
+      { type: 'tool', tool: { result: `${'x'.repeat(4_000)}… (shortened)` } }
     ])
   })
 
