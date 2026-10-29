@@ -175,9 +175,22 @@ function workspaceSection(input: PromptComposerInput): string {
 This chat has no project. It works in a folder of its own: \`${input.project.workspaceRoot}\`. Make the files the user asks for there, and use it for downloads and working files; it stays with the chat and is deleted with it. The user sees the folder only if they open it, so name the files you made and where they are. ${mutationGuidance} A mutation is successful only when its tool result says ok=true and changed=true. Paths outside the folder are refused; when the work needs one of the user's folders, tell them they can move this chat into a project for it.`
   }
   return `## Active project
-Workspace root: \`${input.project.workspaceRoot}\`
+Workspace root: \`${input.project.workspaceRoot}\`${projectFoldersGuidance(input)}
 
 Treat this folder as the conversation's durable working context. Read the relevant existing content before editing it. ${mutationGuidance} A mutation is successful only when its tool result says ok=true and changed=true; never treat a completed tool call alone as proof that a file changed. Never delete a file merely to recreate or rewrite the same path; deletion is only for a file whose intended final state is absent. Preserve unrelated user changes. Verify meaningful changes with the narrowest relevant checks.${worktreeGuidance(input)}`
+}
+
+/** The project's other folders, by the names its paths use for them. */
+function projectFoldersGuidance(input: PromptComposerInput): string {
+  const folders = input.project.folders ?? []
+  if (!folders.length) return ''
+  const list = folders.map(({ name, path }) => `- \`${name}\`: \`${path}\``).join('\n')
+  const [example] = folders
+  return `
+Other folders of this project:
+${list}
+
+Relative paths mean the workspace root. A path in another folder starts with its name, as \`${example.name}/README.md\`; an absolute path inside a folder works too. File tools read and edit every folder the same way. Commands start in the workspace root; set the shell's cwd to a folder's name, such as \`${example.name}\`, to run one there. Each folder that is a Git repository has its own branches and history. Its own instructions arrive the first time you use it.`
 }
 
 /** Where a chat's own worktree came from, so Git's one-folder-per-branch rule does not surprise the agent. */

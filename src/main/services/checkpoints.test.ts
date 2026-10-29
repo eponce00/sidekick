@@ -14,11 +14,14 @@ import {
   deleteShadowRepo,
   initShadowRepo,
   recoverInterruptedCheckpointCaptures,
-  rewindToBeforeCheckpoint,
-  rewindWorkspacesToBeforeCheckpoints
+  restoreWorkspaceHistory
 } from './checkpoints'
 
 const execFileAsync = promisify(execFile)
+
+/** One folder back to before a point, as the window's Undo does it. */
+const rewindBefore = (workspaceRoot: string, hash: string) =>
+  restoreWorkspaceHistory([{ workspaceRoot, hashes: [hash] }])
 
 async function write(path: string, content: string): Promise<void> {
   await fs.mkdir(join(path, '..'), { recursive: true })
@@ -91,9 +94,9 @@ describe('private SideKick workspace history', () => {
     expect(checkpoint).toMatchObject({ changeCount: 1, captureVersion: 2 })
     await write(join(workspace, 'manual-after.txt'), 'keep me\n')
 
-    const result = await rewindToBeforeCheckpoint(workspace, checkpoint!.hash)
+    const result = await rewindBefore(workspace, checkpoint!.hash)
 
-    expect(result).toMatchObject({ ok: true, changedFiles: 1, parentHash: null })
+    expect(result).toMatchObject({ ok: true, workspaces: [{ changedFiles: 1, nextRef: null }] })
     expect(await fs.readFile(join(workspace, 'agent.txt'), 'utf8')).toBe('before\n')
     expect(await fs.readFile(join(workspace, 'manual-before.txt'), 'utf8')).toBe('manual work\n')
     expect(await fs.readFile(join(workspace, 'manual-after.txt'), 'utf8')).toBe('keep me\n')
@@ -127,10 +130,12 @@ describe('private SideKick workspace history', () => {
     })
     await write(join(workspace, 'two.txt'), 'manual later\n')
 
-    const result = await rewindToBeforeCheckpoint(workspace, hash)
+    const result = await rewindBefore(workspace, hash)
 
-    expect(result.ok).toBe(false)
-    expect(result.conflicts).toContainEqual({ path: 'two.txt', reason: 'changed-after' })
+    expect(result).toMatchObject({
+      ok: false,
+      conflicts: [expect.objectContaining({ path: 'two.txt', reason: 'changed-after' })]
+    })
     expect(await fs.readFile(join(workspace, 'one.txt'), 'utf8')).toBe('agent one\n')
     expect(await fs.readFile(join(workspace, 'two.txt'), 'utf8')).toBe('manual later\n')
   })
@@ -148,10 +153,12 @@ describe('private SideKick workspace history', () => {
     await execFileAsync('git', ['-C', workspace, 'add', 'agent.txt'])
     const stagedBefore = (await execFileAsync('git', ['-C', workspace, 'diff', '--cached'])).stdout
 
-    const result = await rewindToBeforeCheckpoint(workspace, hash)
+    const result = await rewindBefore(workspace, hash)
 
-    expect(result.ok).toBe(false)
-    expect(result.conflicts).toContainEqual({ path: 'agent.txt', reason: 'staged-in-git' })
+    expect(result).toMatchObject({
+      ok: false,
+      conflicts: [expect.objectContaining({ path: 'agent.txt', reason: 'staged-in-git' })]
+    })
     expect((await execFileAsync('git', ['-C', workspace, 'diff', '--cached'])).stdout).toBe(
       stagedBefore
     )
@@ -171,9 +178,9 @@ describe('private SideKick workspace history', () => {
     const second = (await createCheckpoint(secondWorkspace, 'Agent B', secondCapture))!
     await write(join(secondWorkspace, 'state.txt'), 'manual b\n')
 
-    const result = await rewindWorkspacesToBeforeCheckpoints([
-      { workspaceRoot: workspace, checkpointHash: first.hash },
-      { workspaceRoot: secondWorkspace, checkpointHash: second.hash }
+    const result = await restoreWorkspaceHistory([
+      { workspaceRoot: workspace, hashes: [first.hash] },
+      { workspaceRoot: secondWorkspace, hashes: [second.hash] }
     ])
 
     expect(result).toMatchObject({
@@ -192,19 +199,50 @@ describe('private SideKick workspace history', () => {
     // Neither timeline moved, so once the conflict is gone both rewind together.
     await write(join(secondWorkspace, 'state.txt'), 'agent b\n')
     expect(
-      await rewindWorkspacesToBeforeCheckpoints([
-        { workspaceRoot: workspace, checkpointHash: first.hash },
-        { workspaceRoot: secondWorkspace, checkpointHash: second.hash }
+      await restoreWorkspaceHistory([
+        { workspaceRoot: workspace, hashes: [first.hash] },
+        { workspaceRoot: secondWorkspace, hashes: [second.hash] }
       ])
     ).toMatchObject({ ok: true })
     expect(await fs.readFile(join(workspace, 'state.txt'), 'utf8')).toBe('before a\n')
     expect(await fs.readFile(join(secondWorkspace, 'state.txt'), 'utf8')).toBe('before b\n')
-    await expect(rewindToBeforeCheckpoint(workspace, first.hash)).rejects.toThrow(
-      'History point not found'
-    )
-    await expect(rewindToBeforeCheckpoint(secondWorkspace, second.hash)).rejects.toThrow(
-      'History point not found'
-    )
+    // Both points are undone now, so nothing is left to take back.
+    expect(await rewindBefore(workspace, first.hash)).toEqual({ ok: true, workspaces: [] })
+    expect(await rewindBefore(secondWorkspace, second.hash)).toEqual({ ok: true, workspaces: [] })
+  })
+
+  it('rewinds each folder before its earliest point still in History, passing over undone ones', async () => {
+    // Reply 1 changed the other folder and was undone; reply 2 changed both. Going back to before
+    // reply 1's message takes back reply 2 in both folders, and nothing of reply 1 twice.
+    const other = join(testRoot, 'other-folder')
+    await fs.mkdir(other, { recursive: true })
+    await write(join(workspace, 'app.txt'), 'start\n')
+    await write(join(other, 'lib.txt'), 'start\n')
+    const firstCapture = await beginCheckpointCapture(other, 'chat', 'reply-1')
+    await write(join(other, 'lib.txt'), 'first\n')
+    const first = (await createCheckpoint(other, 'First reply', firstCapture))!
+    expect(await rewindBefore(other, first.hash)).toMatchObject({ ok: true })
+    const primaryCapture = await beginCheckpointCapture(workspace, 'chat', 'reply-2')
+    const otherCapture = await beginCheckpointCapture(other, 'chat', 'reply-2')
+    await write(join(workspace, 'app.txt'), 'second\n')
+    await write(join(other, 'lib.txt'), 'second\n')
+    const primaryPoint = (await createCheckpoint(workspace, 'Second reply', primaryCapture))!
+    const otherPoint = (await createCheckpoint(other, 'Second reply', otherCapture))!
+
+    const result = await restoreWorkspaceHistory([
+      { workspaceRoot: workspace, hashes: [primaryPoint.hash] },
+      { workspaceRoot: other, hashes: [first.hash, otherPoint.hash] }
+    ])
+
+    expect(result).toMatchObject({ ok: true })
+    expect(await fs.readFile(join(workspace, 'app.txt'), 'utf8')).toBe('start\n')
+    expect(await fs.readFile(join(other, 'lib.txt'), 'utf8')).toBe('start\n')
+    // Nothing is left to take back, so a second rewind changes nothing.
+    expect(
+      await restoreWorkspaceHistory([
+        { workspaceRoot: other, hashes: [first.hash, otherPoint.hash] }
+      ])
+    ).toEqual({ ok: true, workspaces: [] })
   })
 
   it('migrates the obsolete in-project store without deleting project rules', async () => {

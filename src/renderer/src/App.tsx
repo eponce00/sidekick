@@ -14,6 +14,7 @@ import { useSchedules } from './hooks/useSchedules'
 import { AppUpdateToast } from './components/AppUpdateControls'
 import { ForkConversationDialog } from './components/ForkConversationDialog'
 import { WorktreesDialog } from './components/WorktreesDialog'
+import { EditProjectDialog } from './components/EditProjectDialog'
 import { AppMenuHost } from './components/AppMenuHost'
 import { useManagedWorktrees } from './hooks/useManagedWorktrees'
 import { useChatFolder } from './hooks/useChatFolder'
@@ -205,6 +206,7 @@ function App(): React.JSX.Element {
     (conversation) => conversation.id === currentConversationId
   )
   const [isSchedulesOpen, setIsSchedulesOpen] = useState(false)
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
   const [focusChainTodosByConversation, setFocusChainTodosByConversation] = useState<
     Record<string, TodoItem[]>
   >({})
@@ -1064,7 +1066,10 @@ function App(): React.JSX.Element {
             else void handleNewConversation(projectId)
           },
           manageWorktrees: () =>
-            setWorktreesDialog({ focusWorktreeId: currentConversation?.worktree_id ?? null })
+            setWorktreesDialog({ focusWorktreeId: currentConversation?.worktree_id ?? null }),
+          ...(currentConversation?.project_id
+            ? { editProject: () => setEditingProjectId(currentConversation.project_id) }
+            : {})
         }
       })
     : []
@@ -1286,6 +1291,7 @@ function App(): React.JSX.Element {
     [conversations]
   )
   const activeProject = projectById(currentConversation?.project_id)
+  const editingProject = editingProjectId ? projectById(editingProjectId) : undefined
   const titleBarContext = currentConversationId
     ? currentConversation?.title || 'Conversation'
     : null
@@ -1348,6 +1354,7 @@ function App(): React.JSX.Element {
             ) : null
           }
           workspaceFolder={conversationFolder(conversation)}
+          projectFolders={panelProject?.folders}
           projectName={panelProject?.name ?? null}
           projectId={panelProject?.id ?? null}
           worktree={
@@ -1551,6 +1558,7 @@ function App(): React.JSX.Element {
           onToggleConversationPin={(id, pinned) => void handleToggleConversationPin(id, pinned)}
           onToggleProjectPin={(id, pinned) => void handleToggleProjectPin(id, pinned)}
           onRemoveProject={(id) => void handleRemoveProject(id)}
+          onEditProject={setEditingProjectId}
           onVisibleConversationOrderChange={handleSidebarOrderChange}
           scheduleNames={scheduleNames}
           onOpenSchedules={() => setIsSchedulesOpen(true)}
@@ -1612,6 +1620,30 @@ function App(): React.JSX.Element {
           isAgentBusy={isAgentBusy}
         />
       </main>
+
+      {editingProject && (
+        <EditProjectDialog
+          project={editingProject}
+          busy={conversations.some(
+            (conversation) =>
+              conversation.project_id === editingProject.id &&
+              runningConversationIds.has(conversation.id)
+          )}
+          onClose={() => setEditingProjectId(null)}
+          onSaved={(saved) => {
+            setProjects((current) =>
+              current.map((project) =>
+                project.id === saved.id ? { ...project, ...saved } : project
+              )
+            )
+            // A new primary folder moves the project's chats with it.
+            void window.api.conversations.list().then(setConversations)
+            if (currentConversation?.project_id === saved.id && !currentConversation.worktree_id) {
+              void window.api.workspace.setPath(saved.folder_path)
+            }
+          }}
+        />
+      )}
 
       {isSchedulesOpen && (
         <SchedulesDialog

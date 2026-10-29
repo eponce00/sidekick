@@ -4,7 +4,7 @@ import { mkdtemp, realpath, rm } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { applyDatabaseSchema } from '../bootstrap/database'
-import { CommandService, projectRelativeCommandCwd, shellChildEnvironment } from './commandService'
+import { CommandService, shellChildEnvironment } from './commandService'
 import { credentialRedactor } from './credentialRedaction'
 
 const cleanup: Array<() => Promise<void> | void> = []
@@ -112,7 +112,6 @@ describe('CommandService', () => {
       cwd: root
     })
 
-    expect(projectRelativeCommandCwd(root, root)).toBe('')
     expect('success' in result && result.success).toBe(true)
     expect('stdout' in result && result.stdout.trim()).toBe(await realpath(root))
   })

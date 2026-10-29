@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import type { AgentArtifactDraft } from '../../shared/agentRunApi'
+import type { ProjectHookCommand } from './projectHooks'
 import {
   AgentToolLoopError,
   classifyAgentKernelFailure,
@@ -278,8 +279,8 @@ const PROVIDER_RETRY_AFTER_LIMIT_MS = 60_000
 
 export interface StartAgentKernelRunInput extends StartAgentRunInput {
   /** App-settings snapshot, never model/repository-discovered commands. Always requires approval. */
-  projectStartCommands?: string[]
-  projectCompletionCommands?: string[]
+  projectStartCommands?: ProjectHookCommand[]
+  projectCompletionCommands?: ProjectHookCommand[]
   /** Project files the user named in the message, read before the model's first turn. */
   preloadReads?: string[]
   catalog: AgentToolCatalogOptions | (() => AgentToolCatalogOptions)
@@ -1491,7 +1492,7 @@ The user approved this exact plan revision. Act capabilities are now available a
     let deferredAnswer: { content: string; contentBefore: string; revision: number } | undefined
 
     const runProjectHooks = async (
-      commands: string[] | undefined,
+      commands: ProjectHookCommand[] | undefined,
       title: string
     ): Promise<void> => {
       if (
@@ -1500,8 +1501,13 @@ The user approved this exact plan revision. Act capabilities are now available a
       ) {
         // Snapshot before waiting for approval; changes to settings cannot replace reviewed commands.
         const hooks = [...(commands ?? [])].slice(0, 10)
-        for (const command of hooks) {
-          const call: AgentToolCall = { id: randomUUID(), name: 'shell', arguments: { command } }
+        for (const { command, cwd } of hooks) {
+          // A hook set on another of the project's folders runs in that folder.
+          const call: AgentToolCall = {
+            id: randomUUID(),
+            name: 'shell',
+            arguments: { command, ...(cwd ? { cwd } : {}) }
+          }
           const startedAt = Date.now()
           this.append(input.id, 'tool.pending', {
             toolCallId: call.id,

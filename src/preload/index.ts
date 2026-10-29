@@ -165,6 +165,8 @@ const api = {
       ipcRenderer.invoke('projects:create', folderPath, name),
     update: (id: string, input: { name?: string; isPinned?: boolean }) =>
       ipcRenderer.invoke('projects:update', id, input),
+    updateFolders: (input: import('../shared/projects').UpdateProjectFoldersInput) =>
+      ipcRenderer.invoke('projects:updateFolders', input),
     remove: (id: string) => ipcRenderer.invoke('projects:remove', id),
     getConversationContext: (conversationId: string) =>
       ipcRenderer.invoke('projects:getConversationContext', conversationId),
@@ -559,6 +561,8 @@ const api = {
     setPath: (folderPath: string | null) => ipcRenderer.invoke('workspace:setPath', folderPath),
     listFiles: (workspaceRoot: string, subPath?: string, glob?: string) =>
       ipcRenderer.invoke('workspace:listFiles', workspaceRoot, subPath, glob),
+    listProjectFiles: (workspaceRoot: string) =>
+      ipcRenderer.invoke('workspace:listProjectFiles', workspaceRoot),
     listPrompts: (workspaceRoot: string | null) =>
       ipcRenderer.invoke('workspace:listPrompts', workspaceRoot),
     readFile: (workspaceRoot: string, filePath: string, startLine?: number, endLine?: number) =>
@@ -599,17 +603,10 @@ const api = {
       ipcRenderer.invoke('workspace:discardHistoryCapture', captureId),
     createCheckpoint: (workspaceRoot: string, message: string, captureId?: string) =>
       ipcRenderer.invoke('workspace:createCheckpoint', workspaceRoot, message, captureId),
-    hardResetCheckpoint: (
-      workspaceRoot: string,
-      hash: string,
+    restoreHistory: (
+      targets: import('../shared/workspaceHistory').HistoryRestoreTarget[],
       authorization: import('../shared/types').CheckpointMutationAuthorization
-    ) => ipcRenderer.invoke('workspace:hardResetCheckpoint', workspaceRoot, hash, authorization),
-    rewindToBeforeCheckpoint: (
-      workspaceRoot: string,
-      hash: string,
-      authorization: import('../shared/types').CheckpointMutationAuthorization
-    ) =>
-      ipcRenderer.invoke('workspace:rewindToBeforeCheckpoint', workspaceRoot, hash, authorization),
+    ) => ipcRenderer.invoke('workspace:restoreHistory', targets, authorization),
     openFolder: (folderPath: string, workspaceRoot?: string) =>
       ipcRenderer.invoke('workspace:openFolder', folderPath, workspaceRoot),
     openFile: (filePath: string, workspaceRoot?: string) =>

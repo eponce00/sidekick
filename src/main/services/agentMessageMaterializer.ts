@@ -2,18 +2,19 @@ import type Database from 'better-sqlite3'
 import { projectAgentRunEvents } from '../../shared/agentEventProjection'
 import { agentRunUsesPlan, type AgentRunPhase } from '../../shared/agentRuntime'
 import { AgentRunStore } from './agentRunStore'
+import type { HistoryPoint } from '../../shared/workspaceHistory'
 
 export interface AgentMessageMaterialization {
   runId: string
   conversationId: string
   messageId: string
   content: string
-  checkpointHash: string | null
+  checkpoints: HistoryPoint[]
 }
 
 export interface MaterializeAgentRunOptions {
-  checkpointHash?: string | null
-  checkpointWorkspaceRoot?: string | null
+  /** The reply's History points, one per project folder it changed. */
+  checkpoints?: readonly HistoryPoint[] | null
   /** Used only when a terminal failure produced no assistant content. */
   fallbackContent?: string
 }
@@ -65,26 +66,22 @@ export class AgentMessageMaterializer {
       options.fallbackContent,
       run.error?.message
     )
-    const checkpointHash = options.checkpointHash ?? null
-    const checkpointWorkspaceRoot = checkpointHash
-      ? (options.checkpointWorkspaceRoot ?? null)
-      : null
+    const checkpoints = [...(options.checkpoints ?? [])]
     const runMode =
       run.surface === 'research' ? 'research' : agentRunUsesPlan(events) ? 'plan' : 'conversation'
     this.db
       .prepare(
         `INSERT INTO messages
          (id, conversation_id, role, content, thinking, segments, token_usage, run_id,
-          checkpoint_hash, checkpoint_workspace_root, run_mode, timestamp)
-         VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          checkpoints, run_mode, timestamp)
+         VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            content = excluded.content,
            thinking = excluded.thinking,
            segments = excluded.segments,
            token_usage = excluded.token_usage,
            run_id = excluded.run_id,
-           checkpoint_hash = excluded.checkpoint_hash,
-           checkpoint_workspace_root = excluded.checkpoint_workspace_root,
+           checkpoints = excluded.checkpoints,
            run_mode = excluded.run_mode`
       )
       .run(
@@ -95,8 +92,7 @@ export class AgentMessageMaterializer {
         projection.segments.length ? JSON.stringify(projection.segments) : null,
         JSON.stringify(projection.tokenUsage),
         runId,
-        checkpointHash,
-        checkpointWorkspaceRoot,
+        checkpoints.length ? JSON.stringify(checkpoints) : null,
         runMode,
         run.completedAt ?? run.updatedAt
       )
@@ -105,7 +101,7 @@ export class AgentMessageMaterializer {
       conversationId: run.threadId,
       messageId,
       content,
-      checkpointHash
+      checkpoints
     }
   }
 }

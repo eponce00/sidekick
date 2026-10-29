@@ -22,6 +22,8 @@ import { editingDialectForTarget } from '../../shared/workspaceMutations'
 import { loadStoredSettings } from '../ipc/settings'
 import { RunSlots, type RunLease } from './runSlots'
 import { createCheckpoint, beginCheckpointCapture } from './checkpoints'
+import { addMessageCheckpoints } from './messageCheckpoints'
+import type { HistoryPoint } from '../../shared/workspaceHistory'
 import { browserNetworkApprovals } from './browserNetworkApprovals'
 import {
   ConversationRunPreparer,
@@ -70,7 +72,8 @@ import type {
 interface ActiveConversationRun {
   input: StartConversationAgentRunInput
   prepared: PreparedConversationAgentRun
-  capture: { promise: Promise<string | null> | null }
+  /** History captures begun for this reply, by project folder. */
+  captures: Map<string, Promise<string | null>>
 }
 
 interface PreparingRun {
@@ -306,7 +309,7 @@ export class AgentRuntimeCoordinator {
           type: 'run.finalized',
           payload: {
             assistantMessageId: identity.outputMessageId,
-            checkpointHash: null,
+            checkpoints: [],
             persisted: true
           }
         })
@@ -490,17 +493,24 @@ export class AgentRuntimeCoordinator {
       input.mode === 'research'
         ? null
         : new ProjectStore(this.db).getConversationContext(input.conversationId).workspaceRoot
-    const releaseWorkspace = writtenRoot
-      ? this.occupancy.admit(
+    const claims: Array<() => void> = []
+    const claimFolder = (workspaceRoot: string): void => {
+      claims.push(
+        this.occupancy.admit(
           {
             runId: input.id,
             conversationId: input.conversationId,
             title: this.threadTitle(input.conversationId) ?? 'Another chat',
-            workspaceRoot: writtenRoot
+            workspaceRoot
           },
           input.workspaceSharing
         )
-      : () => undefined
+      )
+    }
+    const releaseWorkspace = (): void => {
+      for (const release of claims.splice(0)) release()
+    }
+    if (writtenRoot) claimFolder(writtenRoot)
     let preparation: PreparingRun
     try {
       // The chat keeps the model it last ran with, whoever started the run.
@@ -551,22 +561,27 @@ export class AgentRuntimeCoordinator {
         preparation
       )
       if (!queued) hooks.onAdmitted?.(false)
-      const capture = { promise: null as Promise<string | null> | null }
+      const captures = new Map<string, Promise<string | null>>()
       let workspaceRoot: string | null = null
-      const ensureCapture = async (): Promise<void> => {
-        if (!workspaceRoot || capture.promise) {
-          await capture.promise
-          return
+      // Before a tool may change files: each project folder it may change is claimed for this
+      // run, refused while another run writes there, and captured for History once.
+      const ensureCapture = async (folderRoots: readonly string[] = []): Promise<void> => {
+        if (!workspaceRoot) return
+        const roots = folderRoots.length ? folderRoots : [workspaceRoot]
+        for (const root of roots) {
+          if (captures.has(root)) continue
+          if (root !== workspaceRoot && input.mode !== 'research') claimFolder(root)
+          captures.set(
+            root,
+            beginCheckpointCapture(root, input.conversationId, input.assistantMessageId).catch(
+              (error) => {
+                console.warn('[History] Could not begin run capture:', error)
+                return null
+              }
+            )
+          )
         }
-        capture.promise = beginCheckpointCapture(
-          workspaceRoot,
-          input.conversationId,
-          input.assistantMessageId
-        ).catch((error) => {
-          console.warn('[History] Could not begin run capture:', error)
-          return null
-        })
-        await capture.promise
+        await Promise.all(roots.map((root) => captures.get(root)))
       }
       const prepared = await this.awaitPreparation(
         new ConversationRunPreparer(
@@ -584,7 +599,7 @@ export class AgentRuntimeCoordinator {
         return this.cancelPreparation(preparation)
       }
       workspaceRoot = prepared.workspaceRoot
-      this.activeConversations.set(input.id, { input, prepared, capture })
+      this.activeConversations.set(input.id, { input, prepared, captures })
       const inbox =
         input.mode === 'research'
           ? []
@@ -628,25 +643,27 @@ export class AgentRuntimeCoordinator {
     }
   }
 
+  /** The reply's History points: one for each project folder where it changed something. */
   private async finishCheckpointCapture(
     active: ActiveConversationRun,
     phase: AgentKernelRunResult['phase'] | 'interrupted'
-  ): Promise<string | null> {
-    if (!active.capture.promise || !active.prepared.workspaceRoot) return null
-    const captureId = await active.capture.promise
-    if (!captureId) return null
-
+  ): Promise<HistoryPoint[]> {
     const requestLabel = checkpointLabel(active.prepared.latestUserMessage?.content || '')
     const phaseLabel = phase === 'completed' ? requestLabel : `${requestLabel} (${phase})`
-    const checkpoint = await createCheckpoint(
-      active.prepared.workspaceRoot,
-      phaseLabel,
-      captureId
-    ).catch((error) => {
-      console.warn('[History] Could not finish run checkpoint:', error)
-      return null
-    })
-    return checkpoint?.hash ?? null
+    const points = await Promise.all(
+      [...active.captures].map(async ([workspaceRoot, capture]) => {
+        const captureId = await capture
+        if (!captureId) return null
+        const checkpoint = await createCheckpoint(workspaceRoot, phaseLabel, captureId).catch(
+          (error) => {
+            console.warn('[History] Could not finish run checkpoint:', error)
+            return null
+          }
+        )
+        return checkpoint ? { workspaceRoot, hash: checkpoint.hash } : null
+      })
+    )
+    return points.filter((point): point is HistoryPoint => point !== null)
   }
 
   private async finalizeUnexpectedFailure(runId: string, error: unknown): Promise<void> {
@@ -658,20 +675,14 @@ export class AgentRuntimeCoordinator {
         this.goals.pause(goal.id, 'The goal run failed during finalization. Resume to retry.')
       }
     }
-    const checkpointHash = active ? await this.finishCheckpointCapture(active, 'interrupted') : null
-    if (active && checkpointHash) {
-      this.db
-        .prepare(
-          `UPDATE messages
-           SET checkpoint_hash = ?, checkpoint_workspace_root = ?
-           WHERE id = ? AND conversation_id = ?`
-        )
-        .run(
-          checkpointHash,
-          active.prepared.workspaceRoot,
-          active.input.assistantMessageId,
-          active.input.conversationId
-        )
+    const checkpoints = active ? await this.finishCheckpointCapture(active, 'interrupted') : []
+    if (active) {
+      addMessageCheckpoints(
+        this.db,
+        active.input.assistantMessageId,
+        active.input.conversationId,
+        checkpoints
+      )
     }
     clearWorkspaceInstructionScope(runId)
     this.activeConversations.delete(runId)
@@ -681,7 +692,7 @@ export class AgentRuntimeCoordinator {
         runId,
         type: 'run.finalized',
         payload: {
-          checkpointHash,
+          checkpoints,
           persisted: false,
           error: error instanceof Error ? error.message : String(error)
         }
@@ -818,10 +829,9 @@ export class AgentRuntimeCoordinator {
     const active = this.activeConversations.get(runId)
     if (!active) return
     try {
-      const checkpointHash = await this.finishCheckpointCapture(active, result.phase)
+      const checkpoints = await this.finishCheckpointCapture(active, result.phase)
       this.messages.materialize(runId, {
-        checkpointHash,
-        checkpointWorkspaceRoot: active.prepared.workspaceRoot,
+        checkpoints,
         fallbackContent:
           result.content ||
           (result.phase === 'failed' ? `Error: ${result.error || 'Agent run failed'}` : '')
@@ -839,9 +849,8 @@ export class AgentRuntimeCoordinator {
         type: 'run.finalized',
         payload: {
           assistantMessageId: active.input.assistantMessageId,
-          checkpointHash,
-          // The window shows the reply's History point without reloading the chat.
-          checkpointWorkspaceRoot: checkpointHash ? active.prepared.workspaceRoot : null,
+          // The window shows the reply's History points without reloading the chat.
+          checkpoints,
           persisted: true
         }
       })

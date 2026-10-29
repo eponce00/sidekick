@@ -1,7 +1,11 @@
 import type { PermissionMode } from '../permissions'
 import type { ModelProvider, PinnedModel } from '../models'
 import type { ProviderKind } from '../providerRegistry'
-import type { ConversationProjectTransition, ConversationWorktreeContext } from '../projects'
+import type {
+  ConversationProjectTransition,
+  ConversationWorktreeContext,
+  WorkspaceFolder
+} from '../projects'
 
 export const AGENT_PROMPT_VERSION = 'sidekick-agent-v10'
 
@@ -48,6 +52,8 @@ export interface PromptCapabilities {
 
 export interface PromptProjectContext {
   workspaceRoot: string | null
+  /** The project's other folders, which paths address by name. */
+  folders?: readonly WorkspaceFolder[]
   instructions: string
   instructionSources: readonly string[]
   memory: string

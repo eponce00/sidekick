@@ -685,6 +685,17 @@ real Git staged set, and refuses the whole operation on a later same-file change
 applied ref supports reversible soft restore without rewriting message or label identity. The full
 contract is in [Private workspace History](../user-guide/WORKSPACE_HISTORY.md).
 
+A reply keeps one History point per project folder it may have changed (`messages.checkpoints`, a
+JSON list of `{ workspaceRoot, hash }`). The coordinator begins a folder's capture the first time a
+tool may change files there (`onWorkspaceWillMutate` names the folders: a mutation's target paths,
+a command's primary and working folders) and finishes every capture when the run ends. Every
+restore, from the window, the phone or Retry and Edit, goes through `workspace:restoreHistory` and
+`restoreWorkspaceHistory`, which takes each folder back to before the earliest of the given points
+still on its timeline (an undone point has nothing left to take back), preflights all folders before
+writing, and rolls applied folders and their refs back if a later one fails.
+`historyRestoreTargets` in `src/shared/workspaceHistory.ts` lists each folder's points from a message
+on for a rewind, the same way in the renderer and the companion.
+
 ## Projects and conversation context
 
 `projects` stores durable folder-backed context boundaries and `conversations.project_id` stores
@@ -701,6 +712,39 @@ Project conversations share folder tools, command working directory, project mem
 and a freshly loaded `AGENTS.override.md`/`AGENTS.md` instruction chain. The sidebar renders projects
 with nested conversations and keeps standalone chats in a separate section. See
 [Projects](../user-guide/PROJECTS.md) for persistence, movement, and instruction-discovery behavior.
+
+### Several folders
+
+A project keeps its primary folder in `projects.folder_path` and its other folders in
+`project_folders` (project, name, folder, position). The primary folder is the chat's
+`workspaceRoot` everywhere a single root is meant: the command working directory, Git, the pull
+request line, memory, worktrees and the start of instruction discovery. `ProjectStore.foldersForRoot`
+gives the other folders for a workspace root, from trusted data only; for a chat's worktree, a folder
+inside the copied repository becomes the worktree's copy of it. `getConversationContext` returns
+them as `folders`, and the known-workspace resolver trusts each of them. Adding one requires the
+folder picker, like a new project, and a folder inside or around another of the project's folders
+is refused, so every path belongs to one folder.
+
+Paths stay strings rooted at the primary folder. At startup the main process installs a folder
+lookup (`setWorkspaceFolderLookup`) that `locateWorkspacePath` in `src/main/utils/workspacePaths.ts`
+uses to route a path to its folder: a relative path whose first segment is another folder's name
+belongs to that folder, `./name` stays in the primary, and an absolute path belongs to the folder it
+is inside; `..` is applied before the folder is chosen. `resolveSecureWorkspacePath` then checks the
+path, links included, against that folder alone, and `projectRelativePath` spells it the project
+way (`name/path`), which keys read receipts, change records, verification and attachments. So every
+caller that takes a workspace root and a path, the IPC file handlers, the read and mutation
+services, language servers, browser uploads and downloads and `view_image` among them, works across
+folders without a second resolver. The mutation service locks each folder a request names, in
+real-path order; language servers start per folder; the verification snapshot spans every folder.
+
+Occupancy claims the primary folder when a writing run starts and each other folder the first time
+the run may change files there, so a busy folder refuses that change instead of the run. The shell
+starts in the primary folder; `cwd` may name another, `SIDEKICK_PROJECT_FOLDERS` lists them, and
+Docker isolation mounts each folder at `/workspace/<name>` when there are several
+(`sandboxFolderMounts`). Start and completion hooks may name any folder and run there. Worktrees
+copy the primary folder's repository only: setting aside, restoring and removing several
+repositories' worktrees as one could not be made atomic, and a chat's branch, base and pull request
+are one repository's.
 
 The composer's pull request line asks `pullRequests:getStatus` with a folder only. The main process
 checks it with the known-workspace resolver, then `src/main/services/pullRequestStatus.ts` runs

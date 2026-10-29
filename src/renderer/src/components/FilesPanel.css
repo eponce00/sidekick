@@ -257,3 +257,14 @@
   flex: 0 1 18%;
   content: '';
 }
+
+/* A project folder's own node, when the project has several: a folder row with a quiet mark. */
+.file-root-row .file-node-name {
+  font-weight: 500;
+}
+
+.file-root-mark {
+  margin-left: 6px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}

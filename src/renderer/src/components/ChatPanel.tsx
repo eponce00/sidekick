@@ -6,6 +6,8 @@ import { endDictation } from '../services/voice/dictationControl'
 import { useAutoFocus } from '../hooks/useAutoFocus'
 import { useOutsideClick } from '../hooks/useOutsideClick'
 import { useChatFolder } from '../hooks/useChatFolder'
+import { useProjectFolders } from '../hooks/useProjectFolders'
+import type { WorkspaceFolder } from '../../../shared/projects'
 import {
   RunAlreadyActiveError,
   useConversationRun,
@@ -113,6 +115,8 @@ interface ChatPanelProps {
   /** The context meter, drawn among the composer's run controls. */
   contextMeter?: React.ReactNode
   workspaceFolder: string | null
+  /** The project's other folders, as the sidebar lists them. */
+  projectFolders?: readonly WorkspaceFolder[]
   projectName: string | null
   projectId?: string | null
   /** Set when the chat's project is one of SideKick's worktrees. */
@@ -192,6 +196,7 @@ function ChatPanel({
   welcomeSuggestions,
   contextMeter,
   workspaceFolder,
+  projectFolders,
   projectName,
   projectId = null,
   worktree = null,
@@ -386,6 +391,8 @@ function ChatPanel({
   workspaceFolderRef.current = workspaceFolder
   // Where this chat's files and History are: its project's folder, or its own when it has none.
   const filesFolder = useChatFolder(conversationId, workspaceFolder) ?? workspaceFolder
+  const chatFolders = useProjectFolders(conversationId, workspaceFolder, projectFolders)
+  const otherFolders = useMemo(() => chatFolders.map(({ path }) => path), [chatFolders])
   const {
     phase,
     activeMode,
@@ -514,6 +521,7 @@ function ChatPanel({
     onModelUnavailable: () => setIsModelMenuOpen(true),
     isRunActive,
     workspaceFolder: filesFolder,
+    otherFolders,
     restoreDraft: async (message, discardsGoalStart) => {
       if (discardsGoalStart && conversationId) {
         const current = await window.api.conversationGoals.current(conversationId)
@@ -1768,9 +1776,13 @@ function ChatPanel({
   // or to any message before it, can take those files back.
   const lastFileChangeIndex = visibleMessages.findLastIndex(
     (message) =>
-      Boolean(message.checkpointHash) &&
-      message.checkpointWorkspaceRoot === filesFolder &&
-      message.restoredFrom !== message.checkpointHash
+      !message.restored &&
+      Boolean(
+        message.checkpoints?.some(
+          ({ workspaceRoot }) =>
+            workspaceRoot === filesFolder || otherFolders.includes(workspaceRoot)
+        )
+      )
   )
   const renderMessage = (msg: Message, index: number): React.JSX.Element => (
     <MessageItem
@@ -1801,6 +1813,7 @@ function ChatPanel({
         resolveInteraction(id, response, cancelled)
       }
       workspaceFolder={filesFolder}
+      otherFolders={otherFolders}
       onUndoCheckpoint={handleUndoCheckpoint}
     />
   )

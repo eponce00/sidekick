@@ -17,6 +17,7 @@ import { WorkspaceFileViewer } from './WorkspaceFileViewer'
 import { trashQuestion, trashRefusal } from '../../../shared/workspaceTrash'
 import { workspacePermissionOperation } from '../../../shared/permissions'
 import type { WorkspaceFileViewRequest } from '../utils/workspaceFileViewer'
+import type { WorkspaceFolder } from '../../../shared/projects'
 import './FilesPanel.css'
 
 export interface FilesPanelProps {
@@ -31,7 +32,14 @@ export interface FilesPanelProps {
   onOpenProject?: () => void
 }
 
-/** The project's files: a tree that follows the folder on disk, and a viewer over it. */
+function folderName(folder: string): string {
+  return folder.replace(/\\/g, '/').split('/').filter(Boolean).pop() || folder
+}
+
+/**
+ * The project's files: a tree that follows its folders on disk, one root node for each folder
+ * when it has several, and a viewer over it.
+ */
 export function FilesPanel({
   workspaceFolder,
   chatFolder = false,
@@ -44,7 +52,10 @@ export function FilesPanel({
   // Loading from the first frame, so an unread tree never shows as "No project folder".
   const [fileTreeLoading, setFileTreeLoading] = useState(Boolean(workspaceFolder))
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
+  const [collapsedRoots, setCollapsedRoots] = useState<Set<string>>(new Set())
   const [fileRootName, setFileRootName] = useState<string>('')
+  /** The project's other folders; with any, each folder is a root node of the tree. */
+  const [otherFolders, setOtherFolders] = useState<WorkspaceFolder[]>([])
   const [fileRefreshKey, setFileRefreshKey] = useState(0)
   const [viewedFile, setViewedFile] = useState<WorkspaceFileViewRequest | null>(
     fileRequest?.request ?? null
@@ -82,14 +93,14 @@ export function FilesPanel({
       if (!workspaceFolder || cancelled) {
         setFileMap(new Map())
         setFileRootName('')
+        setOtherFolders([])
         setFileTreeLoading(false)
         return
       }
-      const rootName = chatFolder
-        ? 'Chat files'
-        : workspaceFolder.replace(/\\/g, '/').split('/').pop() || workspaceFolder
+      const rootName = chatFolder ? 'Chat files' : folderName(workspaceFolder)
       if (!cancelled) setFileRootName(rootName)
-      const result = await window.api.workspace.listFiles(workspaceFolder)
+      // Another folder's files start with its name, so each lands under its own root node.
+      const result = await window.api.workspace.listProjectFiles(workspaceFolder)
       if (!result.ok || cancelled) {
         setFileTreeLoading(false)
         return
@@ -97,18 +108,24 @@ export function FilesPanel({
       const normalize = (p: string): string => p.replace(/\\/g, '/')
       const map = new Map<string, string[]>()
       map.set('', [])
+      for (const folder of result.folders) map.set(`${folder.name}/`, [])
       for (const rawFile of result.files) {
         const f = normalize(rawFile)
         const isDir = f.endsWith('/')
         const fClean = isDir ? f.slice(0, -1) : f
         const lastSlash = fClean.lastIndexOf('/')
-        const parent = lastSlash >= 0 ? fClean.slice(0, lastSlash + 1) : ''
+        // `./name/` is the primary's own folder of an extra folder's name, at the top.
+        const parent =
+          lastSlash >= 0 && fClean.slice(0, lastSlash + 1) !== './'
+            ? fClean.slice(0, lastSlash + 1)
+            : ''
         if (!map.has(parent)) map.set(parent, [])
         map.get(parent)!.push(f)
         if (isDir && !map.has(f)) map.set(f, [])
       }
       if (!cancelled) {
         setFileMap(map)
+        setOtherFolders(result.folders)
         setFileTreeLoading(false)
       }
     }
@@ -120,13 +137,22 @@ export function FilesPanel({
     }
   }, [chatFolder, fileRefreshKey, workspaceFolder])
 
-  // The tree follows the folder on disk, so it never needs a manual refresh.
+  // The tree follows the folders on disk, so it never needs a manual refresh.
+  const watchedFolders = [
+    ...(workspaceFolder ? [workspaceFolder] : []),
+    ...otherFolders.map(({ path }) => path)
+  ].join('\n')
   useEffect(() => {
-    if (!workspaceFolder) return
-    return window.api.workspace.watchFiles(workspaceFolder, () => {
-      setFileRefreshKey((k) => k + 1)
-    })
-  }, [workspaceFolder])
+    if (!watchedFolders) return
+    const stops = watchedFolders
+      .split('\n')
+      .map((folder) =>
+        window.api.workspace.watchFiles(folder, () => setFileRefreshKey((k) => k + 1))
+      )
+    return () => {
+      for (const stop of stops) stop()
+    }
+  }, [watchedFolders])
 
   const moveFileToTrash = async (filePath: string): Promise<void> => {
     if (!workspaceFolder || deletingFile || isAgentBusy) return
@@ -175,6 +201,64 @@ export function FilesPanel({
         if (choice === 'trash') void requestTrash(filePath, isDirectory)
       })
       .catch((error) => setFileActionError(error instanceof Error ? error.message : String(error)))
+  }
+
+  /** A folder of the project as a node of its own, its files under it. */
+  const renderRootNode = (
+    key: string,
+    label: string,
+    title: string,
+    childrenOf: string,
+    primary: boolean
+  ): React.ReactNode => {
+    const isExpanded = !collapsedRoots.has(key)
+    const menuPath = primary ? '' : childrenOf.slice(0, -1)
+    return (
+      <div key={key}>
+        <div
+          className="file-node-row file-root-row"
+          onContextMenu={(event) => {
+            event.preventDefault()
+            showPathMenu(menuPath, true)
+          }}
+        >
+          <button
+            className="file-node file-node-dir"
+            style={{ paddingLeft: '10px' }}
+            aria-expanded={isExpanded}
+            onClick={() =>
+              setCollapsedRoots((prev) => {
+                const next = new Set(prev)
+                next.has(key) ? next.delete(key) : next.add(key)
+                return next
+              })
+            }
+            title={title}
+          >
+            <span className="file-node-chevron">
+              <ChevronRight
+                size={10}
+                style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+              />
+            </span>
+            <span className="file-node-icon">
+              {isExpanded ? <FolderOpen size={13} /> : <Folder size={13} />}
+            </span>
+            <span className="file-node-name">{label}</span>
+            {primary && <span className="file-root-mark">Primary</span>}
+          </button>
+          <button
+            className="file-node-action"
+            onClick={() => showPathMenu(menuPath, true)}
+            title={`More actions for ${label}`}
+            aria-label={`More actions for the ${label} folder`}
+          >
+            <MoreHorizontal size={13} />
+          </button>
+        </div>
+        {isExpanded && renderFileTreeLevel(childrenOf, 1)}
+      </div>
+    )
   }
 
   const renderFileTreeLevel = (parentPath: string, depth: number): React.ReactNode => {
@@ -294,7 +378,7 @@ ${viewedFile.filePath}`}
             }}
           >
             <span className="file-explorer-root-name section-heading">
-              {fileRootName || 'Workspace'}
+              {otherFolders.length ? 'Folders' : fileRootName || 'Workspace'}
             </span>
             {/* With no folder there is nothing to refresh or act on. */}
             {workspaceFolder && (
@@ -367,7 +451,22 @@ ${viewedFile.filePath}`}
               />
             </div>
           ) : (
-            <div className="file-tree">{renderFileTreeLevel('', 0)}</div>
+            <div className="file-tree">
+              {otherFolders.length && workspaceFolder
+                ? [
+                    renderRootNode('', fileRootName, workspaceFolder, '', true),
+                    ...otherFolders.map((folder) =>
+                      renderRootNode(
+                        `${folder.name}/`,
+                        folder.name,
+                        folder.path,
+                        `${folder.name}/`,
+                        false
+                      )
+                    )
+                  ]
+                : renderFileTreeLevel('', 0)}
+            </div>
           )}
         </div>
       )}

@@ -22,6 +22,7 @@ vi.mock('./state', () => ({
   }),
   getDb: () => ({
     prepare: (sql: string) => ({
+      all: () => [],
       get: (projectRoot: string, conversationRoot: string) =>
         sql.includes('worktree_id IS NULL')
           ? state.chatsWithoutProject.has(projectRoot)

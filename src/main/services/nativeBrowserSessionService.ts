@@ -5,7 +5,7 @@ import { credentialPageOrigin } from '../../shared/credentials'
 import type { BrowserNetworkPolicy } from './browserNetworkApprovals'
 import { createHash, randomUUID } from 'crypto'
 import { browserTextTargetOwnsFocus } from './browserTextFocus'
-import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
+import { locateWorkspacePath, resolveSecureWorkspacePath } from '../utils/workspacePaths'
 import { atomicNewFile } from '../utils/atomicNewFile'
 import { capturePublicationDirectory } from '../utils/publicationDirectory'
 import { promises as fs, realpathSync } from 'fs'
@@ -2745,9 +2745,11 @@ export class NativeBrowserSessionService {
     const session = this.getSession(input.sessionId)
     return this.withSessionLock(session, operation, async (signal) => {
       signal?.throwIfAborted()
+      // The destination may be in any of the project's folders, which is then its boundary.
+      const folder = locateWorkspacePath(input.workspaceRoot, input.destination)
       const publication = await capturePublicationDirectory(
-        input.workspaceRoot,
-        dirname(resolve(input.workspaceRoot, input.destination))
+        folder.root,
+        dirname(resolve(folder.root, folder.path))
       )
       const destination = await resolveSecureWorkspacePath(input.workspaceRoot, input.destination, {
         rejectLinks: true

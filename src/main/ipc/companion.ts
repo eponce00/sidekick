@@ -13,9 +13,10 @@ import {
 import type { MessageImageAttachment } from '../../shared/messageImages'
 import { pinnedModelsFromProviderInstances } from '../../shared/providerInstances'
 import type { ProviderSettings } from '../../shared/settings'
-import { checkpointPermissionOperation } from '../../shared/permissions'
+import { historyRestorePermissionOperation } from '../../shared/permissions'
+import type { HistoryRestoreTarget } from '../../shared/workspaceHistory'
 import { readBrowserArtifact } from '../bootstrap/artifactProtocol'
-import { hardResetCheckpoint, rewindToBeforeCheckpoint } from '../services/checkpoints'
+import { restoreApprovedHistory, validHistoryTargets } from './checkpointHandlers'
 import { permissionBroker } from '../services/permissionBroker'
 import { CompanionApi, trimForPhone, type CompanionVoice } from '../services/companion/companionApi'
 import {
@@ -279,20 +280,14 @@ function mainWindowContents(): Electron.WebContents {
 }
 
 /** As the window's Retry and Edit put files back: through the same permission check. */
-async function restoreFiles(input: {
-  workspaceRoot: string
-  action: 'hard-reset' | 'rewind'
-  hash: string
-}): Promise<void> {
-  const operation = checkpointPermissionOperation(input.action, input.hash, 'auto')
+async function restoreFiles(targets: HistoryRestoreTarget[]): Promise<void> {
+  const checked = validHistoryTargets(targets)
+  const operation = historyRestorePermissionOperation(targets, 'auto')
   const authorization = await permissionBroker.authorize(operation, mainWindowContents())
   if (!authorization.approved || !authorization.token)
     throw new Error(authorization.reason || 'Not allowed')
   permissionBroker.consume(authorization.token, operation)
-  const result =
-    input.action === 'hard-reset'
-      ? await hardResetCheckpoint(input.workspaceRoot, input.hash)
-      : await rewindToBeforeCheckpoint(input.workspaceRoot, input.hash)
+  const result = await restoreApprovedHistory(checked)
   if (!result.ok) throw new Error('Files changed since that history point')
 }
 

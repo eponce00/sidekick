@@ -5,7 +5,7 @@ import { setTimeout as abortableDelay } from 'timers/promises'
 import { credentialPageOrigin } from '../../shared/credentials'
 import { credentialRedactor } from './credentialRedaction'
 import { composeFilmstrip } from './browserFilmstrip'
-import { OutsideProjectError } from '../utils/workspacePaths'
+import { OutsideProjectError, workspaceFolderRoots } from '../utils/workspacePaths'
 import {
   toolExecutionFailed,
   toolExecutionSucceeded,
@@ -1806,7 +1806,7 @@ export function registerBrowserToolHandlers(
             width !== undefined || height !== undefined
               ? { width: width ?? 1280, height: height ?? 800 }
               : undefined,
-            context.workspaceRoot ? [context.workspaceRoot] : [],
+            context.workspaceRoot ? workspaceFolderRoots(context.workspaceRoot) : [],
             context.signal
           )
           lease = opened.lease
@@ -1861,7 +1861,7 @@ export function registerBrowserToolHandlers(
             context.runId,
             requestedNavigateUrl,
             undefined,
-            context.workspaceRoot ? [context.workspaceRoot] : [],
+            context.workspaceRoot ? workspaceFolderRoots(context.workspaceRoot) : [],
             context.signal
           )
           lease = opened.lease

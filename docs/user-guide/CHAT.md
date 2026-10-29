@@ -125,8 +125,9 @@ of its report.
   you attached it, and each model receives a copy made to fit what it takes, shrunk to its size
   and byte limits and converted when it cannot read the format. When the selected model will get a
   smaller copy, the image's tooltip says so. HEIC photos are not read yet; export them as JPEG.
-- **Files:** type `@` to pick a project file. Its path goes into the message and the file is
-  attached. Attached files, up to four per message, are read before the agent starts, so its first
+- **Files:** type `@` to pick a project file, from any of the project's folders. Its path goes
+  into the message and the file is attached; a file in another folder's path starts with that
+  folder's name. Attached files, up to four per message, are read before the agent starts, so its first
   step already has their contents; the reads show in the reply like any other. In a chat without
   a project, **+** → **Files** attaches files from anywhere on your computer, up to 100 MB each:
   the chat keeps a copy in the `uploads` folder of its own folder, so the original is never
@@ -217,8 +218,9 @@ between the narrow column and the even split; the arrow keys move a focused edge
 
 In **Files**, the trash button beside a file or folder, or **Move to Recycle Bin** (**Move to
 Trash** on macOS and Linux) in its right-click menu, asks first, saying how many items a folder
-holds, and then moves it to the Recycle Bin, where you can restore it. The project folder itself and
-Git's `.git` folders cannot be moved this way.
+holds, and then moves it to the Recycle Bin, where you can restore it. The project's folders
+themselves and Git's `.git` folders cannot be moved this way. A project of several folders shows
+each one as a node of its own, the primary one marked.
 
 ## Going back
 

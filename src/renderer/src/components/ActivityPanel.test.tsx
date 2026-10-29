@@ -48,7 +48,7 @@ describe('ActivityPanel inspector', () => {
         },
         workspace: {
           watchFiles: vi.fn(() => () => undefined),
-          listFiles: vi.fn(async () => ({ ok: true, files: [] }))
+          listProjectFiles: vi.fn(async () => ({ ok: true, folders: [], files: [] }))
         }
       }
     })
@@ -84,8 +84,9 @@ describe('ActivityPanel inspector', () => {
     const trashFile = vi.fn(async () => ({ ok: true }))
     const countPathItems = vi.fn(async () => ({ count: 214, more: false }))
     Object.assign(api.workspace, {
-      listFiles: vi.fn(async () => ({
+      listProjectFiles: vi.fn(async () => ({
         ok: true,
+        folders: [],
         files: ['src/', 'src/app.ts', '.git/', 'README.md']
       })),
       trashFile,

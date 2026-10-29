@@ -438,6 +438,59 @@ describe('database schema migrations', () => {
     }
   })
 
+  it('keeps existing projects as they are and turns each reply’s History point into a list of one', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sidekick-db-folders-'))
+    let disk: Database.Database | undefined
+    try {
+      const path = join(root, 'app.db')
+      disk = openApplicationDatabase(path)
+      // The schema as 0.24.0 left it: one History point per reply, in two columns.
+      disk.prepare("DELETE FROM schema_migrations WHERE id = '20261028_001_project_folders'").run()
+      disk.exec(`
+        DROP TABLE project_folders;
+        ALTER TABLE messages DROP COLUMN checkpoints;
+        ALTER TABLE messages ADD COLUMN checkpoint_hash TEXT;
+        ALTER TABLE messages ADD COLUMN checkpoint_workspace_root TEXT;
+        INSERT INTO projects (id, name, folder_path, is_pinned, created_at, updated_at)
+          VALUES ('p', 'App', '/work/app', 0, 1, 1);
+        INSERT INTO conversations (id, title, created_at, updated_at, project_id)
+          VALUES ('c', 'Chat', 1, 1, 'p');
+        INSERT INTO messages (id, conversation_id, role, content, timestamp,
+                              checkpoint_hash, checkpoint_workspace_root)
+          VALUES ('placed', 'c', 'agent', 'Changed', 1, 'abcdef1', '/work/app'),
+                 ('unplaced', 'c', 'agent', 'Old', 2, 'abcdef2', NULL),
+                 ('plain', 'c', 'agent', 'Read only', 3, NULL, NULL);
+      `)
+      disk.close()
+
+      disk = openApplicationDatabase(path)
+      expect(disk.prepare('SELECT id, checkpoints FROM messages ORDER BY timestamp').all()).toEqual(
+        [
+          {
+            id: 'placed',
+            checkpoints: JSON.stringify([{ workspaceRoot: '/work/app', hash: 'abcdef1' }])
+          },
+          { id: 'unplaced', checkpoints: null },
+          { id: 'plain', checkpoints: null }
+        ]
+      )
+      const columns = (
+        disk.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>
+      ).map(({ name }) => name)
+      expect(columns).not.toContain('checkpoint_hash')
+      expect(columns).not.toContain('checkpoint_workspace_root')
+      expect(disk.prepare('SELECT folder_path FROM projects').all()).toEqual([
+        { folder_path: '/work/app' }
+      ])
+      expect(disk.prepare('SELECT COUNT(*) AS count FROM project_folders').get()).toEqual({
+        count: 0
+      })
+    } finally {
+      if (disk?.open) disk.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('lets an installed database record worktrees with no branch, keeping existing ones', async () => {
     const root = await mkdtemp(join(tmpdir(), 'sidekick-db-detached-'))
     let disk: Database.Database | undefined
@@ -625,7 +678,7 @@ describe('database schema migrations', () => {
       disk = openApplicationDatabase(path)
       expect(disk.prepare('SELECT title FROM conversations').get()).toEqual({ title: 'Keep me' })
       expect(disk.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({
-        count: 17
+        count: 18
       })
       expect(disk.pragma('integrity_check', { simple: true })).toBe('ok')
     } finally {

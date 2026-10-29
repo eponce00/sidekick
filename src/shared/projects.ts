@@ -1,7 +1,19 @@
+/**
+ * A folder of a project besides its primary one. The agent addresses it by name, as
+ * `<name>/path`; relative paths without a folder name mean the primary folder.
+ */
+export interface WorkspaceFolder {
+  name: string
+  path: string
+}
+
 export interface Project {
   id: string
   name: string
+  /** The primary folder: where commands start, and whose Git, instructions and memory apply. */
   folder_path: string
+  /** The project's other folders, in the order they were added. */
+  folders?: WorkspaceFolder[]
   is_pinned: number
   created_at: number
   updated_at: number
@@ -91,6 +103,8 @@ export interface ConversationProjectContext {
    * for a chat that has never had a project, its own folder.
    */
   workspaceRoot: string | null
+  /** The project's other folders, which the chat works in alongside workspaceRoot. */
+  folders: WorkspaceFolder[]
   /** Set when workspaceRoot is the chat's own folder rather than a project's. */
   chatFolder?: boolean
   worktreeId: string | null
@@ -106,4 +120,14 @@ export interface ConversationProjectContext {
 export interface MoveConversationResult {
   conversation: ProjectConversation
   transition: ConversationProjectTransition | null
+}
+
+export interface UpdateProjectFoldersInput {
+  projectId: string
+  /** Folders to add, each one the user picked in the folder picker. */
+  add?: string[]
+  /** Extra folders to remove, by name. */
+  remove?: string[]
+  /** An extra folder to make the primary one, by name; the primary becomes an extra folder. */
+  makePrimary?: string
 }

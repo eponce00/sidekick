@@ -14,7 +14,7 @@ import {
 } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { workspacePathKey } from '../utils/workspacePaths'
+import { setWorkspaceFolderLookup, workspacePathKey } from '../utils/workspacePaths'
 import { executeWorkspaceMutation, previewWorkspaceMutation } from './workspaceMutationService'
 import { credentialRedactor } from './credentialRedaction'
 import { WorkspaceReadService } from './workspaceReadService'
@@ -28,6 +28,7 @@ async function workspace(): Promise<string> {
 }
 
 afterEach(async () => {
+  setWorkspaceFolderLookup(() => [])
   await Promise.all(
     temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
   )
@@ -480,6 +481,46 @@ describe('workspace mutation service', () => {
     expect(
       await executeWorkspaceMutation(root, remove, { requireReadReceipt: true })
     ).toMatchObject({ ok: true, changed: true })
+  })
+
+  it('patches files in two project folders together, or neither when a path climbs out', async () => {
+    const parent = await workspace()
+    const root = join(parent, 'app')
+    const api = join(parent, 'api')
+    await mkdir(root)
+    await mkdir(api)
+    await writeFile(join(root, 'a.txt'), 'app\n')
+    await writeFile(join(api, 'b.txt'), 'api\n')
+    await writeFile(join(parent, 'outside.txt'), 'outside\n')
+    setWorkspaceFolderLookup((workspaceRoot) =>
+      workspaceRoot === root ? [{ name: 'api', path: api }] : []
+    )
+    const reads = new WorkspaceReadService()
+    const receipts = {
+      [workspacePathKey('a.txt')]: (await reads.getFileVersion(root, 'a.txt'))!,
+      [workspacePathKey('api/b.txt')]: (await reads.getFileVersion(root, 'api/b.txt'))!
+    }
+    const patch = (second: string): string =>
+      `*** Begin Patch\n*** Update File: a.txt\n@@\n-app\n+app 2\n*** Update File: ${second}\n@@\n-api\n+api 2\n*** End Patch`
+
+    const escaped = await executeWorkspaceMutation(
+      root,
+      { kind: 'apply-patch', patch: patch('api/../../outside.txt'), accessLevel: 'auto' },
+      { requireReadReceipt: true, expectedVersions: receipts }
+    )
+    expect(escaped.ok).toBe(false)
+    expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('app\n')
+    expect(await readFile(join(parent, 'outside.txt'), 'utf8')).toBe('outside\n')
+
+    const result = await executeWorkspaceMutation(
+      root,
+      { kind: 'apply-patch', patch: patch('api/b.txt'), accessLevel: 'auto' },
+      { requireReadReceipt: true, expectedVersions: receipts }
+    )
+    expect(result).toMatchObject({ ok: true })
+    expect(result.files.map((file) => file.path)).toEqual(['a.txt', 'api/b.txt'])
+    expect(await readFile(join(root, 'a.txt'), 'utf8')).toBe('app 2\n')
+    expect(await readFile(join(api, 'b.txt'), 'utf8')).toBe('api 2\n')
   })
 
   it('rejects no-op writes during preview and execution', async () => {

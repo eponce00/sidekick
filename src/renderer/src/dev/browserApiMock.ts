@@ -9,7 +9,7 @@ import {
   previewSessionTranscripts,
   previewSessionWorktrees
 } from './sessionsPreview'
-import type { ProjectConversation } from '../../../shared/projects'
+import type { Project, ProjectConversation, WorkspaceFolder } from '../../../shared/projects'
 import type { ProviderInstance, ProviderInstanceModel } from '../../../shared/settings'
 import type { CommandLineToolStatus } from '../../../shared/commandLineTool'
 import type { ManagedWorktreeSummary, WorktreesAPI } from '../../../shared/worktrees'
@@ -396,12 +396,14 @@ function changePreviewSchedule(id: string, change: Partial<Schedule>): Schedule 
 }
 
 const previewCreatedConversations: ProjectConversation[] = []
+let previewFolderPicks = 0
 
-const previewProjects = [
+const previewProjects: Project[] = [
   {
     id: 'preview-project-1',
     name: 'sidekick-demo',
     folder_path: 'C:\\Projects\\sidekick-demo',
+    folders: [{ name: 'design-system', path: 'C:\\Projects\\design-system' }],
     is_pinned: 0,
     created_at: Date.now() - 172_800_000,
     updated_at: Date.now() - 120_000,
@@ -412,6 +414,7 @@ const previewProjects = [
     id: 'preview-project-2',
     name: 'sidekick-api',
     folder_path: 'C:\\Projects\\sidekick-api',
+    folders: [],
     is_pinned: 0,
     created_at: Date.now() - 120_000_000,
     updated_at: Date.now() - 90_000,
@@ -1031,6 +1034,30 @@ export function installBrowserApiMock(): void {
         is_pinned: input.isPinned ? 1 : 0,
         updated_at: Date.now()
       }),
+      updateFolders: async (input) => {
+        const project = previewProjects.find(({ id }) => id === input.projectId)
+        if (!project) throw new Error('Project not found')
+        const folders: WorkspaceFolder[] = (project.folders ?? []).filter(
+          ({ name }) => !input.remove?.includes(name)
+        )
+        for (const path of input.add ?? []) {
+          if (path === project.folder_path || folders.some((folder) => folder.path === path))
+            continue
+          const base = path.split(/[\\/]/).filter(Boolean).at(-1) || 'folder'
+          let name = base
+          for (let n = 2; folders.some((folder) => folder.name === name); n++) name = `${base}-${n}`
+          folders.push({ name, path })
+        }
+        const chosen = folders.find(({ name }) => name === input.makePrimary)
+        if (chosen) {
+          const former = project.folder_path.split(/[\\/]/).filter(Boolean).at(-1) || 'main'
+          folders.splice(folders.indexOf(chosen), 1, { name: former, path: project.folder_path })
+          project.folder_path = chosen.path
+        }
+        project.folders = folders
+        project.updated_at = Date.now()
+        return { ...project }
+      },
       remove: async () => ({ success: true }),
       getConversationContext: async (conversationId) => {
         const conversation = [...previewCreatedConversations, ...previewConversations].find(
@@ -1046,6 +1073,7 @@ export function installBrowserApiMock(): void {
           workspaceRoot: chatFolder
             ? `C:\\Users\\preview\\AppData\\Roaming\\SideKick\\chat-folders\\${conversationId}`
             : projectRoot,
+          folders: chatFolder ? [] : (project?.folders ?? []),
           ...(chatFolder ? { chatFolder: true } : {}),
           worktreeId: conversation?.worktree_id ?? null,
           homeWorkspaceRoot: conversation?.home_workspace_root ?? null,
@@ -1420,7 +1448,12 @@ export function installBrowserApiMock(): void {
     support: { export: async () => ({ success: true }) },
     clipboard: { writeText: async () => ({ success: true }) },
     workspace: {
-      selectFolder: async () => ({ canceled: false, path: 'C:\\Projects\\sidekick-demo' }),
+      // Each pick is another folder, so a preview can add folders to a project.
+      selectFolder: async () => {
+        const picks = ['C:\\Projects\\shared-ui', 'C:\\Projects\\docs-site', 'C:\\Projects\\infra']
+        previewFolderPicks += 1
+        return { canceled: false, path: picks[(previewFolderPicks - 1) % picks.length] }
+      },
       selectContextAttachments: async () => ({ ok: true, canceled: true, attachments: [] }),
       getPath: async () => 'C:\\Projects\\sidekick-demo',
       getRules: async () => ({
@@ -1445,6 +1478,29 @@ export function installBrowserApiMock(): void {
         ok: true,
         files: ['README.md', 'package.json', 'src/', 'src/main/', 'src/renderer/']
       }),
+      listProjectFiles: async (workspaceRoot) => {
+        const folders =
+          previewProjects.find(({ folder_path }) => folder_path === workspaceRoot)?.folders ?? []
+        return {
+          ok: true,
+          folders,
+          files: [
+            'README.md',
+            'package.json',
+            'src/',
+            'src/main/',
+            'src/main/index.ts',
+            'src/renderer/',
+            'src/renderer/App.tsx',
+            ...folders.flatMap(({ name }) => [
+              `${name}/README.md`,
+              `${name}/tokens.css`,
+              `${name}/src/`,
+              `${name}/src/Button.tsx`
+            ])
+          ]
+        }
+      },
       listPrompts: async () => ({
         ok: true,
         prompts: [
@@ -1530,8 +1586,7 @@ export function installBrowserApiMock(): void {
       beginHistoryCapture: async () => ({ ok: true, captureId: crypto.randomUUID() }),
       discardHistoryCapture: async () => ({ ok: true }),
       createCheckpoint: async () => ({ ok: true, hash: 'abcdef123456' }),
-      hardResetCheckpoint: async () => ({ ok: true }),
-      rewindToBeforeCheckpoint: async () => ({ ok: true, parentHash: null }),
+      restoreHistory: async () => ({ ok: true }),
       openFolder: async () => {},
       openFile: async () => {},
       openFileReference: async (fileReference) => ({

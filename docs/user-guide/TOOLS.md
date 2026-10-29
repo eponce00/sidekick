@@ -136,7 +136,11 @@ unavailable even when the global policy is Full access.
 - Tool arguments are normalized only when the meaning is unambiguous, then recursively validated
   before permission prompts or side effects.
 - Reads, searches, commands, and mutations resolve paths inside the active project and reject
-  traversal and symlink escapes. When a task needs a folder outside the project, the agent says
+  traversal and symlink escapes. In a project of
+  [several folders](PROJECTS.md#several-folders-in-one-project), a relative path means the primary
+  folder and `<name>/path` another folder; each folder is its own boundary, so a path or link that
+  leads from one folder into another or outside the project is refused. When a task needs a folder
+  outside the project, the agent says
   the folder is not granted to the chat instead of looking for another way in. You can add the
   folder as a project and work on it in a chat there, which a chat can also start for you with
   your approval, or copy the files into this project.
@@ -144,9 +148,16 @@ unavailable even when the global policy is Full access.
   and only if it has not changed since. A stale, ambiguous or no-op edit fails rather than being
   reported as successful.
 - A multi-file patch is validated as one transaction. Any failure prevents the full change set or
-  rolls it back.
-- Foreground and background commands use an explicit project-relative working directory. Background
+  rolls it back. A patch across folders holds each folder's lock, taken in one fixed order, so two
+  such patches never wait on each other.
+- Foreground and background commands use an explicit project-relative working directory: the
+  primary folder by default, or another folder named as `cwd`. `WORKSPACE_FOLDER` is the primary
+  folder, and `SIDEKICK_PROJECT_FOLDERS` maps each other folder's name to its path as JSON. In a
+  Docker shell, a project of one folder is mounted at `/workspace`; with several, each folder is
+  mounted at `/workspace/<name>`, the primary under its own folder name. Background
   commands return an ID that can be read, answered, or cancelled from any reply in the conversation.
+- A command can be given stored credentials only when the program it runs is installed, not a file
+  in any of the project's folders.
 - Tool output is bounded. A long result keeps its start and its end, cut on whole lines, and a
   note where the middle was left out says that SideKick shortened it, gives an opaque handle and
   the byte offset where the part left out starts. A line too long to show whole, such as JSON on

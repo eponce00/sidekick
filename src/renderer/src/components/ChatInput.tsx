@@ -556,8 +556,9 @@ export function ChatInput({
   React.useEffect(() => {
     if (!fileMentionActive || !workspaceFolder) return
     let cancelled = false
-    // Listed each time the menu opens, so files made since the last mention appear.
-    void window.api.workspace.listFiles(workspaceFolder).then((result) => {
+    // Listed each time the menu opens, so files made since the last mention appear. Every folder
+    // of the project is listed; another folder's files start with its name.
+    void window.api.workspace.listProjectFiles(workspaceFolder).then((result) => {
       if (!cancelled && result.ok) setProjectFiles({ root: workspaceFolder, files: result.files })
     })
     return () => {

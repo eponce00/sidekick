@@ -161,17 +161,17 @@ describe('CompanionApi', () => {
   ): void {
     db.prepare(
       `INSERT INTO messages
-       (id, conversation_id, role, content, timestamp, checkpoint_hash, checkpoint_workspace_root,
-        starts_goal)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+       (id, conversation_id, role, content, timestamp, checkpoints, starts_goal)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).run(
       message.id,
       conversationId,
       message.role,
       message.content,
       message.timestamp,
-      message.checkpoint ?? null,
-      message.folder ?? null,
+      message.checkpoint && message.folder
+        ? JSON.stringify([{ workspaceRoot: message.folder, hash: message.checkpoint }])
+        : null,
       message.startsGoal ? 1 : 0
     )
   }
@@ -319,12 +319,10 @@ describe('CompanionApi', () => {
     const { runId } = (await call('chat.retry', { conversationId: chat.id, messageId: 'a2' })) as {
       runId: string
     }
-    // Back to the history point before the retried message, as the window does.
-    expect(deps.restoreFiles).toHaveBeenCalledWith({
-      workspaceRoot: 'C:/code/sidekick',
-      action: 'hard-reset',
-      hash: 'aaaaaaa1'
-    })
+    // Back to before the retried message: its reply's changes and every later one's go.
+    expect(deps.restoreFiles).toHaveBeenCalledWith([
+      { workspaceRoot: 'C:/code/sidekick', hashes: ['bbbbbbb2'] }
+    ])
     expect(
       db
         .prepare('SELECT id FROM messages WHERE conversation_id = ? ORDER BY timestamp')
@@ -350,11 +348,9 @@ describe('CompanionApi', () => {
       folder: 'C:/code/sidekick'
     })
     await call('chat.retry', { conversationId: chat.id, messageId: 'u1', text: '  Fix it better ' })
-    expect(deps.restoreFiles).toHaveBeenCalledWith({
-      workspaceRoot: 'C:/code/sidekick',
-      action: 'rewind',
-      hash: 'ccccccc3'
-    })
+    expect(deps.restoreFiles).toHaveBeenCalledWith([
+      { workspaceRoot: 'C:/code/sidekick', hashes: ['ccccccc3'] }
+    ])
     expect(
       db.prepare('SELECT id, content FROM messages WHERE conversation_id = ?').all(chat.id)
     ).toEqual([{ id: 'u1', content: 'Fix it better' }])

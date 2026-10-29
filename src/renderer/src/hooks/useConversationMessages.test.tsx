@@ -33,7 +33,7 @@ describe('useConversationMessages', () => {
         role: 'agent',
         content: 'Answer',
         timestamp: 2,
-        checkpointHash: 'checkpoint-1',
+        checkpoints: [{ workspaceRoot: 'C:/project', hash: 'abcdef1' }],
         tokenUsage: { promptTokens: 1, completionTokens: 1, cost: 0.02 }
       },
       { id: 'three', role: 'user', content: 'Later', timestamp: 3 }

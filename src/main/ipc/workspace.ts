@@ -9,7 +9,7 @@ import {
   type OpenDialogOptions,
   type MenuItemConstructorOptions
 } from 'electron'
-import { basename, isAbsolute, join, relative } from 'path'
+import { basename, isAbsolute, join } from 'path'
 import { getStore } from './state'
 import {
   getStoredWorkspace,
@@ -32,7 +32,12 @@ import {
 import { workspacePermissionOperation } from '../../shared/permissions'
 import type { WorkspaceMutationAuthorization } from '../../shared/types'
 import { permissionBroker } from '../services/permissionBroker'
-import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
+import {
+  locateWorkspacePath,
+  projectPathForRealPath,
+  resolveSecureWorkspacePath,
+  workspaceFolders
+} from '../utils/workspacePaths'
 import { WorkspaceReadService } from '../services/workspaceReadService'
 import { listSavedPrompts } from '../services/savedPrompts'
 import { discoverExternalOpeners, fileManagerIcon } from '../services/externalOpeners'
@@ -44,6 +49,20 @@ import { countPathItems } from '../services/pathItems'
 import { trashRefusal } from '../../shared/workspaceTrash'
 
 const workspaceReads = new WorkspaceReadService()
+
+/** Files matching a pattern in each of the project's folders, the primary first. */
+async function listEveryFolder(workspaceRoot: string, glob: string): Promise<string[]> {
+  const folders = ['', ...workspaceFolders(workspaceRoot).map(({ name }) => name)]
+  const listed = await Promise.all(
+    folders.map((subPath) =>
+      workspaceReads
+        .listFiles(workspaceRoot, { subPath, glob, maxResults: 50 })
+        .then((result) => result.files)
+        .catch(() => [] as string[])
+    )
+  )
+  return listed.flat()
+}
 
 export function registerWorkspaceHandlers(): void {
   // Workspace: native folder picker
@@ -88,7 +107,6 @@ export function registerWorkspaceHandlers(): void {
         }
         return { ok: true, canceled: false, attachments }
       }
-      const canonicalRoot = await fs.realpath(workspaceRoot)
       const choiceOptions = {
         type: 'question' as const,
         title: 'Attach project context',
@@ -119,13 +137,9 @@ export function registerWorkspaceHandlers(): void {
       const attachments: ProjectContextAttachment[] = []
       for (const selectedPath of selection.filePaths.slice(0, 12)) {
         const canonicalPath = await fs.realpath(selectedPath)
-        const relativePath = relative(canonicalRoot, canonicalPath)
-        if (
-          !relativePath ||
-          relativePath === '..' ||
-          relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) ||
-          isAbsolute(relativePath)
-        ) {
+        // Any of the project's folders; the path then starts with that folder's name.
+        const relativePath = await projectPathForRealPath(workspaceRoot, canonicalPath)
+        if (!relativePath || locateWorkspacePath(workspaceRoot, relativePath).path === '') {
           throw new Error('Choose files or folders inside the current project')
         }
         const stat = await fs.stat(canonicalPath)
@@ -136,7 +150,7 @@ export function registerWorkspaceHandlers(): void {
           id: randomUUID(),
           kind: selectFolder ? ('folder' as const) : ('file' as const),
           name: basename(canonicalPath),
-          relativePath: relativePath.replaceAll('\\', '/'),
+          relativePath,
           ...(stat.isFile() ? { size: stat.size } : {})
         })
       }
@@ -285,6 +299,25 @@ export function registerWorkspaceHandlers(): void {
     }
   )
 
+  // Every folder of a project, each listed from its own root, for the Files panel and mentions.
+  ipcMain.handle('workspace:listProjectFiles', async (_, passedRoot: string) => {
+    try {
+      const workspaceRoot = resolveKnownWorkspace(passedRoot)
+      const folders = [...workspaceFolders(workspaceRoot)]
+      const listed = await Promise.all(
+        ['', ...folders.map(({ name }) => name)].map((subPath) =>
+          workspaceReads
+            .listFiles(workspaceRoot, { subPath })
+            .then((result) => result.files)
+            .catch(() => [] as string[])
+        )
+      )
+      return { ok: true, folders, files: listed.flat() }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message, folders: [], files: [] }
+    }
+  })
+
   // Saved prompts come from the open project and the user's home folder; nothing else is read.
   ipcMain.handle('workspace:listPrompts', async (_, passedRoot: string | null) => {
     try {
@@ -368,9 +401,12 @@ export function registerWorkspaceHandlers(): void {
           )
         )
         const workspaceRoot = resolveKnownWorkspace(passedRoot)
-        const fullPath = join(workspaceRoot, filePath)
-        assertInsideWorkspace(fullPath, workspaceRoot)
-        const refusal = trashRefusal(relative(workspaceRoot, fullPath))
+        if (typeof filePath !== 'string') throw new Error('Invalid file path')
+        const located = locateWorkspacePath(workspaceRoot, filePath)
+        const fullPath = join(located.root, located.path)
+        assertInsideWorkspace(fullPath, located.root)
+        // Each project folder is a root of its own, which never goes to the bin from here.
+        const refusal = trashRefusal(located.path)
         if (refusal) throw new Error(refusal)
         await shell.trashItem(fullPath)
         return { ok: true }
@@ -385,10 +421,6 @@ export function registerWorkspaceHandlers(): void {
     passedRoot?: string
   ): Promise<string> => {
     const workspaceRoot = passedRoot ? resolveKnownWorkspace(passedRoot) : getStoredWorkspace()
-    if (isAbsolute(requestedPath)) {
-      const relativeTarget = relative(workspaceRoot, requestedPath)
-      return resolveSecureWorkspacePath(workspaceRoot, relativeTarget)
-    }
     return resolveSecureWorkspacePath(workspaceRoot, requestedPath)
   }
 
@@ -428,14 +460,11 @@ export function registerWorkspaceHandlers(): void {
         }
         const fileName = basename(normalizedReference)
         if (!fileName) return { ok: false, matches: [] }
-        const listed = await workspaceReads.listFiles(workspaceRoot, {
-          glob: `**/${fileName}`,
-          maxResults: 50
-        })
+        const listed = await listEveryFolder(workspaceRoot, `**/${fileName}`)
         const comparable = (value: string): string =>
           process.platform === 'win32' ? value.toLowerCase() : value
         const wantedSuffix = comparable(normalizedReference)
-        const matches = listed.files
+        const matches = listed
           .map((candidate) => candidate.replace(/\\/g, '/'))
           .filter((candidate) => {
             const normalized = comparable(candidate)
@@ -475,14 +504,11 @@ export function registerWorkspaceHandlers(): void {
         }
         const normalizedReference = fileReference.replace(/\\/g, '/').replace(/^\.\//, '')
         const fileName = basename(normalizedReference)
-        const listed = await workspaceReads.listFiles(workspaceRoot, {
-          glob: `**/${fileName}`,
-          maxResults: 50
-        })
+        const listed = await listEveryFolder(workspaceRoot, `**/${fileName}`)
         const comparable = (value: string): string =>
           process.platform === 'win32' ? value.toLowerCase() : value
         const wantedSuffix = comparable(normalizedReference)
-        const matches = listed.files
+        const matches = listed
           .filter((candidate) => {
             const normalized = comparable(candidate.replace(/\\/g, '/'))
             return normalized === wantedSuffix || normalized.endsWith(`/${wantedSuffix}`)
@@ -539,7 +565,7 @@ export function registerWorkspaceHandlers(): void {
     ): Promise<'trash' | undefined> => {
       const workspaceRoot = passedRoot ? resolveKnownWorkspace(passedRoot) : getStoredWorkspace()
       const target = await resolveShellTarget(requestedPath, passedRoot)
-      const relativePath = relative(workspaceRoot, target).replace(/\\/g, '/')
+      const relativePath = locateWorkspacePath(workspaceRoot, target).path
       // The window asks before it moves anything, so the menu only says which item was chosen.
       let chose: (choice: 'trash' | undefined) => void = () => undefined
       const chosen = new Promise<'trash' | undefined>((resolve) => (chose = resolve))

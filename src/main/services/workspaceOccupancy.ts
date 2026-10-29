@@ -37,9 +37,12 @@ export class WorkspaceOccupancy {
   /** Writing runs in the same folder, or one containing or inside it, other than this conversation's. */
   occupants(workspaceRoot: string, conversationId: string): WorkspaceOccupant[] {
     const key = canonical(workspaceRoot)
-    return [...this.claims.values()]
-      .filter((claim) => claim.conversationId !== conversationId && overlaps(claim.key, key))
-      .map(({ key: _key, ...occupant }) => occupant)
+    const runs = new Map<string, WorkspaceOccupant>()
+    for (const { key: claimed, ...occupant } of this.claims.values()) {
+      if (occupant.conversationId === conversationId || !overlaps(claimed, key)) continue
+      if (!runs.has(occupant.runId)) runs.set(occupant.runId, occupant)
+    }
+    return [...runs.values()]
   }
 
   /**
@@ -52,11 +55,16 @@ export class WorkspaceOccupancy {
     return this.claim(occupant)
   }
 
-  /** Records a writing run. The returned function releases it and is safe to call twice. */
+  /**
+   * Records a writing run in a folder; a run may claim each folder of its project. The returned
+   * function releases the claim and is safe to call twice.
+   */
   claim(occupant: WorkspaceOccupant): () => void {
-    this.claims.set(occupant.runId, { ...occupant, key: canonical(occupant.workspaceRoot) })
+    const key = canonical(occupant.workspaceRoot)
+    const id = `${occupant.runId}\0${key}`
+    this.claims.set(id, { ...occupant, key })
     return () => {
-      this.claims.delete(occupant.runId)
+      this.claims.delete(id)
     }
   }
 }

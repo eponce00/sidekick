@@ -26,6 +26,13 @@ import { isConversationModelId } from '../services/conversationModelStore'
 import { createConversation } from '../services/conversationCreation'
 import { deleteConversation, setConversationPinned } from '../services/conversationActions'
 import { copyChatFolder, removeOrphanChatFolders } from '../services/chatFolders'
+import { parseHistoryPoints } from '../../shared/workspaceHistory'
+
+/** A message's History points as stored: only well-formed ones, or nothing. */
+function checkpointsJson(value: unknown): string | null {
+  const points = parseHistoryPoints(value)
+  return points.length ? JSON.stringify(points.slice(0, 50)) : null
+}
 
 function validBackfillIdentity(input: unknown): input is ConversationTitleBackfillIdentity {
   if (!input || typeof input !== 'object') return false
@@ -195,8 +202,8 @@ export function registerDatabaseHandlers(): void {
         const insert = db.prepare(
           `INSERT INTO messages
          (id, conversation_id, role, content, thinking, segments, images, attachments, token_usage,
-          checkpoint_hash, checkpoint_workspace_root, run_mode, notice_tone, starts_goal, timestamp)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          checkpoints, run_mode, notice_tone, starts_goal, timestamp)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         const messageIdMap = new Map<string, string>()
         for (const row of rows) {
@@ -212,8 +219,7 @@ export function registerDatabaseHandlers(): void {
             row.images ?? null,
             row.attachments ?? null,
             row.token_usage ?? null,
-            row.checkpoint_hash ?? null,
-            row.checkpoint_workspace_root ?? null,
+            row.checkpoints ?? null,
             row.run_mode === 'research'
               ? 'research'
               : row.run_mode === 'plan'
@@ -455,8 +461,7 @@ export function registerDatabaseHandlers(): void {
         token_usage,
         images,
         attachments,
-        checkpoint_hash,
-        checkpoint_workspace_root,
+        checkpoints,
         run_mode,
         run_id,
         notice_tone,
@@ -477,9 +482,10 @@ export function registerDatabaseHandlers(): void {
           if (!persisted && !contextUsage) return undefined
           return { ...(persisted ?? {}), ...(contextUsage ?? {}) }
         })(),
-        checkpointHash: typeof checkpoint_hash === 'string' ? checkpoint_hash : undefined,
-        checkpointWorkspaceRoot:
-          typeof checkpoint_workspace_root === 'string' ? checkpoint_workspace_root : undefined,
+        checkpoints: (() => {
+          const points = parseHistoryPoints(checkpoints)
+          return points.length ? points : undefined
+        })(),
         runId: typeof run_id === 'string' ? run_id : undefined,
         runMode:
           run_mode === 'research' ? 'research' : run_mode === 'plan' ? 'plan' : 'conversation',
@@ -538,8 +544,8 @@ export function registerDatabaseHandlers(): void {
     const stmt = db.prepare(
       `INSERT INTO messages
        (id, conversation_id, role, content, thinking, segments, images, attachments, token_usage,
-        checkpoint_hash, checkpoint_workspace_root, run_mode, notice_tone, starts_goal, timestamp)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        checkpoints, run_mode, notice_tone, starts_goal, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     const segmentsJson = message.segments ? JSON.stringify(message.segments) : null
     const images = validateMessageImages(message.images)
@@ -557,8 +563,7 @@ export function registerDatabaseHandlers(): void {
       imagesJson,
       attachmentsJson,
       tokenUsageJson,
-      message.checkpointHash || null,
-      message.checkpointWorkspaceRoot || null,
+      checkpointsJson(message.checkpoints),
       message.runMode === 'research'
         ? 'research'
         : message.runMode === 'plan'
@@ -587,8 +592,8 @@ export function registerDatabaseHandlers(): void {
     if (!existing) throw new Error('Message not found in conversation')
     const stmt = db.prepare(
       `UPDATE messages
-       SET content = ?, thinking = ?, segments = ?, images = ?, attachments = ?, token_usage = ?, checkpoint_hash = ?,
-           checkpoint_workspace_root = ?, timestamp = ?,
+       SET content = ?, thinking = ?, segments = ?, images = ?, attachments = ?, token_usage = ?,
+           checkpoints = ?, timestamp = ?,
            run_mode = COALESCE(?, run_mode), starts_goal = COALESCE(?, starts_goal)
        WHERE id = ? AND conversation_id = ?`
     )
@@ -605,8 +610,7 @@ export function registerDatabaseHandlers(): void {
       imagesJson,
       attachmentsJson,
       tokenUsageJson,
-      message.checkpointHash || null,
-      message.checkpointWorkspaceRoot || null,
+      checkpointsJson(message.checkpoints),
       message.timestamp,
       // An edit may change the message's mode or whether it starts a goal; other updates keep them.
       message.runMode === 'plan' ||

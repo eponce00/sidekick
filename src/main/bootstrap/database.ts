@@ -10,7 +10,7 @@ const REQUIRED_COLUMNS = [
   { table: 'messages', column: 'images', definition: 'TEXT' },
   { table: 'messages', column: 'attachments', definition: 'TEXT' },
   { table: 'messages', column: 'token_usage', definition: 'TEXT' },
-  { table: 'messages', column: 'checkpoint_hash', definition: 'TEXT' },
+  { table: 'messages', column: 'checkpoints', definition: 'TEXT' },
   { table: 'messages', column: 'run_id', definition: 'TEXT' },
   { table: 'conversations', column: 'active_skills', definition: 'TEXT' },
   { table: 'conversations', column: 'project_id', definition: 'TEXT' },
@@ -43,7 +43,6 @@ const REQUIRED_COLUMNS = [
   { table: 'conversations', column: 'unread_completion_at', definition: 'INTEGER' },
   { table: 'conversations', column: 'forked_from_conversation_id', definition: 'TEXT' },
   { table: 'conversations', column: 'forked_from_message_id', definition: 'TEXT' },
-  { table: 'messages', column: 'checkpoint_workspace_root', definition: 'TEXT' },
   { table: 'managed_worktrees', column: 'base_ref', definition: 'TEXT' },
   { table: 'managed_worktrees', column: 'set_aside_at', definition: 'INTEGER' },
   { table: 'managed_worktrees', column: 'set_aside_head', definition: 'TEXT' },
@@ -503,8 +502,52 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       ensureRequiredColumns(db)
       attachWorktreesToChats(db)
     }
+  },
+  {
+    id: '20261028_001_project_folders',
+    description: 'let a project keep extra folders and a reply keep a History point per folder',
+    contentId: 'v1|project-folders-table|message-checkpoint-list-from-single-columns',
+    apply: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS project_folders (
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          folder_path TEXT NOT NULL,
+          position INTEGER NOT NULL,
+          added_at INTEGER NOT NULL,
+          PRIMARY KEY (project_id, name),
+          UNIQUE (project_id, folder_path)
+        );
+        CREATE INDEX IF NOT EXISTS idx_project_folders_path ON project_folders(folder_path);
+      `)
+      listMessageCheckpoints(db)
+    }
   }
 ]
+
+/**
+ * A reply kept one History point in two columns, for the one folder its project had. It now keeps
+ * a list, one point per folder it changed; each existing point becomes a list of one.
+ */
+function listMessageCheckpoints(db: Database.Database): void {
+  const columns = new Set(
+    (db.prepare('PRAGMA table_info(messages)').all() as ColumnRow[]).map(({ name }) => name)
+  )
+  if (!columns.has('checkpoints')) db.exec('ALTER TABLE messages ADD COLUMN checkpoints TEXT')
+  if (!columns.has('checkpoint_hash')) return
+  if (columns.has('checkpoint_workspace_root')) {
+    db.exec(`
+      UPDATE messages
+      SET checkpoints = json_array(
+        json_object('workspaceRoot', checkpoint_workspace_root, 'hash', checkpoint_hash)
+      )
+      WHERE checkpoint_hash IS NOT NULL AND checkpoint_workspace_root IS NOT NULL;
+    `)
+    db.exec('ALTER TABLE messages DROP COLUMN checkpoint_workspace_root')
+  }
+  // A point saved before replies named their folder cannot be placed, so it is dropped.
+  db.exec('ALTER TABLE messages DROP COLUMN checkpoint_hash')
+}
 
 /**
  * Worktrees used to be projects of their own, so a chat in one sat under "project · from main"
@@ -802,8 +845,7 @@ function applyDatabaseSchemaTransaction(db: Database.Database): void {
       attachments TEXT,
       token_usage TEXT,
       run_id TEXT,
-      checkpoint_hash TEXT,
-      checkpoint_workspace_root TEXT,
+      checkpoints TEXT,
       run_mode TEXT NOT NULL DEFAULT 'conversation',
       timestamp INTEGER NOT NULL,
       FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE

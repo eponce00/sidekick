@@ -44,14 +44,13 @@ describe('AgentMessageMaterializer', () => {
     runs.transition('run-1', 'completed', 'run-complete')
 
     new AgentMessageMaterializer(db, runs).materialize('run-1', {
-      checkpointHash: 'checkpoint-1',
-      checkpointWorkspaceRoot: 'C:/project'
+      checkpoints: [{ workspaceRoot: 'C:/project', hash: 'abcdef1' }]
     })
-    const row = db.prepare('SELECT content, run_id, checkpoint_hash FROM messages').get()
+    const row = db.prepare('SELECT content, run_id, checkpoints FROM messages').get()
     expect(row).toEqual({
       content: 'Hello',
       run_id: 'run-1',
-      checkpoint_hash: 'checkpoint-1'
+      checkpoints: JSON.stringify([{ workspaceRoot: 'C:/project', hash: 'abcdef1' }])
     })
   })
 
