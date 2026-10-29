@@ -729,18 +729,6 @@
   padding-left: var(--space-1);
 }
 
-/* The last message's hover-only meta row hangs into the end room instead of adding to it, so the
-   room under the last item is exactly --chat-end-room. */
-.messages-container > .message:last-child > .message-meta,
-.virtual-message-row.is-last > .message:last-child > .message-meta {
-  margin-bottom: calc(2px - var(--message-meta-height) - var(--space-2));
-}
-
-.messages-container > .message-user:last-child > .message-meta,
-.virtual-message-row.is-last > .message-user:last-child > .message-meta {
-  margin-bottom: calc(2px - var(--message-meta-height) - var(--space-1));
-}
-
 .image-lightbox {
   position: fixed;
   inset: 0;

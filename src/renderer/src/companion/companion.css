@@ -960,7 +960,7 @@ body {
 .cp-app .messages-container.cp-messages {
   gap: var(--space-5);
   padding: calc(env(safe-area-inset-top) + 72px) calc(env(safe-area-inset-right) + var(--space-5))
-    var(--space-6) calc(env(safe-area-inset-left) + var(--space-5));
+    var(--chat-end-room) calc(env(safe-area-inset-left) + var(--space-5));
   overscroll-behavior: contain;
 }
 
@@ -1249,13 +1249,14 @@ body > .image-lightbox {
   color: var(--accent);
 }
 
-/* The one filled button: Send in the accent, Stop in the text colour. */
+/* The one filled button: Send in the accent, Stop in the text colour. Inset as far from the card's
+   end as from its top and bottom, so it sits in the round end. */
 .cp-input-area .send-button,
 .cp-input-area .stop-button {
   width: 40px;
   min-width: 40px;
   height: 40px;
-  margin-left: var(--space-1);
+  margin: 0 2px 0 var(--space-1);
 }
 
 .cp-input-area .stop-button {
