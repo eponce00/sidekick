@@ -102,7 +102,8 @@ export function MarkdownTable({ children }: { children?: ReactNode }): React.JSX
     () => ({
       begin(cell, startX) {
         const index = cell.cellIndex
-        const start = sized ?? columnWidths()
+        // From the widths on screen: the last column may be wider than it was dragged to.
+        const start = columnWidths()
         const from = start[index] ?? cell.getBoundingClientRect().width
         const move = (event: PointerEvent): void => {
           const width = Math.max(RESIZE_MIN_PX, Math.round(from + event.clientX - startX))
@@ -125,9 +126,10 @@ export function MarkdownTable({ children }: { children?: ReactNode }): React.JSX
       },
       step(cell, by) {
         const index = cell.cellIndex
+        const shown = columnWidths()
         setSized((current) => {
-          const next = [...(current ?? columnWidths())]
-          next[index] = Math.max(RESIZE_MIN_PX, Math.round((next[index] ?? 0) + by))
+          const next = [...(current ?? shown)]
+          next[index] = Math.max(RESIZE_MIN_PX, Math.round((shown[index] ?? 0) + by))
           return next
         })
       },
@@ -135,7 +137,7 @@ export function MarkdownTable({ children }: { children?: ReactNode }): React.JSX
         setSized(null)
       }
     }),
-    [columnWidths, sized]
+    [columnWidths]
   )
 
   return (
@@ -156,7 +158,8 @@ export function MarkdownTable({ children }: { children?: ReactNode }): React.JSX
             {sized && (
               <colgroup>
                 {sized.map((width, index) => (
-                  <col key={index} style={{ width }} />
+                  // The last column takes the card's room the others leave.
+                  <col key={index} style={index < sized.length - 1 ? { width } : undefined} />
                 ))}
               </colgroup>
             )}
