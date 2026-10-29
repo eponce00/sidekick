@@ -76,6 +76,12 @@ export function BrowserWorkspace({
   const zoomed =
     state?.zoom !== undefined && state.zoom !== DEFAULT_BROWSER_ZOOM ? state.zoom : null
   const [popover, setPopover] = useState<'tools' | 'menu' | null>(null)
+  // Read by the layout loop, which must hide the page from the moment a popover is decided on,
+  // before React has drawn it.
+  const popoverOpen = useRef(false)
+  useEffect(() => {
+    popoverOpen.current = popover !== null
+  }, [popover])
   const toolsOpen = popover === 'tools'
   const [shownTool, setShownTool] = useState<string | null>(null)
   const toolsButton = useRef<HTMLButtonElement>(null)
@@ -105,6 +111,7 @@ export function BrowserWorkspace({
   }, [toolsOrigin])
 
   const closePopover = useCallback((focusButton: boolean): void => {
+    popoverOpen.current = false
     setPopover((open) => {
       if (focusButton) (open === 'tools' ? toolsButton : menuButton).current?.focus()
       return null
@@ -149,6 +156,7 @@ export function BrowserWorkspace({
       .catch(() => null)
     if (result?.snapshot)
       setSnapshot({ image: result.snapshot, zoom: result.zoom ?? DEFAULT_BROWSER_ZOOM })
+    popoverOpen.current = true
     setShownTool(null)
     setPopover(which)
   }
@@ -182,24 +190,29 @@ export function BrowserWorkspace({
     if (!element) return
     const rect = element.getBoundingClientRect()
     const bounds = clipBrowserPanelBounds(rect, window.innerWidth, window.innerHeight)
-    const hidden =
-      document.hidden ||
-      !bounds ||
-      element.closest('[hidden], [aria-hidden="true"]') ||
-      document.querySelector('[role="dialog"], [aria-modal="true"], .app-menu') ||
-      // A side panel tab is being dragged: the page would take the drag from the app.
-      document.body.dataset.panelDrag === 'true'
+    const covered = (): boolean =>
+      Boolean(
+        popoverOpen.current ||
+        document.hidden ||
+        element.closest('[hidden], [aria-hidden="true"]') ||
+        document.querySelector('[role="dialog"], [aria-modal="true"], .app-menu') ||
+        // A side panel tab is being dragged: the page would take the drag from the app.
+        document.body.dataset.panelDrag === 'true'
+      )
+    const hidden = !bounds || covered()
     const result = await window.api.agentRuns.browserWorkspace({
       conversationId,
       action: hidden ? 'unmount' : 'mount',
       ...(hidden ? {} : { bounds: bounds! })
     })
     setLayoutError('')
-    if (!hidden) setSnapshot(null)
-    if (!hidden)
-      setState((previous) =>
-        JSON.stringify(previous) === JSON.stringify(result) ? previous : result
-      )
+    // A menu that opened while the page was being shown keeps its picture of the page: clearing
+    // it here left the panel blank once the next update hid the page again.
+    if (hidden || covered()) return
+    setSnapshot(null)
+    setState((previous) =>
+      JSON.stringify(previous) === JSON.stringify(result) ? previous : result
+    )
   }, [conversationId])
 
   useEffect(() => {
