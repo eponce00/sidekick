@@ -179,18 +179,17 @@ describe('workspace path containment', () => {
   })
 
   it.runIf(process.platform !== 'linux')(
-    'matches a folder name and an absolute path whatever their letter case, where names ignore it',
+    'matches a folder name whatever its letter case, where names ignore it',
     async () => {
       const { root, api } = await twoFolders()
       const file = join(api, 'src', 'b.ts')
       expect(await resolveSecureWorkspacePath(root, 'API/src/b.ts')).toBe(file)
       expect(projectRelativePath(root, 'Api/src/b.ts')).toBe('api/src/b.ts')
-      expect(projectRelativePath(root, file.toUpperCase())).toBe('api/SRC/B.TS')
     }
   )
 
   it.runIf(process.platform === 'win32')(
-    'handles Windows spellings across folders: backslashes, drive letter case and long paths',
+    'handles Windows spellings across folders: backslashes, letter case and another drive',
     async () => {
       const { root, api } = await twoFolders()
       const file = join(api, 'src', 'b.ts')
@@ -204,6 +203,7 @@ describe('workspace path containment', () => {
         expect(await resolveSecureWorkspacePath(root, path), path).toBe(file)
         expect(projectRelativePath(root, path), path).toBe('api/src/b.ts')
       }
+      expect(projectRelativePath(root, file.toUpperCase())).toBe('api/SRC/B.TS')
       // A path on another drive is in no folder of the project.
       const otherDrive = `${root[0] === 'C' ? 'D' : 'C'}${root.slice(1)}`
       await expect(resolveSecureWorkspacePath(root, otherDrive)).rejects.toBeInstanceOf(

@@ -64,10 +64,7 @@ export function workspaceFolders(workspaceRoot: string): readonly WorkspaceFolde
 
 /** Every folder of the project whose primary folder is this root, the primary first. */
 export function workspaceFolderRoots(workspaceRoot: string): string[] {
-  return [
-    resolve(workspaceRoot),
-    ...workspaceFolders(workspaceRoot).map(({ path }) => resolve(path))
-  ]
+  return [workspaceRoot, ...workspaceFolders(workspaceRoot).map(({ path }) => path)]
 }
 
 function pathInside(root: string, target: string): string | null {
