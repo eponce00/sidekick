@@ -297,6 +297,11 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
     if (event.type === 'run.retrying' && event.payload.reason === VERIFICATION_PASS_REASON) {
       deferredAnswer = { contentBefore: committedContent, content: lastProvisionalContent }
     }
+    if (event.type === 'context.estimated') {
+      // The prompt about to be sent already holds the previous turn's reply.
+      promptTokens = Number(event.payload.promptTokens || 0)
+      completionTokens = 0
+    }
     if (event.type === 'usage.updated') {
       const turnCompletionTokens = Number(event.payload.completionTokens || 0)
       const turnTokensPerSecond = Number(event.payload.tokensPerSecond || 0)

@@ -6,8 +6,8 @@ import { calculateContextCapacity, resolveMaxOutputTokens } from '../../../share
 import { resolveContextDisplay } from '../utils/contextDisplay'
 import './ContextIndicator.css'
 
-const RING_RADIUS = 7.25
-const RING_STROKE = 1.5
+const RING_STROKE = 2.25
+const RING_RADIUS = 8 - RING_STROKE / 2 - 0.25
 
 interface ContextIndicatorProps {
   currentTokens: number
@@ -164,7 +164,6 @@ function ContextIndicator({
               stroke={roundedPercentage > 0 ? 'var(--border-color)' : 'var(--border-subtle)'}
               strokeWidth={RING_STROKE}
             />
-            {/* Square ends, so a little use is a short arc rather than a round dot. */}
             {roundedPercentage > 0 && (
               <circle
                 cx="8"
@@ -175,19 +174,12 @@ function ContextIndicator({
                 strokeWidth={RING_STROKE}
                 strokeDasharray={circumference}
                 strokeDashoffset={strokeDashoffset}
-                strokeLinecap="butt"
+                strokeLinecap="round"
                 transform="rotate(-90 8 8)"
                 style={{
                   transition: 'stroke-dashoffset 0.3s ease, stroke 0.3s ease'
                 }}
               />
-            )}
-            {/* Two digits are all the ring holds, so a full ring draws none: its whole red arc says
-                full, and the accessible name and tooltip give the exact value. */}
-            {roundedPercentage > 0 && roundedPercentage < 100 && (
-              <text x="8" y="8" textAnchor="middle" dominantBaseline="central">
-                {roundedPercentage}
-              </text>
             )}
           </svg>
         </span>

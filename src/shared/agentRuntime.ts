@@ -282,6 +282,9 @@ export const AGENT_RUN_EVENT_TYPES = [
   'question.requested',
   'question.resolved',
   'usage.updated',
+  // Before each model request: the calibrated size of the prompt about to be sent, so the context
+  // meter is current before a provider that reports usage only at the end has answered.
+  'context.estimated',
   'compaction.started',
   'compaction.completed',
   'verification.updated',
