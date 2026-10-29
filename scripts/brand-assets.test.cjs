@@ -31,6 +31,26 @@ const EXPECTED_BRAND_ASSET_HASHES = new Map([
     'build/appx/Square44x44Logo.png',
     'd183461ac587237a9e2b96a975992562842fe0780a60c2efc37b706e931165bd'
   ],
+  [
+    'build/appx/Square44x44Logo.targetsize-16_altform-unplated.png',
+    '067514857a8c78746688a40c637cf851ecf8cec8a89c3578a60d25a54473a8eb'
+  ],
+  [
+    'build/appx/Square44x44Logo.targetsize-24_altform-unplated.png',
+    '9849cdc7b6ed76b4e306edfd022b631638da6074d12ba6c1d070842c8f9a0891'
+  ],
+  [
+    'build/appx/Square44x44Logo.targetsize-32_altform-unplated.png',
+    '4374af24cd0f305e9d1eb72b1cb80b8c6049333ec5548daec47360a1c6b86418'
+  ],
+  [
+    'build/appx/Square44x44Logo.targetsize-48_altform-unplated.png',
+    '00591f65ad7bed55db76f922f19a539c4ff7133bc128f9fa0147c9df6effe501'
+  ],
+  [
+    'build/appx/Square44x44Logo.targetsize-256_altform-unplated.png',
+    'fa1ec514e6fae61badc34f3bd79067a3fde693c89de42135ea992f04abe5272a'
+  ],
   ['build/appx/StoreLogo.png', 'a30d1d2a3bb8bfbab5bc391d65371772ab27a294aa7a22e188dc2de2ac81974a'],
   [
     'build/appx/Wide310x150Logo.png',
