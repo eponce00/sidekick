@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.25.1 — 2026-10-29
+
+- Read long replies in full on the phone. The computer cut every reply it sent the phone to 4,000
+  characters, so a long answer ended in "… (shortened)". Opening a reply that was still running
+  showed only its first part, and a long saved reply could lose its final answer.
+- Keep the status line under a working reply in view on the phone. It slid behind the message box
+  when a run started. The box now stays one line during a run, and Stop sits evenly in its end.
+- See the whole hover row under the last message on the desktop. It hung into the fade above the
+  composer, which cut it off.
+- Resize a reply's table without it shrinking inside its card. The last column takes the room the
+  others leave, and a table wider than its card fades more clearly at the edge that scrolls.
+- Choose what to import from in **Import browser data** as one list: each browser profile is a row,
+  named as you named it in the browser.
+- Line up the sidebar: a project's chats start on the project name's edge, like the other chats,
+  New chat and Phone. The sidebar's foot shows the installed version beside Phone, under a divider.
+  In Settings, Back to app sits over the search field.
+- Project hooks and the Recent approvals list are gone from Agent settings. The Office Python
+  setting now says what it is for: checking that a Word, Excel or PowerPoint file the agent made
+  isn't broken.
+
 ## 0.25.0 — 2026-10-29
 
 - Work across several folders in one project. **Edit project…** adds folders beside the primary
