@@ -319,17 +319,19 @@ describe('AgentRunKernel', () => {
     const result = await kernel.start({ ...input(), verificationController })
     const projection = projectAgentRunEvents(store.listEvents('run-1'))
 
-    // The pass changed nothing, so the answer it followed stays the response
-    // and its reply becomes a note on the verification result.
-    expect(result.content).toBe('The change is done.')
-    expect(result.finalResponse).toBe('The change is done.')
-    expect(projection.content).toBe('The change is done.')
-    expect(projection.segments.map((segment) => segment.type)).toEqual(['text', 'verification'])
-    expect(projection.segments.at(-1)).toMatchObject({
-      type: 'verification',
-      verification: { status: 'passed', headline: 'Typecheck passed.' },
-      content: 'The change is now verified.'
-    })
+    // The reply before the pass is a draft folded into its result; the pass's reply is the answer,
+    // and the last thing the user reads.
+    expect(result.content).toBe('The change is now verified.')
+    expect(result.finalResponse).toBe('The change is now verified.')
+    expect(projection.content).toBe('The change is now verified.')
+    expect(projection.segments).toEqual([
+      expect.objectContaining({
+        type: 'verification',
+        verification: expect.objectContaining({ status: 'passed', headline: 'Typecheck passed.' }),
+        steps: [{ type: 'text', content: 'The change is done.' }]
+      }),
+      { type: 'text', content: 'The change is now verified.' }
+    ])
     expect(store.listEvents('run-1')).toContainEqual(
       expect.objectContaining({
         type: 'run.retrying',
@@ -338,45 +340,7 @@ describe('AgentRunKernel', () => {
     )
   })
 
-  it('keeps the reply as the answer when the pass followed an empty answer', async () => {
-    const sampler = sequence(
-      sampledTurn({ content: '' }),
-      sampledTurn({ content: 'Cleaned up.\n\n- `site/index.html` is well-formed' })
-    )
-    const kernel = new AgentRunKernel(store, undefined, sampler)
-    const summary = {
-      status: 'unverified' as const,
-      workspaceRoot: '/project',
-      baselineRevision: 0,
-      currentRevision: 1,
-      changedPaths: ['site/index.html'],
-      evidence: [],
-      suggestedChecks: [],
-      headline: 'Workspace changes have not been verified.'
-    }
-    const verificationController = {
-      afterTerminalTurn: vi
-        .fn()
-        .mockResolvedValueOnce({ continue: true, prompt: 'Run verification.', summary })
-        .mockResolvedValueOnce({ continue: false, summary })
-    }
-
-    const result = await kernel.start({ ...input(), verificationController })
-    const projection = projectAgentRunEvents(store.listEvents('run-1'))
-
-    expect(result.finalResponse).toBe('Cleaned up.\n\n- `site/index.html` is well-formed')
-    expect(projection.content.trim()).toBe('Cleaned up.\n\n- `site/index.html` is well-formed')
-    // The reply is a top-level answer, not a note folded under the verification result.
-    expect(projection.segments).toContainEqual({
-      type: 'text',
-      content: 'Cleaned up.\n\n- `site/index.html` is well-formed'
-    })
-    const verification = projection.segments.at(-1)
-    expect(verification?.type).toBe('verification')
-    expect(verification && 'content' in verification ? verification.content : '').toBeFalsy()
-  })
-
-  it('folds a verification pass that changed nothing under the streamed answer', async () => {
+  it('folds a streamed draft and the pass that checked it above the answer it ends with', async () => {
     const router = { execute: vi.fn(async () => ({ content: 'tests passed' })) }
     const sampler = sequence(
       sampledTurn({ content: 'Here is the answer.' }, [
@@ -415,60 +379,16 @@ describe('AgentRunKernel', () => {
     const result = await kernel.start({ ...input(router), verificationController })
     const projection = projectAgentRunEvents(store.listEvents('run-1'))
 
-    expect(result.finalResponse).toBe('Here is the answer.')
-    expect(projection.content).toBe('Here is the answer.')
+    expect(result.finalResponse).toBe('All tests pass.')
+    // The draft is not part of the reply's text; what the pass said on the way is, as in any run.
+    expect(projection.content).toBe('Running the tests. All tests pass.')
     expect(projection.segments).toHaveLength(2)
-    expect(projection.segments[0]).toEqual({ type: 'text', content: 'Here is the answer.' })
-    const verification = projection.segments[1]
-    expect(verification).toMatchObject({
-      type: 'verification',
-      content: 'All tests pass.'
-    })
+    const verification = projection.segments[0]
     expect(verification.type === 'verification' && verification.pending).toBeFalsy()
     expect(
       verification.type === 'verification' && verification.steps?.map((step) => step.type)
-    ).toEqual(['text', 'tool'])
-  })
-
-  it('keeps the pass in the timeline when it changed the workspace', async () => {
-    const sampler = sequence(
-      sampledTurn({ content: 'Draft answer.' }, [{ message: { content: 'Draft answer.' } }]),
-      sampledTurn({ content: 'Fixed the failing test; all pass.' }, [
-        { message: { content: 'Fixed the failing test; all pass.' } }
-      ])
-    )
-    const summary = {
-      status: 'failed' as const,
-      workspaceRoot: '/project',
-      baselineRevision: 0,
-      currentRevision: 1,
-      changedPaths: ['app.ts'],
-      evidence: [],
-      suggestedChecks: [],
-      headline: 'Tests failed.'
-    }
-    const verificationController = {
-      afterTerminalTurn: vi
-        .fn()
-        .mockResolvedValueOnce({ continue: true, prompt: 'Run verification.', summary })
-        .mockResolvedValueOnce({
-          continue: false,
-          summary: { ...summary, currentRevision: 2, status: 'passed', headline: 'Verified.' }
-        })
-    }
-    const kernel = new AgentRunKernel(store, undefined, sampler)
-    const result = await kernel.start({ ...input(), verificationController })
-    const projection = projectAgentRunEvents(store.listEvents('run-1'))
-
-    expect(result.finalResponse).toBe('Fixed the failing test; all pass.')
-    expect(projection.content).toBe('Fixed the failing test; all pass.')
-    expect(projection.segments.map((segment) => segment.type)).toEqual([
-      'text',
-      'run_status',
-      'text',
-      'verification'
-    ])
-    expect(projection.segments.at(-1)).not.toHaveProperty('content')
+    ).toEqual(['text', 'text', 'tool'])
+    expect(projection.segments[1]).toEqual({ type: 'text', content: 'All tests pass.' })
   })
 
   it('reminds the model to verify once, after the first round that changed the workspace', async () => {

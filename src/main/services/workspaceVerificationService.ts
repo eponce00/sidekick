@@ -670,11 +670,10 @@ export class WorkspaceVerificationService {
       return { continue: false, summary }
     }
     const answerInstruction =
-      'Your previous reply stays the answer the user reads. After verifying, reply with one short sentence stating the result; do not repeat or summarize that answer. ' +
-      'If you had to change files, end instead with a complete answer, because it replaces the previous one.'
+      'Your previous reply was held back as a draft. After verifying, end with your complete answer, written for someone who has not seen the draft: ' +
+      'what you did, and what the check showed. It replaces the draft, so do not refer to it.'
     return {
-      // A check and a look are asked for in one pass: a second pass would take the first one's
-      // short result as the answer it keeps.
+      // A check and a look are asked for in one pass, so the model writes its answer once.
       afterTerminalTurn: async () => {
         const check = decide(answerInstruction)
         const look = visualDecision(check.continue ? '' : answerInstruction)

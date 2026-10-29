@@ -560,15 +560,30 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
     marker: ProjectedContentSegment
     steps: ProjectedContentSegment[]
     followsAnswer: boolean
+    /** Where the reply the pass followed sits in the timeline, and how many segments it is. */
+    draft: { start: number; count: number }
   } | null = null
   let foldedVerification: { steps: ProjectedContentSegment[]; note: string } | null = null
+  // Where the verification result goes: before the answer its pass ended with, so that answer is
+  // what the reply ends on. Unset, the result goes last.
+  let verificationAt: number | null = null
   let streamedTurnContent = ''
   let streamedTurnThinking = ''
   let turnSegmentStart = 0
   let lastProvisional: { content: string; streamed: boolean } | null = null
-  const closeVerificationPass = (fold?: { note: string }): void => {
+  const closeVerificationPass = (
+    fold?: { note: string } | { answer: ProjectedContentSegment[] }
+  ): void => {
     if (!verificationPass) return
-    if (fold) foldedVerification = { steps: verificationPass.steps, note: fold.note }
+    if (fold && 'answer' in fold) {
+      // The draft stays in sight while the pass works; once the answer is in, it folds into the
+      // pass's result above that answer.
+      const { start, count } = verificationPass.draft
+      const draft = mainSegments.splice(start, count)
+      foldedVerification = { steps: [...draft, ...verificationPass.steps], note: '' }
+      verificationAt = mainSegments.length
+      mainSegments.push(...fold.answer)
+    } else if (fold) foldedVerification = { steps: verificationPass.steps, note: fold.note }
     else mainSegments.push(verificationPass.marker, ...verificationPass.steps)
     verificationPass = null
     segments = mainSegments
@@ -646,7 +661,14 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
           }
           closeVerificationPass({ note: (content || streamedNote).trim() })
         } else {
-          closeVerificationPass()
+          // The pass ends with the whole answer; the draft it followed and its checks fold above.
+          const steps = verificationPass.steps
+          const answer: ProjectedContentSegment[] = []
+          for (let index = steps.length - 1; index >= turnStart; index--) {
+            if (steps[index]?.type !== 'text') continue
+            answer.unshift(...steps.splice(index, 1))
+          }
+          closeVerificationPass({ answer })
         }
       }
     }
@@ -745,15 +767,16 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
         status: { kind: 'retrying', reason, detail, timestamp: event.timestamp }
       }
       if (reason === VERIFICATION_PASS_REASON && !verificationPass) {
-        // The answer the pass followed is the response to read. A provider that
-        // did not stream it has not shown it yet.
+        // The reply the pass followed is a draft of the answer, shown while the pass works. A
+        // provider that did not stream it has not shown it yet.
         if (lastProvisional?.content && !lastProvisional.streamed) {
           appendTextualSegment('text', lastProvisional.content)
         }
         verificationPass = {
           marker,
           steps: [],
-          followsAnswer: Boolean(lastProvisional?.content.trim())
+          followsAnswer: Boolean(lastProvisional?.content.trim()),
+          draft: { start: turnSegmentStart, count: segments.length - turnSegmentStart }
         }
         segments = verificationPass.steps
         streamedTurnContent = ''
@@ -820,18 +843,20 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
   const folded = foldedVerification as { steps: ProjectedContentSegment[]; note: string } | null
   const passSteps = openPass?.steps ?? folded?.steps ?? []
   const note = folded?.note ?? ''
-  if (latestVerification && latestVerification.status !== 'not_applicable') {
-    mainSegments.push({
-      type: 'verification',
-      verification: latestVerification,
-      ...(passSteps.length ? { steps: passSteps } : {}),
-      ...(note ? { content: note } : {}),
-      ...(openPass ? { pending: true } : {})
-    })
-  } else {
-    mainSegments.push(...passSteps)
-    if (note) mainSegments.push({ type: 'text', content: note })
-  }
+  const result: ProjectedContentSegment[] =
+    latestVerification && latestVerification.status !== 'not_applicable'
+      ? [
+          {
+            type: 'verification',
+            verification: latestVerification,
+            ...(passSteps.length ? { steps: passSteps } : {}),
+            ...(note ? { content: note } : {}),
+            ...(openPass ? { pending: true } : {})
+          }
+        ]
+      : [...passSteps, ...(note ? [{ type: 'text' as const, content: note }] : [])]
+  const resultAt = (verificationAt as number | null) ?? mainSegments.length
+  mainSegments.splice(resultAt, 0, ...result)
 
   return {
     content: fullContent,
