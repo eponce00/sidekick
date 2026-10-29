@@ -7,6 +7,10 @@ on:
   push:
     tags:
       - 'v*'
+  # Certification takes days and releases come faster, so a tag that finds a submission still on
+  # its way to the Store leaves it alone. A daily run then submits the latest release once it can.
+  schedule:
+    - cron: '41 7 * * *'
   workflow_dispatch:
     inputs:
       submit:
@@ -17,19 +21,115 @@ on:
 permissions:
   contents: read
 
+# One run at a time, so two runs never race to replace the same Partner Center submission.
 concurrency:
-  group: store-${{ github.ref }}
+  group: store
   cancel-in-progress: false
 
 jobs:
+  plan:
+    name: Plan the Store submission
+    if: vars.SIDEKICK_STORE_IDENTITY_NAME != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ref: ${{ steps.plan.outputs.ref }}
+      tag: ${{ steps.plan.outputs.tag }}
+      build: ${{ steps.plan.outputs.build }}
+      submit: ${{ steps.plan.outputs.submit }}
+    steps:
+      # Secrets cannot appear in a condition, so this step reads them and reports what to do.
+      # Submitting replaces the pending submission, which would restart its certification, so a
+      # build is submitted only when no submission is on its way to the Store and the build is
+      # newer than what the Store has.
+      - name: Decide what to build and whether to submit it
+        id: plan
+        shell: pwsh
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          SUBMIT_INPUT: ${{ inputs.submit }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          TENANT_ID: ${{ secrets.PARTNER_CENTER_TENANT_ID }}
+          CLIENT_ID: ${{ secrets.PARTNER_CENTER_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}
+          PRODUCT_ID: ${{ vars.SIDEKICK_STORE_PRODUCT_ID }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # A scheduled run builds the latest release; any other run builds the commit that started it.
+          if ($env:EVENT -eq 'schedule') {
+            $tag = gh release view --repo $env:REPOSITORY --json tagName --jq .tagName
+            $ref = "refs/tags/$tag"
+          } else {
+            $tag = if ($env:REF_TYPE -eq 'tag') { $env:REF_NAME } else { '' }
+            $ref = $env:GITHUB_SHA
+          }
+          $manifest = gh api -H 'Accept: application/vnd.github.raw' "repos/$env:REPOSITORY/contents/package.json?ref=$ref" | ConvertFrom-Json
+          $version = [version]"$($manifest.version).0"
+          $requested = $env:EVENT -in 'push', 'schedule' -or $env:SUBMIT_INPUT -eq 'true'
+
+          $access = [bool]$env:CLIENT_SECRET -and [bool]$env:PRODUCT_ID
+          $submit = $false
+          if ($access) {
+            # An unreachable Partner Center skips the submission but still builds the package.
+            try {
+              $token = (Invoke-RestMethod -Method Post "https://login.microsoftonline.com/$env:TENANT_ID/oauth2/token" -Body @{
+                grant_type = 'client_credentials'
+                client_id = $env:CLIENT_ID
+                client_secret = $env:CLIENT_SECRET
+                resource = 'https://manage.devcenter.microsoft.com'
+              }).access_token
+              Write-Host "::add-mask::$token"
+              $headers = @{ Authorization = "Bearer $token" }
+              $api = "https://manage.devcenter.microsoft.com/v1.0/my/applications/$env:PRODUCT_ID"
+              $packageVersion = {
+                param($id)
+                (Invoke-RestMethod "$api/submissions/$id" -Headers $headers).applicationPackages |
+                  Where-Object { $_.fileStatus -ne 'PendingDelete' -and $_.version } |
+                  ForEach-Object { [version]$_.version } | Sort-Object -Descending | Select-Object -First 1
+              }
+              $app = Invoke-RestMethod $api -Headers $headers
+              $published = if ($app.lastPublishedApplicationSubmission) { & $packageVersion $app.lastPublishedApplicationSubmission.id }
+              Write-Host "Published in the Store: $published"
+              $busy = $false
+              if ($app.pendingApplicationSubmission) {
+                $id = $app.pendingApplicationSubmission.id
+                $status = (Invoke-RestMethod "$api/submissions/$id/status" -Headers $headers).status
+                $pending = & $packageVersion $id
+                Write-Host "Pending submission: $pending, $status"
+                # A failed or uncommitted submission may be replaced; any other is still in progress.
+                $busy = $status -in 'CommitStarted', 'PreProcessing', 'Certification', 'Release', 'PendingPublication', 'Publishing'
+                if ($busy -and $requested) {
+                  $wait = if ($status -eq 'PendingPublication') { 'waits for Publish now in Partner Center' } else { "is in $status" }
+                  Write-Host "::notice title=Store submission::$pending $wait, so $version is not submitted; a later run submits the newest release."
+                }
+              }
+              $submit = $requested -and -not $busy -and (-not $published -or $version -gt $published)
+            } catch {
+              Write-Host "::warning title=Store submission::Could not read the Store submissions: $($_.Exception.Message)"
+            }
+          }
+          Write-Host "Building $ref ($version); Partner Center API access: $access; submitting: $submit"
+          # A scheduled run that has nothing to submit builds nothing.
+          $build = $env:EVENT -ne 'schedule' -or $submit
+          "ref=$ref" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "build=$($build.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          "submit=$($submit.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
   store:
     name: Build Microsoft Store package
-    if: vars.SIDEKICK_STORE_IDENTITY_NAME != ''
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     runs-on: windows-latest
     timeout-minutes: 40
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
 
       - uses: actions/setup-node@v7
         with:
@@ -47,12 +147,14 @@ jobs:
         if: steps.install.outcome == 'failure'
         run: npm ci
       - name: Verify stable tag matches package version
-        if: github.ref_type == 'tag'
+        if: needs.plan.outputs.tag != ''
         shell: pwsh
+        env:
+          TAG: ${{ needs.plan.outputs.tag }}
         run: |
           $version = node -p "require('./package.json').version"
-          if ($env:GITHUB_REF_NAME -ne "v$version") {
-            throw "Expected tag v$version, received $env:GITHUB_REF_NAME"
+          if ($env:TAG -ne "v$version") {
+            throw "Expected tag v$version, received $env:TAG"
           }
       - name: Build the Store package
         env:
@@ -90,26 +192,11 @@ jobs:
           path: dist/SideKick-*-windows-x64-store.appx
           if-no-files-found: error
           retention-days: 30
-      # A version tag, or a manual run that asks for it, is submitted for certification once
-      # Partner Center API access is set up. Secrets cannot appear in a condition, so a step
-      # reads them and reports whether to submit.
-      - name: Decide whether to submit to the Store
-        id: store
-        shell: pwsh
-        env:
-          CLIENT_SECRET: ${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}
-          PRODUCT_ID: ${{ vars.SIDEKICK_STORE_PRODUCT_ID }}
-          REQUESTED: ${{ github.ref_type == 'tag' || inputs.submit == true }}
-        run: |
-          $access = [bool]$env:CLIENT_SECRET -and [bool]$env:PRODUCT_ID
-          $submit = $access -and $env:REQUESTED -eq 'true'
-          Write-Host "Partner Center API access: $access; submitting: $submit"
-          "submit=$($submit.ToString().ToLower())" >> $env:GITHUB_OUTPUT
       - name: Set up the Microsoft Store Developer CLI
-        if: steps.store.outputs.submit == 'true'
+        if: needs.plan.outputs.submit == 'true'
         uses: microsoft/microsoft-store-apppublisher@v1.4
       - name: Submit the package for certification
-        if: steps.store.outputs.submit == 'true'
+        if: needs.plan.outputs.submit == 'true'
         shell: pwsh
         env:
           TENANT_ID: ${{ secrets.PARTNER_CENTER_TENANT_ID }}

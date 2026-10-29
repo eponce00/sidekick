@@ -194,7 +194,17 @@ package locally with those variables set in the environment.
 Once Partner Center API access is set up, the workflow also submits that package for certification
 with the [Microsoft Store Developer CLI](https://learn.microsoft.com/windows/apps/publish/msstore-dev-cli/overview),
 starting from the last published submission so the listing carries over. Until then, submit the
-artifact by hand in a new Partner Center submission. Setting up API access, once:
+artifact by hand in a new Partner Center submission.
+
+A new submission replaces the pending one, and certification takes days, longer than the time
+between releases. Through 0.24.0 every tag replaced the submission still in certification, so the
+Store kept serving 0.14.0. The workflow therefore asks the
+[submission API](https://learn.microsoft.com/windows/uwp/monetize/get-status-for-an-app-submission)
+first. A tag whose package is newer than the Store's is submitted only when no submission is in
+progress (being processed, in certification, waiting to be published, or publishing); otherwise
+the run notes which submission it is waiting for. A daily scheduled run submits the latest release
+once the Store is free, and builds nothing when there is nothing to submit. Setting up API access,
+once:
 
 1. Link a Microsoft Entra directory to the Partner Center account (**Account settings** ›
    **Tenants**), creating one if the account has none, and sign in to Partner Center with it.
@@ -206,7 +216,8 @@ artifact by hand in a new Partner Center submission. Setting up API access, once
    `SIDEKICK_STORE_PRODUCT_ID`.
 
 To submit a build without a new tag, run the Store workflow by hand with **Submit** ticked; the
-package version must be higher than the one in the Store. A submission copies its publishing options from the last published one. The first submission
+package version must be higher than the one in the Store, and no submission may be in progress. A
+submission copies its publishing options from the last published one. The first submission
 waited for a manual **Publish now**, so set **Submission options** to publish as soon as
 certification passes on a submission before it is published; later ones then publish on their own.
 Partner Center keeps a client secret for two years; the current one expires October 18, 2028.
@@ -221,7 +232,9 @@ before submitting it, unpack it with `makeappx unpack`, register the folder with
 opened a page. Windows does not redirect its data: where `%APPDATA%\SideKick` already exists, the
 Store and installer editions share one profile, so a user can switch between them without losing
 chats. Voice model downloads have not been checked in the package. Its tile images in `build/appx`
-are rendered by the same brand-asset script and hash-checked with the other icon derivatives.
+are rendered by the same brand-asset script and hash-checked with the other icon derivatives. The
+`altform-unplated` sizes of the 44 px logo keep the taskbar, Start's app list and Alt+Tab from
+drawing it on an accent-coloured plate; electron-builder indexes them in `resources.pri`.
 
 ## What the tagged workflow proves
 
