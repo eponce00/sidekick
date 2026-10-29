@@ -23,7 +23,6 @@ import {
   type ImportBrowser
 } from '../../../shared/browserLibrary'
 import { useModalDialog } from '../hooks/useModalDialog'
-import { Select } from './Select'
 import { Checkbox } from './SettingsLayout'
 import './BrowserLibrary.css'
 
@@ -135,52 +134,72 @@ const ARROW_STEPS: Record<string, number> = {
   ArrowUp: -1
 }
 
-/** The browsers found, as one choice: arrow keys move it, as in any radio group. */
-function BrowserChoice({
+/**
+ * Every browser profile found, as one list to import from, as Chrome's and Firefox's importers
+ * list them: a browser with several profiles has a row for each. Arrow keys move the choice, as in
+ * any radio group.
+ */
+function SourceChoice({
   sources,
-  value,
+  browser,
+  profileId,
   disabled,
   labelledBy,
   onChange
 }: {
   sources: BrowserImportSource[]
-  value: ImportBrowser | ''
+  browser: ImportBrowser | ''
+  profileId: string
   disabled: boolean
   labelledBy: string
-  onChange: (source: BrowserImportSource) => void
+  onChange: (browser: ImportBrowser, profileId: string) => void
 }): React.JSX.Element {
   const groupRef = useRef<HTMLDivElement>(null)
+  const choices = sources.flatMap((source) =>
+    source.profiles.map((profile) => ({
+      source,
+      profile,
+      // A browser's only profile goes unnamed: it is just that browser.
+      detail: source.profiles.length > 1 ? profile.name : null
+    }))
+  )
   const move = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
     const step = ARROW_STEPS[event.key]
     if (!step) return
     event.preventDefault()
-    const next = (index + step + sources.length) % sources.length
-    onChange(sources[next])
-    groupRef.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus()
+    const next = choices[(index + step + choices.length) % choices.length]
+    onChange(next.source.browser, next.profile.id)
+    groupRef.current
+      ?.querySelectorAll<HTMLButtonElement>('[role="radio"]')
+      [choices.indexOf(next)]?.focus()
   }
   return (
     <div
       ref={groupRef}
       role="radiogroup"
       aria-labelledby={labelledBy}
-      className="browser-import-browsers"
+      className="browser-import-sources"
     >
-      {sources.map((source, index) => {
-        const selected = source.browser === value
+      {choices.map(({ source, profile, detail }, index) => {
+        const selected = source.browser === browser && profile.id === profileId
         return (
           <button
-            key={source.browser}
+            key={`${source.browser}:${profile.id}`}
             type="button"
             role="radio"
             aria-checked={selected}
             tabIndex={selected ? 0 : -1}
             disabled={disabled}
-            className={`browser-import-browser${selected ? ' is-selected' : ''}`}
-            onClick={() => onChange(source)}
+            className={`browser-import-source${selected ? ' is-selected' : ''}`}
+            onClick={() => onChange(source.browser, profile.id)}
             onKeyDown={(event) => move(event, index)}
           >
             <BrowserIcon browser={source.browser} />
-            <span className="browser-import-browser-name">{source.name}</span>
+            <span className="browser-import-source-text">
+              <span className="browser-import-source-name">{source.name}</span>
+              {detail && <span className="browser-import-source-profile">{detail}</span>}
+            </span>
+            <span className="browser-import-source-mark" aria-hidden="true" />
           </button>
         )
       })}
@@ -262,7 +281,6 @@ export function BrowserImportDialog({
 
   if (!isOpen) return null
 
-  const source = sources?.find((entry) => entry.browser === browser)
   const previous = browser
     ? imported.find((entry) => entry.id === browserImportSourceId(browser, profileId))
     : undefined
@@ -350,36 +368,19 @@ export function BrowserImportDialog({
             <>
               <section className="browser-import-section">
                 <span id={browsersLabelId} className="browser-import-label">
-                  Browser
+                  Import from
                 </span>
-                <BrowserChoice
+                <SourceChoice
                   sources={sources}
-                  value={browser}
+                  browser={browser}
+                  profileId={profileId}
                   disabled={busy}
                   labelledBy={browsersLabelId}
-                  onChange={(next) => {
-                    if (next.browser === browser) return
-                    setBrowser(next.browser)
-                    setProfileId(next.profiles[0]?.id ?? '')
+                  onChange={(nextBrowser, nextProfile) => {
+                    setBrowser(nextBrowser)
+                    setProfileId(nextProfile)
                   }}
                 />
-                {source && source.profiles.length > 1 && (
-                  <div className="browser-import-profile">
-                    <span>Profile</span>
-                    <Select
-                      aria-label="Profile"
-                      value={profileId}
-                      disabled={busy}
-                      onChange={(event) => setProfileId(event.target.value)}
-                    >
-                      {source.profiles.map((profile) => (
-                        <option key={profile.id} value={profile.id}>
-                          {profile.name}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                )}
               </section>
 
               <section
