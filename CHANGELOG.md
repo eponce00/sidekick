@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.25.3 — 2026-10-30
+
+- Attach files from anywhere on your computer. **+** → Files used to accept only files inside the
+  project; a file from elsewhere is now copied into the project's `.sidekick/uploads` folder, which
+  git ignores, and a chat without a project keeps the copy in its own folder.
+- Drop or paste PDFs, images and other files on the message box. It shows a dashed outline while
+  you drag over it, and a pasted file is attached rather than only a pasted image.
+
 ## 0.25.2 — 2026-10-29
 
 - Send a message without it failing with "Cannot read properties of null (reading 'phase')". In
