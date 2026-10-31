@@ -5,6 +5,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $resolvedExecutable = (Resolve-Path -LiteralPath $Executable).Path
+# Without it the computer use switch would do nothing, with no error to notice.
+$computerDriver = Join-Path (Split-Path $resolvedExecutable) 'resources\computer-driver\cua-driver.exe'
+if (-not (Test-Path -LiteralPath $computerDriver)) {
+  throw "The package is missing $computerDriver"
+}
 $tempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
 $profile = Join-Path $tempRoot ('sidekick-smoke-' + [guid]::NewGuid().ToString('N'))
 $stdout = Join-Path $profile 'stdout.log'
