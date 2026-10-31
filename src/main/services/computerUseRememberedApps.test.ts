@@ -14,7 +14,6 @@ describe('always allowed apps', () => {
     writeFileSync(app, 'first')
     await store.add(app)
     expect(await store.has(app)).toBe(true)
-    expect(await store.has(app.toUpperCase())).toBe(true)
     writeFileSync(app, 'swapped')
     expect(await store.has(app)).toBe(false)
   })

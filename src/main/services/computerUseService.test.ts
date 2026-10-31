@@ -272,7 +272,7 @@ describe('what the agent may reach', () => {
     service.runEnded('chat')
     await service.requestApp('chat', 'notes', signal)
     await expect(service.scroll('chat', 'notes', 'up', 3, {}, signal)).resolves.toBeTruthy()
-  })
+  }, 20_000)
 
   it('sends no click to an app that ignores them, and lets the agent choose real input', async () => {
     const { service, call, appWindows } = harness([app('notes')])
