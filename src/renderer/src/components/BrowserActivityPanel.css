@@ -114,12 +114,13 @@
   opacity: 0.4;
   cursor: default;
 }
-/* A tab is one piece, its close button inside it; the active one shows by surface and weight. */
+/* A tab is one piece, its close button inside it; the active one shows by surface and weight.
+   Its width ignores the title, so a page that flashes "New message" in its title keeps its tab
+   still; tabs share any shortage of room evenly before the strip scrolls. */
 .browser-workspace-tab {
   display: flex;
+  flex: 0 1 180px;
   min-width: 90px;
-  max-width: 180px;
-  flex-shrink: 0;
   align-items: center;
   min-height: 28px;
   border-radius: var(--radius-sm);
