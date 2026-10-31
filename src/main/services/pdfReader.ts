@@ -188,11 +188,11 @@ function pageHeading(reading: PageReading, totalPages: number, imageBudget: numb
   if (reading.look === 'scan') notes.push('scanned: no text layer')
   if (reading.look === 'pictures') notes.push('has pictures or drawings')
   if (reading.look === 'blank') notes.push('blank')
-  if (reading.image) notes.push('page image attached')
-  else if (reading.ocr === 'recognized') notes.push('text recognized by OCR')
+  if (reading.ocr === 'recognized') notes.push('text recognized by OCR')
   else if (reading.ocr === 'unavailable') notes.push('OCR is unavailable on this computer')
   else if (reading.ocr === 'failed') notes.push('OCR failed')
   else if (reading.ocr === 'deferred') notes.push(`read pages "${reading.number}" to recognize it`)
+  if (reading.image) notes.push('page image attached')
   else if (reading.look === 'pictures')
     notes.push(imageBudget ? `read pages "${reading.number}" to see it` : 'not shown to this model')
   return `--- Page ${reading.number} of ${totalPages}${notes.length ? ` (${notes.join('; ')})` : ''} ---`
@@ -200,8 +200,9 @@ function pageHeading(reading: PageReading, totalPages: number, imageBudget: numb
 
 /**
  * Read a PDF the way the model providers' own PDF support does: each page's text, and an image of
- * the pages whose text alone misses something. A scanned page that cannot be shown is recognized
- * with the computer's own OCR instead.
+ * the pages whose text alone misses something. A scanned page's text comes from the computer's own
+ * OCR, shown or not: an image leaves the conversation once newer ones fill the provider's budget,
+ * and the words must outlast it.
  */
 export async function readPdf(bytes: Uint8Array, options: PdfReadOptions): Promise<PdfReadResult> {
   const runtime = await loadPdfRuntime()
@@ -267,11 +268,11 @@ export async function readPdf(bytes: Uint8Array, options: PdfReadOptions): Promi
       })
     }
 
-    const unseen = readings.filter((reading) => reading.look === 'scan' && !reading.image)
-    if (unseen.length) {
+    const scans = readings.filter((reading) => reading.look === 'scan')
+    if (scans.length) {
       const recognize = options.recognize ?? recognizeTextInImages
-      const now = unseen.slice(0, MAX_OCR_PAGES_PER_READ)
-      for (const reading of unseen.slice(MAX_OCR_PAGES_PER_READ)) reading.ocr = 'deferred'
+      const now = scans.slice(0, MAX_OCR_PAGES_PER_READ)
+      for (const reading of scans.slice(MAX_OCR_PAGES_PER_READ)) reading.ocr = 'deferred'
       await fs.mkdir(scratch, { recursive: true })
       const paths: string[] = []
       for (const reading of now) {

@@ -23,7 +23,7 @@ requiresPythonPackages: ["pypdf", "pdfplumber", "reportlab", "pdf2image"]
 | Fill a PDF form         | `python "$env:SIDEKICK_SKILLS\pdf\fill_fillable_fields.py" file.pdf fields.json filled.pdf`           |
 | Fill with annotations   | `python "$env:SIDEKICK_SKILLS\pdf\fill_pdf_form_with_annotations.py" file.pdf fields.json filled.pdf` |
 | Extract form field info | `python "$env:SIDEKICK_SKILLS\pdf\extract_form_field_info.py" file.pdf fields.json`                   |
-| Convert pages to images | `python "$env:SIDEKICK_SKILLS\pdf\convert_pdf_to_images.py" file.pdf pages`                           |
+| Save pages as images    | For the user only: `python "$env:SIDEKICK_SKILLS\pdf\convert_pdf_to_images.py" file.pdf pages`        |
 | Create PDF              | Use reportlab via temp script                                                                         |
 | Merge/split             | Use pypdf via temp script                                                                             |
 
@@ -44,11 +44,12 @@ and ask before changing a browser-only task into a programmatic file workflow.
 
 ## Reading Content
 
-Read a PDF with the `read` tool. It returns each page's text; a scanned page or one with charts,
-diagrams or photos comes with an image of the page when you can see images, and a scanned page you
-cannot see is recognized with the computer's own OCR. Continue a long document with `pages`, such
-as `"21-40"`, and read one or two pages alone to look at a figure the text mentions. Do not
-convert pages to images or run OCR yourself.
+Read a PDF with the `read` tool. It returns each page's text, recognized with the computer's own
+OCR on a scanned page. When you can see images, a scanned page or one with charts, diagrams or
+photos also comes with an image of the page. Continue a long document with `pages`, such as
+`"21-40"`, and read one or two pages alone to look at a figure the text mentions. Only the newest
+images stay attached, and a result says when one has left, so write down what you need from a
+page before opening the next. Do not extract images, convert pages or run OCR yourself.
 
 Use pdfplumber only when you need exact table cells or word positions. Write to
 `./UNIQUE_pdf_tables.py`, run, delete:

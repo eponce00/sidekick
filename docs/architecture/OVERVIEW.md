@@ -339,8 +339,9 @@ each page's text from the bundled PDF.js (`pdfReader.ts`), plus page images on t
 pages whose text misses something. A page counts as scanned when it has almost no text and
 pictures or drawings cover it, and as illustrated when images cover a twelfth of it or it draws
 many paths. Images go to scans first, up to the provider's per-request image budget, which the
-run preparer passes to the tool session (zero for a model without vision). Scanned pages left
-without an image are rendered and recognized by the operating system (`systemOcr.ts`):
+run preparer passes to the tool session (zero for a model without vision). Scanned pages are also
+rendered and recognized by the operating system (`systemOcr.ts`), because an image leaves the
+request once newer ones fill that budget, and the provider boundary then says so in the tool result:
 `Windows.Media.Ocr` through Windows PowerShell, Apple's Vision framework through JavaScript for
 Automation, or Tesseract on Linux when it is on the path.
 

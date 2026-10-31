@@ -32,9 +32,11 @@ transactional workspace mutation service.
 text, up to 20 pages at a time. A model that can see images also gets a picture of the pages whose
 text misses something: scanned pages first, then pages with charts, diagrams or photos, as many as
 its provider takes in one request (four for cloud providers, two for local ones). Reading one or
-two pages by number shows them as pictures. A scanned page the model does not see is read with the
-computer's own text recognition: the one built into Windows or macOS, or Tesseract on Linux when it
-is installed. Text recognition runs on your computer, and the pages never leave it for that.
+two pages by number shows them as pictures. Newer pictures take the place of older ones, and the
+model is told when one has left. A scanned page's words come from the computer's own text
+recognition, so they stay in the conversation: the recognizer built into Windows or macOS, or
+Tesseract on Linux when it is installed. It runs on your computer, and the pages never leave it for
+that.
 
 The native browser catalog includes `browser_open`, `browser_observe`, `browser_screenshot`,
 `browser_click`, `browser_type`, `browser_sign_in`, `browser_select`, `browser_fill_form`, `browser_scroll`, `browser_hover`,

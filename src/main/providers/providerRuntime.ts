@@ -154,7 +154,21 @@ function withProviderImageBudget(
     remaining -= kept.length
     if (kept.length !== media.length) {
       changed = true
-      selected[index] = { ...message, media: kept.length ? kept : undefined }
+      // A browser capture is replaced by the next one. Anything else the model asked to see, and
+      // its result still says it attached, so it is told, or it goes looking for what went missing.
+      const gone = media
+        .slice(0, media.length - kept.length)
+        .filter((attachment) => !attachment.keepDimensions)
+        .map((attachment) => attachment.name ?? 'an image')
+      selected[index] = {
+        ...message,
+        media: kept.length ? kept : undefined,
+        ...(gone.length
+          ? {
+              content: `${message.content || ''}${message.content ? '\n' : ''}[No longer attached, as this model takes ${maxImages} images per request and newer ones took their place: ${gone.join(', ')}. Look again only if you still need it.]`
+            }
+          : {})
+      }
     }
   }
 

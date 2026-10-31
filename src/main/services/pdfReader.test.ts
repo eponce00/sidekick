@@ -51,8 +51,11 @@ describe('PDF reading', () => {
     expect(result.media).toEqual([])
   })
 
-  it('shows a scanned page as an image to a model that can see', async () => {
-    const recognize = vi.fn()
+  it('shows a scanned page to a model that can see, and keeps its words as text', async () => {
+    const recognize = vi.fn(async (paths: readonly string[]) => ({
+      ok: true as const,
+      texts: paths.map(() => 'INVOICE 4471')
+    }))
     const result = await readPdf(textThenScanPdf(), {
       maxTokens: 10_000,
       imageBudget: 2,
@@ -60,11 +63,10 @@ describe('PDF reading', () => {
       recognize
     })
     expect(result.content).toContain(
-      '--- Page 2 of 2 (scanned: no text layer; page image attached) ---'
+      '--- Page 2 of 2 (scanned: no text layer; text recognized by OCR; page image attached) ---\nINVOICE 4471'
     )
     expect(result.media).toMatchObject([
       { type: 'image', mimeType: 'image/jpeg', name: 'report.pdf page 2' }
     ])
-    expect(recognize).not.toHaveBeenCalled()
   })
 })
