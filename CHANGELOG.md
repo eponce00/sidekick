@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.25.5 — 2026-10-31
+
+- Open local-network devices that use their own HTTPS certificate, such as a TwinCAT HMI server at
+  `https://10.50.161.1:3001`. The Browser panel used to show a raw `ERR_CERT_AUTHORITY_INVALID`
+  error with no way forward. It now says why the certificate isn't trusted and, for a private IP
+  address, offers **Continue…** with the certificate's details. Your answer is remembered for that
+  address and that certificate, and a changed certificate asks again. Only you can allow it, never
+  the agent or a page. Public addresses and device names stay refused.
+
 ## 0.25.4 — 2026-10-31
 
 - Read PDFs properly. The agent used to get only a PDF's text, so a scanned page came back empty
