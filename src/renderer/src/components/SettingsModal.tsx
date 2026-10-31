@@ -317,26 +317,6 @@ function SettingsModal({
                 checked={settings.computerUseEnabled ?? false}
                 onChange={(computerUseEnabled) => setSettings({ ...settings, computerUseEnabled })}
               />
-              <SettingsRow
-                icon={FileCode2}
-                label="Path to cua-driver.exe"
-                description="cua-driver 0.38.0 for Windows x64. SideKick refuses any other build."
-                stacked
-                control={
-                  <input
-                    className="settings-path-input"
-                    aria-label="Path to cua-driver.exe"
-                    value={settings.computerUseDriverPath ?? ''}
-                    placeholder="Not set"
-                    onChange={(event) =>
-                      setSettings({
-                        ...settings,
-                        computerUseDriverPath: event.target.value.trim() || undefined
-                      })
-                    }
-                  />
-                }
-              />
             </SettingsSection>
           )}
           <SettingsSection

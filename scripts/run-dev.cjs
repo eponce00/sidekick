@@ -3,6 +3,7 @@ const { createHash } = require('node:crypto')
 const { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } = require('node:fs')
 const { join, resolve } = require('node:path')
 const identity = require('../src/shared/productIdentity.json')
+const { fetchComputerDriver } = require('./fetch-computer-driver.cjs')
 
 const APP_NAME = identity.productName
 const APP_ID = identity.developmentAppId
@@ -97,11 +98,17 @@ function prepareMacRuntime() {
   return runtimeRoot
 }
 
-function main() {
+async function main() {
   const env = { ...process.env }
   if (process.platform === 'darwin') {
     const runtimeRoot = prepareMacRuntime()
     env.ELECTRON_EXEC_PATH = join(runtimeRoot, 'Electron.app/Contents/MacOS/Electron')
+  }
+  if (process.platform === 'win32') {
+    // Only computer use needs it, so being offline shouldn't stop the app from starting.
+    await fetchComputerDriver().catch((error) =>
+      console.warn(`Computer use won't be available: ${error.message}`)
+    )
   }
 
   const electronViteCli = join(projectRoot, 'node_modules/electron-vite/bin/electron-vite.js')
@@ -120,4 +127,7 @@ function main() {
   })
 }
 
-main()
+main().catch((error) => {
+  console.error(error)
+  process.exitCode = 1
+})

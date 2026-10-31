@@ -403,9 +403,7 @@ export async function confirmSensitiveSettingsChange(
     previous.officeHelperInterpreter !== next.officeHelperInterpreter &&
     Boolean(next.officeHelperInterpreter)
   const enablingComputerUse =
-    next.computerUseEnabled === true &&
-    (previous.computerUseEnabled !== true ||
-      previous.computerUseDriverPath !== next.computerUseDriverPath)
+    next.computerUseEnabled === true && previous.computerUseEnabled !== true
   if (
     !enablingFullAccess &&
     !mcpChanged &&
@@ -427,7 +425,7 @@ export async function confirmSensitiveSettingsChange(
       ? 'Full access lets in-scope agent operations run without approval prompts.'
       : null,
     enablingComputerUse
-      ? `The agent will be able to ask to operate apps on this computer, each only after you allow it, using ${String(next.computerUseDriverPath ?? '')}.`
+      ? 'The agent will be able to ask to operate apps on this computer, each only after you allow it.'
       : null,
     mcpChanged
       ? `These MCP connectors are new or changed. Local connectors launch processes with your account's permissions; remote connectors send requests to the listed endpoint. SideKick asks again whenever one changes.\n\n${mcpServers.map(describeMcpServer).join('\n\n')}`

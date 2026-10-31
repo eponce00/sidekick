@@ -904,11 +904,8 @@ export class ConversationRunPreparer {
       process.platform === 'win32' &&
       surface === 'conversation' &&
       currentSettings.computerUseEnabled === true &&
-      currentSettings.computerUseDriverPath &&
       !conversation.permission_ceiling
-        ? (await import('./computerUseHost')).computerUseService(
-            () => this.settings().computerUseDriverPath
-          )
+        ? (await import('./computerUseHost')).computerUseService()
         : null
     const toolSession = await this.tools.createSession({
       permissionMode,

@@ -1,4 +1,5 @@
 import { app, globalShortcut, Notification } from 'electron'
+import { existsSync } from 'fs'
 import { join } from 'path'
 import { appState } from '../ipc/state'
 import type { ComputerApp } from './computerUseApps'
@@ -34,12 +35,24 @@ async function confirmApp(target: ComputerApp, signal: AbortSignal): Promise<boo
   return result.response === 1
 }
 
+/** Where the driver that ships with SideKick is. */
+function bundledDriverPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'computer-driver', 'cua-driver.exe')
+    : join(app.getAppPath(), 'build', 'computer-driver', 'cua-driver.exe')
+}
+
 let service: ComputerUseService | null = null
 
-/** The one service, with what only Electron can give it: the dialog, Esc, and the notification. */
-export function computerUseService(driverPath: () => string | undefined): ComputerUseService {
+/**
+ * The one service, with what only Electron can give it: the dialog, Esc, and the notification. Null
+ * where the driver isn't there, which only a development checkout should ever see.
+ */
+export function computerUseService(): ComputerUseService | null {
+  const driverPath = bundledDriverPath()
+  if (!existsSync(driverPath)) return null
   service ??= new ComputerUseService({
-    driverPath,
+    driverPath: () => driverPath,
     dataFolder: () => join(app.getPath('userData'), 'computer-use'),
     confirmApp,
     armStop: (stop) => {

@@ -42,9 +42,7 @@ that.
 ## Computer use
 
 On Windows, the agent can operate other apps on this computer when you turn this on in
-**Settings › Computer use**. It is off by default and needs
-[cua-driver](https://github.com/trycua/cua) 0.38.0 for Windows x64, which you download yourself and
-point Settings at. SideKick checks the file and refuses any other build.
+**Settings › Computer use**. It is off by default, and there is nothing else to install.
 
 - **You approve each app, per chat.** The agent asks, and SideKick shows you the app and its path.
   A denial is final for that request. The app must already be open; the agent cannot start apps.

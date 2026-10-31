@@ -77,6 +77,7 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "start": "electron-vite preview",
     "dev": "node scripts/run-dev.cjs",
+    "fetch:computer-driver": "node scripts/fetch-computer-driver.cjs",
     "sidekick": "node out/main/cli.js --dev",
     "build": "npm run typecheck && electron-vite build",
     "install:electron": "install-electron --no",
