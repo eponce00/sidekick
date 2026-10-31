@@ -761,8 +761,9 @@
   border: 1px solid var(--border-subtle);
 }
 
+/* A wide image shows whole rather than cropped to the upright tile. */
 .tool-page-previews .message-image-tile img {
-  object-position: top;
+  object-fit: contain;
 }
 
 /* Only the caption's strip darkens: the page itself is what the tile is for. */
