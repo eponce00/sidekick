@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.25.4 — 2026-10-31
+
+- Read PDFs properly. The agent used to get only a PDF's text, so a scanned page came back empty
+  and a chart as just its caption. It now reads each page itself, without Python, up to 20 at a
+  time. A model that can see images also gets a picture of scanned pages and of pages with charts,
+  diagrams or photos. Scanned pages are read with your computer's own text recognition, built into
+  Windows and macOS, or Tesseract on Linux when it is installed, so a text-only model can read
+  them too.
+- See what the model looked at. The PDF pages and images it opened show as thumbnails under its
+  folded work; click one to enlarge it and move between them.
+- Keep the window responsive while a command prints a lot. A chatty command, such as a PowerShell
+  download drawing its progress bar, could freeze the window until it finished.
+- Keep browser tabs the same width. A page flashing "You received a new message" in its title
+  made its tab grow and shrink every few seconds.
+
 ## 0.25.3 — 2026-10-30
 
 - Attach files from anywhere on your computer. **+** → Files used to accept only files inside the
