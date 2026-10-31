@@ -163,7 +163,9 @@ $global:SideKickExitCode = if ($null -ne $sidekickExitCode -and $sidekickExitCod
  * Windows PowerShell's `curl` and `wget` are aliases of Invoke-WebRequest, which takes none of
  * curl's arguments; models mean curl.exe. The aliases are in every scope, so only removing them
  * here, before the script block, reaches the command. Invoke-WebRequest without -UseBasicParsing
- * stops at a security prompt in Windows PowerShell.
+ * stops at a security prompt in Windows PowerShell. Its progress bar redraws many times a second,
+ * which made a download script print megabytes of terminal codes and slowed the download, so
+ * commands run without progress bars.
  *
  * Write-Error names the script block that called it, which printed the whole wrapper with every
  * error; called through a proxy function, it names itself and points at the command's line. The
@@ -191,6 +193,7 @@ function windowsScriptLaunch(
             "if (-not $env:PYTHONIOENCODING) { $env:PYTHONIOENCODING = 'utf-8' }; "
           : '') +
         "$PSDefaultParameterValues['Invoke-WebRequest:UseBasicParsing'] = $true; " +
+        "$ProgressPreference = 'SilentlyContinue'; " +
         (/write-error/i.test(command)
           ? 'Set-Item function:Write-Error ([ScriptBlock]::Create([Management.Automation.ProxyCommand]::Create([Management.Automation.CommandMetadata]::new((Get-Command Microsoft.PowerShell.Utility\\Write-Error))))); '
           : '') +

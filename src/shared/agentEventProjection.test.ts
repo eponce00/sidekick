@@ -443,6 +443,20 @@ Keep building the app.
     })
   })
 
+  it('shows the end of command output sent in thousands of chunks', () => {
+    const chunks = Array.from({ length: 5_000 }, (_, index) => `line ${index}\n`)
+    const projection = projectAgentRunEvents([
+      event(1, 'tool.pending', { toolCallId: 'shell-1', name: 'shell' }),
+      event(2, 'tool.running', { toolCallId: 'shell-1', title: 'Download' }),
+      ...chunks.map((chunk, index) =>
+        event(index + 3, 'tool.output.delta', { toolCallId: 'shell-1', stream: 'stdout', chunk })
+      )
+    ])
+
+    const tool = projection.segments.find(({ type }) => type === 'tool')
+    expect(tool && 'tool' in tool && tool.tool.output).toBe(chunks.join('').slice(-16_000))
+  })
+
   it('preserves typed result metadata for specialized renderer contributions', () => {
     const projection = projectAgentRunEvents([
       event(1, 'tool.pending', { toolCallId: 'edit-1', name: 'apply_patch' }),

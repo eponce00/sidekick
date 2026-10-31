@@ -332,7 +332,11 @@ export function useConversationRun({
         active.mode = 'plan'
         setActiveMode('plan')
       }
-      scheduleProject(active, event.type !== 'assistant.delta')
+      // Streamed text and command output come many times a second; they wait for the next frame.
+      scheduleProject(
+        active,
+        event.type !== 'assistant.delta' && event.type !== 'tool.output.delta'
+      )
       if (event.type === 'run.finalized' && active.attached) {
         activeRef.current = null
         setRunConversationId(null)
