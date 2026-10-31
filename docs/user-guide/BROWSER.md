@@ -226,6 +226,42 @@ listed in **Settings › Agent › Local network**, where you can remove them. T
 applies to `web_fetch`, so the agent cannot read a device you have not allowed by switching tools;
 see [Addresses on your network](SEARCH.md#addresses-on-your-network).
 
+### Devices with their own certificate
+
+Devices on a local network, such as an HMI server at `https://10.50.161.1:3001`, often serve HTTPS
+with a certificate they made themselves. No authority vouches for it, so the Browser panel says the
+certificate is not trusted and why, instead of opening the page.
+
+If the address is an IP address on a private network, the panel offers **Continue…**. That opens a
+dialog showing who the certificate says it belongs to, when it expires, and its SHA-256 hash, which
+you can compare with the device. Choosing **Continue** remembers that address and that certificate:
+
+- A different certificate at the same address asks again and says it changed. A replaced device can
+  explain that; so can someone intercepting the connection.
+- Another port or another device is another address, and is asked about on its own.
+- Answers are listed in **Settings › Agent › Local network**, where removing one asks again next
+  time.
+
+SideKick does not offer this for:
+
+- An address on the internet. It stays refused, with no way past it.
+- A name, such as `https://hmi.local` or `https://plc01`, even one that leads to a private address.
+  What a name reaches can change from one moment to the next, and the certificate is the one thing
+  that would have said who answers. Open the device by its IP address instead.
+- A certificate that has been revoked, or that has another problem a device's own certificate would
+  not explain.
+
+Only you can allow a certificate. When the agent opens such a page it is refused without showing
+you anything, and it is told to ask you to open the address in the Browser panel. Once you have
+allowed it, the agent can read and use that device in its browser, as it can any page you can see
+there. `web_fetch`, `http_request` and SideKick's own traffic, such as updates and model providers,
+never use this answer. Neither do PDFs and downloads: their requests fail on such an address, even
+one you allowed.
+
+If you would rather not use an exception, there are two other ways in: open the device over plain
+HTTP if it offers it, or trust the device's certificate in your operating system, after which it
+opens like any other site.
+
 `browser_upload` selects up to eight project-relative regular files (25 MiB total)
 on an observed file input, then verifies the actual selection. Symlinks, files with
 more than one hard link, and paths outside the project are rejected. Selection can immediately expose files to the site

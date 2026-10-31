@@ -13,6 +13,7 @@ import {
   ChevronUp,
   MessageSquarePlus,
   MoreHorizontal,
+  ShieldAlert,
   ZoomIn,
   ZoomOut
 } from 'lucide-react'
@@ -324,7 +325,9 @@ export function BrowserWorkspace({
       setState(await window.api.agentRuns.browserWorkspace({ conversationId, action, ...extra }))
       await refresh().catch((e) => setLayoutError(String(e)))
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      // The main process's own message, without Electron's prefix.
+      const message = e instanceof Error ? e.message : String(e)
+      setError(message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ''))
     } finally {
       setPending(false)
     }
@@ -760,6 +763,29 @@ export function BrowserWorkspace({
           />
         )}
         {!state && <p>Open a page, or ask the agent to browse. You both use these tabs.</p>}
+        {state?.certificate && (
+          <section
+            className={`browser-workspace-certificate${state.certificate.canContinue ? '' : ' is-refused'}`}
+            role="alert"
+          >
+            <span className="browser-workspace-certificate-mark" aria-hidden="true">
+              <ShieldAlert size={20} />
+            </span>
+            <h3>This site&apos;s certificate is not trusted</h3>
+            <code>{state.certificate.origin}</code>
+            <p>{state.certificate.reason}</p>
+            <p>{state.certificate.note}</p>
+            {state.certificate.canContinue && (
+              <button
+                type="button"
+                disabled={pending || state.busy}
+                onClick={() => void act('certificateContinue')}
+              >
+                Continue…
+              </button>
+            )}
+          </section>
+        )}
       </div>
     </div>
   )

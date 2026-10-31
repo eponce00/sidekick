@@ -138,6 +138,18 @@ describe('SideKick-styled trusted dialog', () => {
     expect(page).not.toContain('<b>agents</b>')
   })
 
+  it("shows a certificate's own words as text, never as markup", () => {
+    const page = trustedDialogPage(
+      {
+        ...settingsOptions,
+        facts: [{ label: 'Issued to', value: '<img src=x onerror=alert(1)>' }]
+      },
+      darkLook
+    )
+    expect(page).not.toContain('<img')
+    expect(page).toContain('&lt;img src=x')
+  })
+
   it('allows only its own script', () => {
     const page = trustedDialogPage(settingsOptions, lightLook)
     const script = page.match(/<script>([\s\S]*?)<\/script>/)![1]

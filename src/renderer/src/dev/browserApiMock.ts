@@ -71,6 +71,14 @@ let previewBrowserNetwork = [
   { origin: 'http://rno-l-024:8080', approvedAt: Date.now() - 3_600_000 }
 ]
 
+let previewBrowserCertificates = [
+  {
+    origin: 'https://10.50.161.1:3001',
+    fingerprint: 'sha256/q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQq83vEjRWeJA=',
+    approvedAt: Date.now() - 7_200_000
+  }
+]
+
 const previewModels = [
   {
     id: 'ollama:qwen3:8b',
@@ -1326,6 +1334,13 @@ export function installBrowserApiMock(): void {
       revoke: async (origin) => {
         previewBrowserNetwork = previewBrowserNetwork.filter((entry) => entry.origin !== origin)
         return [...previewBrowserNetwork]
+      },
+      certificates: async () => [...previewBrowserCertificates],
+      revokeCertificate: async (origin) => {
+        previewBrowserCertificates = previewBrowserCertificates.filter(
+          (entry) => entry.origin !== origin
+        )
+        return [...previewBrowserCertificates]
       }
     },
     credentials: previewCredentialsApi(),
