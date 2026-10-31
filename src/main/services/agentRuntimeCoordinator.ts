@@ -24,6 +24,7 @@ import { RunSlots, type RunLease } from './runSlots'
 import { createCheckpoint, beginCheckpointCapture } from './checkpoints'
 import { addMessageCheckpoints } from './messageCheckpoints'
 import type { HistoryPoint } from '../../shared/workspaceHistory'
+import { browserCertificateApprovals } from './browserCertificateApprovals'
 import { browserNetworkApprovals } from './browserNetworkApprovals'
 import {
   ConversationRunPreparer,
@@ -191,6 +192,7 @@ export class AgentRuntimeCoordinator {
       artifactRoot: join(userDataRoot, 'browser-artifacts'),
       pdfOutputRoot: options.pdfOutputRoot,
       networkPolicy: browserNetworkApprovals,
+      certificatePolicy: browserCertificateApprovals,
       maxTotalSessions: 6
     })
     this.tools = new AgentToolRuntime(

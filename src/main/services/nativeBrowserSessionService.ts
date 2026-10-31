@@ -1,8 +1,17 @@
 import type { BrowserDeviceState } from '../../shared/browserDevices'
+import type { BrowserCertificateNotice } from '../../shared/browserWorkspace'
 import { browserNetworkOrigin, loopbackHost, privateNetworkHost } from '../../shared/browserNetwork'
 import { getDomain } from 'tldts'
 import { credentialPageOrigin } from '../../shared/credentials'
 import type { BrowserNetworkPolicy } from './browserNetworkApprovals'
+import {
+  BrowserCertificateError,
+  certificateAllowed,
+  certificateNotice,
+  type BrowserCertificateEvent,
+  type BrowserCertificateFailure,
+  type BrowserCertificatePolicy
+} from './browserCertificatePolicy'
 import { createHash, randomUUID } from 'crypto'
 import { browserTextTargetOwnsFocus } from './browserTextFocus'
 import { locateWorkspacePath, resolveSecureWorkspacePath } from '../utils/workspacePaths'
@@ -577,6 +586,8 @@ export interface NativeBrowserSessionServiceOptions {
   maxRemotePdfBytes?: number
   /** Which local-network origins may be opened over plain HTTP; none without it. */
   networkPolicy?: BrowserNetworkPolicy
+  /** Which untrusted certificates a tab may go on past; none without it. */
+  certificatePolicy?: BrowserCertificatePolicy
   artifactRetentionMs?: number
   maxTelemetryEntries?: number
   maxRepeatedNoChangeActions?: number
@@ -637,6 +648,10 @@ export interface NativeBrowserSurface {
   setNavigationGuard(guard: (url: string) => boolean): void
   /** Guards file:// document and subresource requests in the isolated partition. */
   setRequestGuard(guard: (url: string) => boolean): void
+  /** Answers each connection this tab's isolated session would refuse for its certificate. */
+  setCertificateGuard(guard: (event: BrowserCertificateEvent) => boolean): void
+  /** Ends this tab's session's open connections, so the next request is judged afresh. */
+  closeConnections?(): Promise<void>
   onConsole(listener: (message: NativeBrowserSurfaceConsoleMessage) => void): () => void
   onLoadFailure(listener: (failure: NativeBrowserSurfaceLoadFailure) => void): () => void
   onDebuggerMessage(listener: (method: string, params: Record<string, unknown>) => void): () => void
@@ -714,6 +729,8 @@ interface CoordinateCaptureState {
 interface TabState {
   id: string
   surface: NativeBrowserSurface
+  /** The certificate refused for the page this tab tried to open last. */
+  certificate?: BrowserCertificateFailure
   /** A fixed viewport in effect, and who chose it; absent while the page is responsive. */
   device?: BrowserDeviceState
   /** User-facing source URL when the WebContents is showing an internal viewer. */
@@ -1202,6 +1219,7 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   private readonly destroyedListeners = new Set<() => void>()
   private readonly openUrlListeners = new Set<(url: string) => void>()
   private navigationGuard: (url: string) => boolean = (url) => url === 'about:blank'
+  private certificateGuard: (event: BrowserCertificateEvent) => boolean = () => false
   private debuggerOwned = false
   /** A viewport the agent set, and the scale it is drawn at where it is shown. */
   private agentViewport?: BrowserViewport
@@ -1231,6 +1249,25 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
       const url = (details as unknown as { url?: string }).url ?? deprecatedUrl
       if (!this.navigationGuard(url)) details.preventDefault()
     })
+    // This tab's own event, not the app-wide one: no other traffic can reach this decision, and a
+    // contents the service attached to keeps Chromium's refusal.
+    if (!attached) {
+      contents.on('certificate-error', (event, url, error, certificate, callback, isMainFrame) => {
+        event.preventDefault()
+        callback(
+          this.certificateGuard({
+            url,
+            error,
+            fingerprint: certificate.fingerprint,
+            subject: certificate.subjectName,
+            issuer: certificate.issuerName,
+            validUntil: certificate.validExpiry,
+            isMainFrame,
+            pageUrl: contents.getURL()
+          })
+        )
+      })
+    }
     contents.on('console-message', (details) => {
       const modern = details as unknown as {
         level: NativeBrowserSurfaceConsoleMessage['level']
@@ -1596,6 +1633,15 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
     )
   }
 
+  setCertificateGuard(guard: (event: BrowserCertificateEvent) => boolean): void {
+    this.certificateGuard = guard
+  }
+
+  async closeConnections(): Promise<void> {
+    if (!this.attached && !this.contents.isDestroyed())
+      await this.contents.session.closeAllConnections()
+  }
+
   onConsole(listener: (message: NativeBrowserSurfaceConsoleMessage) => void): () => void {
     this.consoleListeners.add(listener)
     return () => this.consoleListeners.delete(listener)
@@ -1716,6 +1762,7 @@ export class NativeBrowserSessionService {
       activeTabId: session.activeTabId,
       tabs: this.tabSummaries(session),
       device: tab.device ?? null,
+      certificate: this.shownCertificateNotice(tab) ?? null,
       pageTools: tools.tools.length
         ? {
             origin: tools.origin,
@@ -1729,6 +1776,40 @@ export class NativeBrowserSessionService {
         : null,
       ...browserNavigationState(tab.surface.webContentsId)
     }
+  }
+
+  /**
+   * Asks the user about the certificate refused on the active tab, and returns the address to open
+   * if they allow it. It takes nothing from the caller, and only the Browser panel's request leads
+   * here: what the dialog shows and the approval records is what Chromium reported to this process.
+   * It waits outside the session's queue, because the user may take their time.
+   */
+  async approveCertificate(sessionId: string): Promise<string | undefined> {
+    const tab = this.getTab(this.getSession(sessionId))
+    const failure = tab.certificate
+    const policy = this.options.certificatePolicy
+    if (!failure || !policy || !this.shownCertificateNotice(tab)?.canContinue) return undefined
+    return (await policy.approve(failure)) ? failure.url : undefined
+  }
+
+  /** What to say about the tab's refused page, while the tab is still on it. */
+  private shownCertificateNotice(tab: TabState): BrowserCertificateNotice | undefined {
+    const failure = tab.certificate
+    if (!failure) return undefined
+    const notice = certificateNotice(failure, this.options.certificatePolicy)
+    try {
+      return new URL(tab.surface.getURL()).origin === notice.origin ? notice : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /** After an approval is removed, so no connection already past the certificate outlives it. */
+  async closeConnections(): Promise<void> {
+    const surfaces = [...this.sessions.values()].flatMap((session) =>
+      [...session.tabs.values()].map((tab) => tab.surface)
+    )
+    await Promise.all(surfaces.map((surface) => surface.closeConnections?.()))
   }
 
   /**
@@ -2186,6 +2267,9 @@ export class NativeBrowserSessionService {
       webMcp: new WebMcpPageTools()
     }
     session.tabs.set(tab.id, tab)
+    if (!surface.attached) {
+      surface.setCertificateGuard((event) => this.judgeCertificate(session, tab, event))
+    }
     tab.disposers.push(
       surface.onConsole((message) => this.recordConsole(session, tab, message)),
       surface.onLoadFailure((failure) => this.recordLoadFailure(session, tab, failure)),
@@ -2231,6 +2315,26 @@ export class NativeBrowserSessionService {
     } catch (error) {
       if (signal?.aborted) throw error
     }
+  }
+
+  /** Chromium would refuse this connection; only an approval already made lets it go on. */
+  private judgeCertificate(
+    session: SessionState,
+    tab: TabState,
+    event: BrowserCertificateEvent
+  ): boolean {
+    const policy = this.options.certificatePolicy
+    const allowed = Boolean(policy && certificateAllowed(event, policy))
+    if (event.isMainFrame) {
+      const { isMainFrame: _isMainFrame, pageUrl: _pageUrl, ...failure } = event
+      tab.certificate = allowed ? undefined : failure
+    } else if (!allowed) {
+      this.recordConsole(session, tab, {
+        level: 'error',
+        message: `Blocked ${event.url}: its certificate is not trusted (${event.error})`
+      })
+    }
+    return allowed
   }
 
   private recordConsole(
@@ -2548,6 +2652,7 @@ export class NativeBrowserSessionService {
       this.guardRepeatedAction(tab, fingerprint)
       await this.ensureBaselineHash(session, tab, signal)
       tab.lastPointer = undefined
+      tab.certificate = undefined
       let navigationQuiescence: BrowserQuiescenceResult
       if (navigationAction === 'url') {
         navigationQuiescence = await this.navigateUnlocked(session, tab, url!, signal)
@@ -2628,7 +2733,9 @@ export class NativeBrowserSessionService {
       tab.pdfSessionTokens.add(pdfSession.token)
       navigationUrl = browserPdfViewerUrl(pdfSession)
     } else if (isRemotePdfUrl(url)) {
-      const remotePdf = await this.downloadRemotePdf(session, tab, url, signal)
+      const remotePdf = await this.downloadRemotePdf(session, tab, url, signal).catch((error) => {
+        throw this.certificateRefusal(tab, url, error)
+      })
       newPdfSourcePath = remotePdf.sourcePath
       const pdfSession = createBrowserPdfSession(remotePdf.sourcePath, session.id, {
         sourceName: remotePdf.sourceName,
@@ -2652,11 +2759,36 @@ export class NativeBrowserSessionService {
         tab.temporaryPdfSources.delete(newPdfSourcePath)
         await fs.unlink(newPdfSourcePath).catch(() => undefined)
       }
-      throw error
+      throw this.certificateRefusal(tab, url, error)
     }
     tab.logicalUrl = newPdfToken ? url : undefined
     tab.pdfSessionToken = newPdfToken
     return this.waitForQuiescence(tab, this.navigationQuiescence(navigationUrl), signal)
+  }
+
+  /**
+   * A load refused for its certificate, in words the user and the agent can act on. A download has
+   * no page to report the certificate, so it fails with no way past it.
+   */
+  private certificateRefusal(tab: TabState, url: string, error: unknown): unknown {
+    const message = error instanceof Error ? error.message : String(error)
+    const code = /\bERR_CERT_[A-Z_]+/.exec(message)?.[0]
+    if (!code) return error
+    return new BrowserCertificateError(
+      tab.certificate
+        ? certificateNotice(tab.certificate, this.options.certificatePolicy)
+        : {
+            ...certificateNotice({
+              url,
+              error: code,
+              fingerprint: '',
+              subject: '',
+              issuer: ''
+            }),
+            note: 'SideKick does not download files from an address whose certificate it cannot trust.',
+            canContinue: false
+          }
+    )
   }
 
   private async downloadRemotePdf(

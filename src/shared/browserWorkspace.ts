@@ -32,6 +32,14 @@ export interface BrowserAnnotationsChange {
   dictate?: boolean
 }
 
+/** Why the active tab's page was refused for its certificate, and whether the user can go on. */
+export interface BrowserCertificateNotice {
+  origin: string
+  reason: string
+  note: string
+  canContinue: boolean
+}
+
 export interface BrowserWorkspaceState {
   sessionId: string
   activeTabId: string
@@ -57,6 +65,8 @@ export interface BrowserWorkspaceState {
   /** The user is marking places on the page to send with their next message. */
   annotating?: boolean
   annotations?: BrowserAnnotationSummary[]
+  /** The active tab's page was refused for its certificate, so the panel explains in its place. */
+  certificate?: BrowserCertificateNotice | null
 }
 
 export interface BrowserWorkspaceRequest {
@@ -89,6 +99,11 @@ export interface BrowserWorkspaceRequest {
     | 'find'
     /** Marks all of the page in view, as a picture with a note, and starts annotating. */
     | 'screenshot'
+    /**
+     * Asks the user, in a trusted dialog, about the certificate the main process refused on the
+     * active tab. It carries nothing: what is approved is what the main process recorded.
+     */
+    | 'certificateContinue'
   bounds?: BrowserPanelBounds
   /** For `device`: a preset id, or `responsive` for the size of the panel. */
   device?: string

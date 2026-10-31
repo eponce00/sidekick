@@ -390,7 +390,10 @@ const api = {
   },
   browserNetwork: {
     list: () => ipcRenderer.invoke('browserNetwork:list'),
-    revoke: (origin: string) => ipcRenderer.invoke('browserNetwork:revoke', origin)
+    revoke: (origin: string) => ipcRenderer.invoke('browserNetwork:revoke', origin),
+    certificates: () => ipcRenderer.invoke('browserNetwork:certificates'),
+    revokeCertificate: (origin: string) =>
+      ipcRenderer.invoke('browserNetwork:revokeCertificate', origin)
   },
   // Names a browser and a profile it was shown; never a path, and nothing secret comes back.
   browserLibrary: {

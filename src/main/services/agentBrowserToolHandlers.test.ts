@@ -10,6 +10,7 @@ import {
   registerBrowserToolHandlers,
   webMcpCallAccess
 } from './agentBrowserToolHandlers'
+import { BrowserCertificateError } from './browserCertificatePolicy'
 import { WebMcpCallError, type WebMcpCallOutcome, type WebMcpTool } from './webMcpPageTools'
 import { credentialRedactor } from './credentialRedaction'
 import { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
@@ -412,6 +413,28 @@ describe('native browser agent tool handlers', () => {
     expect((await execute(registry, 'browser_observe', {})).status).toBe('success')
     expect(service.refreshAfterUserInput).toHaveBeenCalledTimes(1)
     expect(service.open).toHaveBeenCalledTimes(1)
+  })
+
+  it('tells the agent only the user can get past a certificate, and not to try another way', async () => {
+    const { registry, service } = setup()
+    service.open.mockRejectedValueOnce(
+      new BrowserCertificateError({
+        origin: 'https://10.50.161.1:3001',
+        reason: 'It was not issued by an authority this computer trusts.',
+        note: 'Continue only if you expect this device to be there.',
+        canContinue: true
+      })
+    )
+    const result = await execute(registry, 'browser_open', { url: 'https://10.50.161.1:3001/' })
+    expect(result).toMatchObject({
+      status: 'error',
+      error: {
+        code: 'permission_denied',
+        retryable: false,
+        recoveryAction: 'change_strategy',
+        recovery: expect.stringContaining('Do not try to reach it another way')
+      }
+    })
   })
 
   it('does not interleave active actions and still respects cancellation', async () => {

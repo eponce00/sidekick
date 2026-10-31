@@ -421,7 +421,8 @@ export function registerAgentRunHandlers(): void {
         'zoom',
         'print',
         'find',
-        'screenshot'
+        'screenshot',
+        'certificateContinue'
       ].includes(input.action) ||
       (input.zoomStep !== undefined && !isBrowserZoomStep(input.zoomStep)) ||
       (input.annotate !== undefined && typeof input.annotate !== 'boolean') ||
@@ -503,7 +504,8 @@ export function registerAgentRunHandlers(): void {
         // A renderer snapshot can arrive after a host resize/zoom. Keep native
         // content inside the current host instead of rejecting valid stale layout.
         const clipped = clipBrowserPanelBounds(b, width, height)
-        if (tab && clipped) {
+        // A page refused for its certificate shows nothing; the panel explains in its place.
+        if (tab && clipped && !state?.certificate) {
           mountBrowserView(
             tab.webContentsId,
             host,
@@ -526,18 +528,21 @@ export function registerAgentRunHandlers(): void {
     ) {
       const context = new ProjectStore(getDb()).getConversationContext(input.conversationId)
       if (context.chatFolder && context.workspaceRoot) ensureChatFolder(context.workspaceRoot)
+      // A blank tab first, so a page refused on the way in leaves a tab that can say why.
       const { lease } = await manager.open(
         input.conversationId,
         `browser-${input.conversationId}`,
-        input.url || 'about:blank',
+        'about:blank',
         undefined,
         context.workspaceRoot ? [context.workspaceRoot] : [],
         new AbortController().signal
       )
       await lease.release()
       manager.claimUserControl(input.conversationId)
-      const state = manager.workspaceState(input.conversationId)
-      return state && publicWorkspaceState(state)
+      if (input.action === 'new' || !input.url) {
+        const state = manager.workspaceState(input.conversationId)
+        return state && publicWorkspaceState(state)
+      }
     }
     if (input.action === 'zoom') {
       const state = manager.workspaceState(input.conversationId)

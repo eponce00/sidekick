@@ -315,6 +315,28 @@ inactive session at the bounded global limit. Bookmarks and history the user imp
 browsers serve only the panel's address suggestions; see
 [Browser data import](BROWSER_IMPORT.md).
 
+Chromium refuses an untrusted certificate unless the main process says otherwise, and SideKick says
+otherwise in one place. `ElectronNativeBrowserSurface` listens to `certificate-error` on each owned
+tab's own `WebContents`, never on `app`, so provider, update, `web_fetch` and other window traffic
+keeps Chromium's refusal, as does a `WebContents` the service attached to rather than created.
+`browserCertificatePolicy.ts` decides each connection: only HTTPS or WSS to an origin whose host is
+written as a private IP address qualifies, for the certificate errors a device's own certificate
+can have, with the fingerprint Chromium reported for this connection. A name never qualifies,
+because what it resolves to can change between a check and the connection, and a request from a
+public page gets no use of an exception. Each refusal of a main-frame load is recorded on the tab
+and `workspaceSnapshot` reports it as a notice; the panel unmounts the page view and explains in
+its place, while a tool call gets `BrowserCertificateError`.
+
+Only `browserCertificateApprovals.approve` adds an approval, after the user answers the trusted
+dialog, and it stores one fingerprint per origin in its own store key, revalidated on every read.
+The dialog is reached from the panel's `certificateContinue` action alone. That action carries no
+data: what it shows and stores is what the main process recorded for the active tab, so a window
+can only ask for the dialog, and an agent navigation asks nobody. Removing an approval closes the
+browser sessions' connections, so none already past the certificate outlives it. Requests through
+`session.fetch`, such as remote PDFs and downloads, have no `WebContents` to raise the event and
+fail closed. User-facing rules are in
+[Devices with their own certificate](../user-guide/BROWSER.md#devices-with-their-own-certificate).
+
 The model-facing loop is semantic-first: `browser_observe` returns a fresh accessibility snapshot,
 screenshot, viewport, tab state, console delta, failed-request delta, screenshot hash, and visual
 change streak. Click, type, select, key, scroll, hover, navigation, tab, and wait actions use real

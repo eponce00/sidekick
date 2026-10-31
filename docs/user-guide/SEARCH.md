@@ -37,7 +37,7 @@ the newest relevant tool visuals without rewriting the durable conversation hist
 
 - It never reads an address on your own computer, such as `http://localhost:3000`; the agent opens those in the browser, where you can watch.
 - A plain-HTTP address on your local network, such as a router at `http://192.168.1.1`, is read only after you allow it in the browser's dialog. Allowing it in either place allows it in both, and removing it in **Settings › Agent › Local network** removes it from both.
-- An HTTPS address written as a local address or local name, such as `https://nas.local`, opens as it does in the browser, its certificate vouching for the device that answers.
+- An HTTPS address written as a local address or local name, such as `https://nas.local`, opens as it does in the browser, its certificate vouching for the device that answers. `web_fetch` does not read a device whose certificate is not trusted, even one you [allowed in the browser](BROWSER.md#devices-with-their-own-certificate).
 - Nothing on the internet leads into your network. Each redirect is checked before it is followed, and a public page that redirects to a local address is refused. So is a public name that resolves to a local or loopback address, including one that changes its answer between requests: SideKick checks the addresses each connection actually uses.
 
 A rendered read applies the same rules to every request the page makes, and its result is discarded if any response came from an address its request could not reach. Image search downloads images only from the internet. SideKick makes these requests directly rather than through a proxy, which would connect to addresses SideKick never sees.

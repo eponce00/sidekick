@@ -6,6 +6,13 @@ import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getBrowserPdfSession } from '../bootstrap/browserPdfSessionRegistry'
+import type { BrowserWorkspaceRequest } from '../../shared/browserWorkspace'
+import { AgentBrowserSessionManager } from './agentBrowserToolHandlers'
+import {
+  BrowserCertificateError,
+  type BrowserCertificateEvent,
+  type BrowserCertificateFailure
+} from './browserCertificatePolicy'
 import {
   ElectronNativeBrowserSurface,
   NativeBrowserSessionService,
@@ -180,6 +187,9 @@ class FakeSurface implements NativeBrowserSurface {
   readonly commands: Array<{ method: string; params?: Record<string, unknown> }> = []
   private guard: (url: string) => boolean = (url) => url === 'about:blank'
   private requestGuard: (url: string) => boolean = () => false
+  private certificateGuard: (event: BrowserCertificateEvent) => boolean = () => false
+  /** What each origin presents that Chromium would refuse, by origin. */
+  readonly untrustedCertificates = new Map<string, Omit<BrowserCertificateFailure, 'url'>>()
   private readonly consoleListeners = new Set<
     (message: NativeBrowserSurfaceConsoleMessage) => void
   >()
@@ -218,6 +228,15 @@ class FakeSurface implements NativeBrowserSurface {
 
   async loadURL(url: string): Promise<void> {
     if (!this.guard(url)) throw new Error(`Fake navigation guard rejected ${url}`)
+    const certificate = this.untrustedCertificates.get(new URL(url).origin)
+    if (
+      certificate &&
+      !this.certificateGuard({ ...certificate, url, isMainFrame: true, pageUrl: this.url })
+    ) {
+      // Chromium commits an error page at the refused address.
+      this.url = url
+      throw new Error(`ERR_CERT_AUTHORITY_INVALID (-202) loading '${url}'`)
+    }
     if (url === 'about:blank' && this.failBlankBeforeCommitAttempts > 0) {
       this.failBlankBeforeCommitAttempts--
       throw new Error("ERR_FAILED (-2) loading 'about:blank'")
@@ -636,6 +655,10 @@ class FakeSurface implements NativeBrowserSurface {
 
   setRequestGuard(guard: (url: string) => boolean): void {
     this.requestGuard = guard
+  }
+
+  setCertificateGuard(guard: (event: BrowserCertificateEvent) => boolean): void {
+    this.certificateGuard = guard
   }
 
   requestAllowed(url: string): boolean {
@@ -1451,6 +1474,139 @@ describe('NativeBrowserSessionService', () => {
     await expect(service.open({ runId: 'no-policy', url: 'http://192.168.1.10/' })).rejects.toThrow(
       'this computer'
     )
+  })
+
+  describe('an untrusted certificate', () => {
+    const device = 'https://10.50.161.1:3001'
+    const presented = {
+      error: 'net::ERR_CERT_AUTHORITY_INVALID',
+      fingerprint: `sha256/${'A'.repeat(43)}=`,
+      subject: 'hmi',
+      issuer: 'hmi'
+    }
+
+    async function blankTab(answer: boolean) {
+      const approved = new Set<string>()
+      const approve = vi.fn(async (failure: BrowserCertificateFailure) => {
+        if (answer) approved.add(`${new URL(failure.url).origin} ${failure.fingerprint}`)
+        return answer
+      })
+      const { service, runtime } = await testService({
+        certificatePolicy: {
+          allowed: (origin, fingerprint) => approved.has(`${origin} ${fingerprint}`),
+          changed: () => false,
+          approve
+        }
+      })
+      const manager = new AgentBrowserSessionManager(service)
+      const { observation, lease } = await manager.open(
+        'chat',
+        'run',
+        'about:blank',
+        undefined,
+        [],
+        new AbortController().signal
+      )
+      await lease.release()
+      return {
+        service,
+        manager,
+        approve,
+        sessionId: observation.sessionId,
+        surface: runtime.surfaces.at(-1)!
+      }
+    }
+
+    it('refuses what the agent opens without asking anyone, and lets the panel explain', async () => {
+      const { service, approve, sessionId, surface } = await blankTab(true)
+      surface.untrustedCertificates.set(device, presented)
+
+      await expect(service.navigate({ sessionId, url: `${device}/` })).rejects.toBeInstanceOf(
+        BrowserCertificateError
+      )
+      expect(approve).not.toHaveBeenCalled()
+      expect(service.workspaceSnapshot(sessionId).certificate).toMatchObject({
+        origin: device,
+        canContinue: true
+      })
+    })
+
+    it('approves only what the main process recorded, whatever the window sends', async () => {
+      const { service, manager, approve, sessionId, surface } = await blankTab(true)
+      const forged = {
+        conversationId: 'chat',
+        action: 'certificateContinue',
+        url: 'https://8.8.8.8/',
+        origin: 'https://8.8.8.8',
+        fingerprint: `sha256/${'F'.repeat(43)}=`
+      } as BrowserWorkspaceRequest
+
+      // With nothing refused on the tab, there is nothing to ask about.
+      await manager.workspaceAction('chat', forged)
+      expect(approve).not.toHaveBeenCalled()
+      expect(surface.url).toBe('about:blank')
+
+      surface.untrustedCertificates.set(device, presented)
+      await manager.workspaceAction('chat', { conversationId: 'chat', action: 'url', url: device })
+      expect(service.workspaceSnapshot(sessionId).certificate?.origin).toBe(device)
+
+      await manager.workspaceAction('chat', forged)
+      expect(approve).toHaveBeenCalledTimes(1)
+      expect(approve.mock.calls[0][0]).toMatchObject({
+        url: `${device}/`,
+        fingerprint: presented.fingerprint
+      })
+      expect(surface.url).toBe(`${device}/`)
+      expect(service.workspaceSnapshot(sessionId).certificate).toBeNull()
+    })
+
+    it('leaves the tab refused when the user goes back', async () => {
+      const { service, manager, approve, sessionId, surface } = await blankTab(false)
+      surface.untrustedCertificates.set(device, presented)
+      await manager.workspaceAction('chat', { conversationId: 'chat', action: 'url', url: device })
+      await manager.workspaceAction('chat', {
+        conversationId: 'chat',
+        action: 'certificateContinue'
+      })
+      expect(approve).toHaveBeenCalledTimes(1)
+      expect(service.workspaceSnapshot(sessionId).certificate?.canContinue).toBe(true)
+    })
+
+    it('offers nothing for a public address, and sends it to no dialog', async () => {
+      const { service, manager, approve, sessionId, surface } = await blankTab(true)
+      surface.untrustedCertificates.set('https://8.8.8.8', presented)
+      await manager.workspaceAction('chat', {
+        conversationId: 'chat',
+        action: 'url',
+        url: 'https://8.8.8.8/'
+      })
+      expect(service.workspaceSnapshot(sessionId).certificate).toMatchObject({
+        origin: 'https://8.8.8.8',
+        canContinue: false
+      })
+      // This policy would approve anything; a public address never gets as far as asking it.
+      await manager.workspaceAction('chat', {
+        conversationId: 'chat',
+        action: 'certificateContinue'
+      })
+      expect(approve).not.toHaveBeenCalled()
+    })
+
+    it('never gives an attached contents a certificate guard', async () => {
+      const { service, runtime } = await testService({
+        allowedAttachWebContentsIds: new Set([7]),
+        certificatePolicy: {
+          allowed: () => true,
+          changed: () => false,
+          approve: async () => true
+        }
+      })
+      const attached = new FakeSurface(7, true)
+      runtime.attachable.set(7, attached)
+      const setGuard = vi.spyOn(attached, 'setCertificateGuard')
+      await service.open({ runId: 'attached', attachWebContentsId: 7 })
+      expect(setGuard).not.toHaveBeenCalled()
+    })
   })
 
   it('returns console and failed-request deltas without losing bounded history', async () => {

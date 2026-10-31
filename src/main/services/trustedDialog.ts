@@ -9,8 +9,25 @@ import { escapeHtml, trustedLook, trustedLookCss, type TrustedLook } from './tru
 const DIALOG_WIDTH = 460
 const RESPONSE_SCHEME = 'sidekick-dialog:'
 
+/** What a dialog may add to a message box: facts to compare, and a quiet last word below them. */
+export interface TrustedDialogOptions extends MessageBoxOptions {
+  facts?: Array<{ label: string; value: string; code?: boolean }>
+  footnote?: string
+}
+
+/** The system dialog has only its text, so what SideKick's own lays out goes into it. */
+function systemDialogOptions({
+  facts,
+  footnote,
+  ...options
+}: TrustedDialogOptions): MessageBoxOptions {
+  const lines = facts?.map(({ label, value }) => `${label}: ${value}`).join('\n')
+  const detail = [options.detail, lines, footnote].filter(Boolean).join('\n\n')
+  return detail ? { ...options, detail } : options
+}
+
 /** The dialog's page: SideKick's look, and a script that reports the choice by navigating. */
-export function trustedDialogPage(options: MessageBoxOptions, look: TrustedLook): string {
+export function trustedDialogPage(options: TrustedDialogOptions, look: TrustedLook): string {
   const buttons = options.buttons?.length ? options.buttons : ['OK']
   const cancelId = options.cancelId ?? 0
   const defaultId = options.defaultId ?? buttons.length - 1
@@ -32,6 +49,14 @@ export function trustedDialogPage(options: MessageBoxOptions, look: TrustedLook)
     ? `<label class="check"><input type="checkbox" id="check"${
         options.checkboxChecked ? ' checked' : ''
       }> ${escapeHtml(options.checkboxLabel)}</label>`
+    : ''
+  const facts = options.facts?.length
+    ? `<dl class="facts">${options.facts
+        .map(
+          ({ label, value, code }) =>
+            `<div${code ? ' class="code"' : ''}><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`
+        )
+        .join('')}</dl>`
     : ''
   const script = `
 const respond = (index) => {
@@ -78,6 +103,19 @@ h1 { margin: 4px 0 0; font-size: 15px; font-weight: 600; }
   color: var(--text-2); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere;
   -webkit-user-select: text; user-select: text;
 }
+.facts {
+  display: grid; gap: 6px; margin: 12px 0 0 44px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); font-size: 12px;
+}
+.facts div { display: grid; grid-template-columns: 64px 1fr; gap: 8px; }
+.facts div.code { grid-template-columns: 1fr; gap: 2px; }
+.facts dt { color: var(--text-2); }
+.facts dd {
+  margin: 0; overflow-wrap: anywhere; white-space: pre-wrap;
+  -webkit-user-select: text; user-select: text;
+}
+.facts .code dd { font: 11px/1.45 'SF Mono', Consolas, Monaco, monospace; }
+.footnote { margin: 10px 0 0 44px; color: var(--text-2); font-size: 12px; }
 .check { display: flex; gap: 8px; align-items: center; margin: 12px 0 0 44px; color: var(--text-2); font-size: 13px; }
 .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 button {
@@ -103,6 +141,8 @@ button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, v
     <h1 id="message">${escapeHtml(options.message)}</h1>
   </div>
   ${options.detail ? `<div class="detail">${escapeHtml(options.detail)}</div>` : ''}
+  ${facts}
+  ${options.footnote ? `<div class="footnote">${escapeHtml(options.footnote)}</div>` : ''}
   ${checkbox}
   <div class="actions">${buttonHtml}</div>
 </div>
@@ -201,7 +241,7 @@ function callAttention(
  */
 export function showTrustedDialog(
   parent: BrowserWindow | null,
-  options: MessageBoxOptions,
+  options: TrustedDialogOptions,
   request: TrustedDialogRequest = {}
 ): Promise<MessageBoxReturnValue> {
   return whileWaitingForUser(() => askTrusted(parent, options, request))
@@ -209,7 +249,7 @@ export function showTrustedDialog(
 
 async function askTrusted(
   parent: BrowserWindow | null,
-  options: MessageBoxOptions,
+  options: TrustedDialogOptions,
   { signal, reveal }: TrustedDialogRequest
 ): Promise<MessageBoxReturnValue> {
   const buttons = options.buttons?.length ? options.buttons : ['OK']
@@ -218,7 +258,10 @@ async function askTrusted(
   if (signal?.aborted) return cancelled
   const owner = dialogOwner(parent)
   // With no SideKick window at all, only the system dialog can ask.
-  if (!owner) return dialog.showMessageBox(signal ? { ...options, signal } : options)
+  if (!owner) {
+    const system = systemDialogOptions(options)
+    return dialog.showMessageBox(signal ? { ...system, signal } : system)
+  }
   const look = await trustedLook(owner)
   const release = callAttention(owner, options, look)
   try {
@@ -236,7 +279,7 @@ async function askTrusted(
 
 async function presentTrusted(
   parent: BrowserWindow,
-  options: MessageBoxOptions,
+  options: TrustedDialogOptions,
   buttons: string[],
   cancelId: number,
   look: TrustedLook,

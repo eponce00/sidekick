@@ -5,6 +5,7 @@ import { setTimeout as abortableDelay } from 'timers/promises'
 import { credentialPageOrigin } from '../../shared/credentials'
 import { credentialRedactor } from './credentialRedaction'
 import { composeFilmstrip } from './browserFilmstrip'
+import { BrowserCertificateError } from './browserCertificatePolicy'
 import { OutsideProjectError, workspaceFolderRoots } from '../utils/workspacePaths'
 import {
   toolExecutionFailed,
@@ -750,6 +751,28 @@ function errorResult(
   if (error instanceof WebMcpCallError) return webMcpRefusal(title, error)
   // The registry labels and explains every path outside the project the same way.
   if (error instanceof OutsideProjectError) throw error
+  if (error instanceof BrowserCertificateError) {
+    return toolExecutionFailed({
+      title,
+      code: 'permission_denied',
+      message,
+      recoveryAction: 'change_strategy',
+      recovery: error.notice.canContinue
+        ? 'Only the user can allow this, and not through a tool: ask them to open this address in the Browser panel and choose Continue, then open it again. Do not try to reach it another way.'
+        : `${error.notice.note} Tell the user, and do not try to reach it another way.`
+    })
+  }
+  // A download has no page to report the certificate, so it cannot be allowed from the panel.
+  if (/\bERR_CERT_[A-Z_]+/.test(message)) {
+    return toolExecutionFailed({
+      title,
+      code: 'permission_denied',
+      message,
+      recoveryAction: 'change_strategy',
+      recovery:
+        'This address has a certificate SideKick does not trust, and SideKick does not download from such addresses. Tell the user, and do not try to reach it another way.'
+    })
+  }
   const network = networkFailure(error, message)
   if (network) return toolExecutionFailed({ title, message, ...network })
   if (name === 'TimeoutError' || /timed out|timeout/i.test(message)) {
@@ -949,6 +972,9 @@ export class AgentBrowserSessionManager {
     try {
       if (input.action === 'device') {
         await this.applyDevice(entry.sessionId, input.device, 'user')
+      } else if (input.action === 'certificateContinue') {
+        const url = await this.service.approveCertificate(entry.sessionId)
+        if (url) await this.service.navigate({ sessionId: entry.sessionId, action: 'url', url })
       } else if (['new', 'select', 'close'].includes(input.action)) {
         await this.service.tabs({
           sessionId: entry.sessionId,
@@ -963,6 +989,10 @@ export class AgentBrowserSessionManager {
           url: input.url
         })
       }
+    } catch (error) {
+      // The panel explains a refused page from its state, with its way forward if it has one.
+      if (!(error instanceof BrowserCertificateError) || !this.workspaceState(scope)?.certificate)
+        throw error
     } finally {
       entry.active = Math.max(0, entry.active - 1)
     }
