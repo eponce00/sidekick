@@ -252,37 +252,6 @@ test(
       // The sidebar lists chats made through the API after a reload.
       await page.reload()
       await page.waitForFunction(() => Boolean(window.api?.sessions))
-      await delay(4000)
-      console.log(
-        'SIDEKICK_DIAG',
-        JSON.stringify({
-          window: await application.evaluate(({ BrowserWindow, screen }) => ({
-            bounds: BrowserWindow.getAllWindows()[0]?.getBounds(),
-            count: BrowserWindow.getAllWindows().length,
-            maximized: BrowserWindow.getAllWindows()[0]?.isMaximized(),
-            visible: BrowserWindow.getAllWindows()[0]?.isVisible(),
-            work: screen.getPrimaryDisplay().workAreaSize,
-            size: screen.getPrimaryDisplay().size
-          })),
-          page: await page.evaluate(async () => ({
-            url: location.href,
-            inner: [innerWidth, innerHeight],
-            collapsed: localStorage.getItem('sidebarCollapsed'),
-            narrow: matchMedia('(max-width: 760px)').matches,
-            sidebarRect: document.querySelector('.sidebar')?.getBoundingClientRect?.(),
-            conversations: (await window.api.conversations.list()).map((c) => [
-              c.title,
-              c.project_id,
-              c.title_source
-            ]),
-            projects: (await window.api.projects.list()).map((p) => [p.id, p.name]),
-            buttons: [...document.querySelectorAll('button[aria-label]')]
-              .map((b) => b.getAttribute('aria-label'))
-              .slice(0, 30),
-            text: document.body.innerText.slice(0, 1500)
-          }))
-        })
-      )
       await page.getByText('Split the work', { exact: true }).first().click()
       await page.getByText('Both chats reported back').first().waitFor({ timeout: 15_000 })
       for (const handle of ['alpha', 'beta'])
