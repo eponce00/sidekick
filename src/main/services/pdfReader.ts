@@ -48,6 +48,8 @@ export interface PdfReadResult {
   nextPage: number | null
   content: string
   media: ToolResultMediaAttachment[]
+  /** The pages in `media`, in the same order, for the chat to show what the model was shown. */
+  shownPages: Array<{ page: number; image: Buffer }>
 }
 
 type PageLook = 'text' | 'scan' | 'blank' | 'pictures'
@@ -251,6 +253,7 @@ export async function readPdf(bytes: Uint8Array, options: PdfReadOptions): Promi
           ...readings.filter((reading) => reading.look === 'pictures')
         ].slice(0, imageSlots)
     const media: ToolResultMediaAttachment[] = []
+    const shownPages: PdfReadResult['shownPages'] = []
     for (const reading of shown) {
       const image = await renderPage(
         runtime,
@@ -259,6 +262,7 @@ export async function readPdf(bytes: Uint8Array, options: PdfReadOptions): Promi
         'jpeg'
       )
       reading.image = true
+      shownPages.push({ page: reading.number, image })
       media.push({
         type: 'image',
         mimeType: 'image/jpeg',
@@ -309,7 +313,7 @@ export async function readPdf(bytes: Uint8Array, options: PdfReadOptions): Promi
     const continuation = nextPage
       ? `\n\n[Read again with pages "${nextPage}-${remaining.at(-1)}" to continue.]`
       : ''
-    return { totalPages, pagesRead, nextPage, content: body + continuation, media }
+    return { totalPages, pagesRead, nextPage, content: body + continuation, media, shownPages }
   } finally {
     await task.destroy().catch(() => undefined)
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => undefined)

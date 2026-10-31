@@ -58,6 +58,8 @@ interface MarkdownNode {
 interface GalleryImage {
   src: string
   alt: string
+  /** On the tile, where `alt` is too long to fit; the enlarged view still shows `alt`. */
+  caption?: string
   title?: string
   sourceHref?: string
 }
@@ -373,7 +375,7 @@ function GalleryTile({
           />
         )
       )}
-      <span className="message-image-caption">{image.alt}</span>
+      <span className="message-image-caption">{image.caption ?? image.alt}</span>
       <span className="message-image-expand" aria-hidden="true">
         <Maximize2 size={13} />
       </span>
@@ -386,7 +388,14 @@ function GalleryTile({
   )
 }
 
-function MessageImageGallery({ images }: { images: GalleryImage[] }): React.JSX.Element {
+/** `localImages` are the app's own copies: they have no web source to name or open. */
+export function MessageImageGallery({
+  images,
+  localImages = false
+}: {
+  images: GalleryImage[]
+  localImages?: boolean
+}): React.JSX.Element {
   const galleryId = useId()
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -477,18 +486,21 @@ function MessageImageGallery({ images }: { images: GalleryImage[] }): React.JSX.
               <div className="message-image-lightbox-copy">
                 <strong>{activeImage.alt}</strong>
                 <span>
-                  {(activeIndex || 0) + 1} of {images.length} · {sourceLabel(activeImage.src)}
+                  {(activeIndex || 0) + 1} of {images.length}
+                  {!localImages && ` · ${sourceLabel(activeImage.src)}`}
                 </span>
               </div>
-              <a
-                href={activeImage.sourceHref || activeImage.src}
-                target="_blank"
-                rel="noreferrer"
-                className="message-image-lightbox-source"
-              >
-                <span>Open original</span>
-                <ExternalLink size={13} aria-hidden="true" />
-              </a>
+              {!localImages && (
+                <a
+                  href={activeImage.sourceHref || activeImage.src}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="message-image-lightbox-source"
+                >
+                  <span>Open original</span>
+                  <ExternalLink size={13} aria-hidden="true" />
+                </a>
+              )}
               <button
                 ref={closeRef}
                 type="button"

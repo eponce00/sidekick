@@ -739,6 +739,55 @@
   object-fit: contain;
 }
 
+/* Whole pages stand upright and small under the row; each says which page it is. */
+.tool-page-previews {
+  margin: 4px 0 8px 24px;
+}
+
+.tool-page-previews.agent-work-images {
+  margin-left: 0;
+}
+
+.tool-page-previews .message-image-gallery {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0;
+}
+
+.tool-page-previews .message-image-tile {
+  width: 96px;
+  aspect-ratio: 8.5 / 11;
+  /* A white page would otherwise melt into the light theme. */
+  border: 1px solid var(--border-subtle);
+}
+
+.tool-page-previews .message-image-tile img {
+  object-position: top;
+}
+
+/* Only the caption's strip darkens: the page itself is what the tile is for. */
+.tool-page-previews .message-image-tile::after {
+  inset: 74% 0 0;
+  opacity: 1;
+}
+
+/* Inside the tile, since the work row clips anything drawn past its edge. */
+.tool-page-previews .message-image-tile:focus-visible {
+  outline-offset: -2px;
+}
+
+.tool-page-previews .message-image-caption {
+  left: 8px;
+  right: 8px;
+  bottom: 6px;
+  opacity: 1;
+  transform: none;
+}
+
+.tool-page-previews .message-image-expand {
+  display: none;
+}
+
 .tool-image-preview.is-enlarged {
   cursor: zoom-out;
 }
