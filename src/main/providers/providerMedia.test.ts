@@ -102,6 +102,28 @@ describe('provider media materialization', () => {
     expect(request.messages.map((message) => message.media?.length ?? 0)).toEqual([1, 1, 1])
   })
 
+  it('tells the model when an image it asked to see has left the request', async () => {
+    const page = (index: number) => ({
+      type: 'image' as const,
+      mimeType: 'image/png' as const,
+      name: `report.pdf page ${index}`,
+      source: { type: 'data_url' as const, dataUrl: pngUrl(index) }
+    })
+    const materialized = await materializeProviderRequestMedia({
+      target: { providerKind: 'litellm', model: 'vision-model' },
+      purpose: 'continuation',
+      messages: [
+        { role: 'tool', tool_call_id: 'first', content: 'Pages 1-2', media: [page(1), page(2)] },
+        { role: 'tool', tool_call_id: 'second', content: 'Page 3', media: [page(3)] }
+      ]
+    })
+    expect(materialized.messages.map((message) => message.media?.length ?? 0)).toEqual([1, 1])
+    expect(materialized.messages[0].content).toContain('No longer attached')
+    expect(materialized.messages[0].content).toContain('report.pdf page 1')
+    expect(materialized.messages[0].content).not.toContain('report.pdf page 2')
+    expect(materialized.messages[1].content).toBe('Page 3')
+  })
+
   it('shares one image budget between user attachments and browser tool screenshots', async () => {
     const request: ProviderChatRequest = {
       target: { providerKind: 'litellm', model: 'vision-model' },

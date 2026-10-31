@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3'
 import { createHash } from 'crypto'
 import { statSync } from 'fs'
 import { delimiter, isAbsolute, join, relative, resolve } from 'path'
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import {
   locateWorkspacePath,
   OutsideProjectError,
@@ -39,6 +39,8 @@ import {
 import { credentialRedactor } from './credentialRedaction'
 import { executeWorkspaceMutation } from './workspaceMutationService'
 import { WorkspaceReadService } from './workspaceReadService'
+import { pdfPagesLabel, PdfReadError, readPdf } from './pdfReader'
+import { workspaceFileVersion } from '../utils/workspaceFileVersion'
 import { CommandService, type OwnedBackgroundTask } from './commandService'
 import { commandOutputForModel } from './commandOutputForModel'
 import type { TerminalModelRead } from './terminalSessions'
@@ -182,6 +184,8 @@ export interface AgentToolRuntimeSessionInput {
   webSearchEnabled: boolean
   /** Enable SideKick's built-in visual browser for this model/run. */
   browserEnabled?: boolean
+  /** Page images one PDF read may attach: the provider's image budget, or 0 for a text model. */
+  pageImages?: number
   /** The previous reply made an artifact, so the web-artifacts guidance is already in history. */
   artifactContinuation?: boolean
   /**
@@ -232,6 +236,8 @@ function boundedNumber(value: unknown, fallback: number, minimum: number, maximu
 const COMMAND_INPUT_SETTLE_MS = 1_500
 /** Chats whose read receipts are kept for their next reply. */
 const MAX_CONVERSATION_RECEIPTS = 50
+/** The whole file is parsed in memory; the model providers' own PDF limits are 32-50 MB. */
+const MAX_PDF_READ_BYTES = 100 * 1024 * 1024
 
 function backgroundNote(task: OwnedBackgroundTask): string {
   if (task.detached === 'waiting_for_input') {
@@ -943,6 +949,80 @@ export class AgentToolRuntime {
     return name.replaceAll('_', ' ')
   }
 
+  /** A PDF's pages as text, with images of the pages text alone misses; null for a folder. */
+  private async readPdfFile(
+    input: AgentToolRuntimeSessionInput,
+    readReceipts: Map<string, string>,
+    title: string,
+    path: string,
+    args: Record<string, unknown>,
+    context: AgentToolExecutionContext
+  ): Promise<ToolExecutionResult | null> {
+    const workspace = this.requireWorkspace(input)
+    const fullPath = await resolveSecureWorkspacePath(workspace, path)
+    const info = await stat(fullPath)
+    if (!info.isFile()) return null
+    if (info.size > MAX_PDF_READ_BYTES)
+      throw new AgentToolExecutionError(
+        'unsupported',
+        `${path} is larger than ${MAX_PDF_READ_BYTES / 1024 / 1024} MB, too large to read here.`,
+        false,
+        'Split it into smaller files with the PDF skill, or ask the user which part matters.',
+        'change_strategy'
+      )
+    const bytes = await readFile(fullPath)
+    const version = workspaceFileVersion(info)
+    readReceipts.set(workspacePathKey(projectRelativePath(workspace, path)), version)
+    let pdf: Awaited<ReturnType<typeof readPdf>>
+    try {
+      pdf = await readPdf(bytes, {
+        pages: stringArg(args, 'pages') || undefined,
+        maxTokens: DEFAULT_TOOL_OUTPUT_TOKENS - 1_024,
+        imageBudget: input.pageImages ?? 0,
+        label: path,
+        signal: context.signal
+      })
+    } catch (error) {
+      if (!(error instanceof PdfReadError)) throw error
+      throw error.code === 'pages'
+        ? new AgentToolExecutionError(
+            'invalid_arguments',
+            error.message,
+            false,
+            undefined,
+            'correct_input'
+          )
+        : new AgentToolExecutionError(
+            'unsupported',
+            error.message,
+            false,
+            error.code === 'password'
+              ? 'Ask the user for an unlocked copy; never guess or crack the password.'
+              : undefined,
+            'change_strategy'
+          )
+    }
+    const instructions = await this.scopedInstructions(input, path, false, false)
+    const metadata =
+      `[PDF: ${path} | ${pdf.totalPages} page${pdf.totalPages === 1 ? '' : 's'}` +
+      ` | read ${pdfPagesLabel(pdf.pagesRead)} | version ${version}` +
+      `${pdf.nextPage ? ` | next_page ${pdf.nextPage}` : ''}]
+`
+    const bounded = await this.outputs.apply(instructions.content + metadata + pdf.content)
+    return toolExecutionSucceeded({
+      title,
+      data: {
+        path,
+        totalPages: pdf.totalPages,
+        pagesRead: pdf.pagesRead,
+        pageImages: pdf.media.length
+      },
+      modelContent: bounded.content,
+      output: bounded.output,
+      media: pdf.media
+    })
+  }
+
   private async success(
     title: string,
     data: unknown,
@@ -1012,6 +1092,10 @@ export class AgentToolRuntime {
     const title = this.title(name, args)
     if (name === 'read') {
       const path = stringArg(args, 'path', '.')
+      if (/\.pdf$/i.test(path)) {
+        const pdf = await this.readPdfFile(input, readReceipts, title, path, args, context)
+        if (pdf) return pdf
+      }
       const result = await this.workspaceReads.readPath(this.requireWorkspace(input), path, {
         startLine: args.start_line as number | undefined,
         endLine: args.end_line as number | undefined,
