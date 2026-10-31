@@ -8,7 +8,8 @@ import {
 import {
   COMPUTER_DRIVER_TOOLS,
   computerDriverEnvironment,
-  computerDriverManifest
+  computerDriverManifest,
+  computerWindowBounds
 } from './computerUseDriver'
 import { ComputerUseService } from './computerUseService'
 
@@ -40,6 +41,8 @@ function harness(apps: ComputerApp[], confirm = true) {
   })
   const disarm = vi.fn()
   const armStop = vi.fn((_stop: () => void) => disarm)
+  const showActive = vi.fn()
+  const hideActive = vi.fn()
   const service = new ComputerUseService({
     driverPath: 'C:\\driver\\cua-driver.exe',
     dataFolder: () => 'C:\\data',
@@ -49,6 +52,8 @@ function harness(apps: ComputerApp[], confirm = true) {
     startApp,
     armStop,
     notifyActive: vi.fn(),
+    showActive,
+    hideActive,
     listApps: async () => apps,
     findInstalled: async (name) => installed.find((a) => a.name.toLowerCase() === name) ?? null,
     startDriver: startDriver as never,
@@ -63,7 +68,10 @@ function harness(apps: ComputerApp[], confirm = true) {
     userIdleSeconds,
     installed,
     startApp,
-    armStop
+    armStop,
+    disarm,
+    showActive,
+    hideActive
   }
 }
 
@@ -245,6 +253,34 @@ describe('what the agent may reach', () => {
     )
   })
 
+  it('gives everything back when the reply ends, keeping the chat’s approvals', async () => {
+    const { service, disarm, hideActive, confirmApp } = harness([app('notes')])
+    await service.requestApp('first', 'notes', signal)
+    await service.look('first', 'notes', false, signal)
+    service.runEnded('someone else')
+    expect(hideActive).not.toHaveBeenCalled()
+    service.runEnded('first')
+    expect(disarm).toHaveBeenCalled()
+    expect(hideActive).toHaveBeenCalled()
+    await vi.waitFor(() => expect(service['driver']).toBeNull())
+    await expect(service.requestApp('second', 'notes', signal)).resolves.toContain('approved')
+    expect(confirmApp).toHaveBeenCalledTimes(2)
+    service.runEnded('second')
+    await expect(service.requestApp('first', 'notes', signal)).resolves.toContain('already')
+  })
+
+  it('marks the app orange only once it may use the real keyboard', async () => {
+    const { service, call, showActive } = harness([app('notes')])
+    needsForeground(call, 'type_text')
+    await service.requestApp('chat', 'notes', signal)
+    await service.look('chat', 'notes', false, signal)
+    expect(showActive).toHaveBeenLastCalledWith(expect.objectContaining({ takeover: false }))
+    await service.type('chat', 'notes', 'x', undefined, signal)
+    expect(showActive).toHaveBeenLastCalledWith(
+      expect.objectContaining({ appName: 'notes', takeover: true })
+    )
+  })
+
   it('takes a denial as final and approves nothing', async () => {
     const { service, startDriver } = harness([app('notes')], false)
     await expect(service.requestApp('chat', 'notes', signal)).rejects.toThrow('did not allow')
@@ -359,6 +395,15 @@ describe('the driver’s limits', () => {
       CUA_DRIVER_RS_UPDATE_CHECK: 'false',
       CUA_DRIVER_PERMISSION_MODE: 'bounded'
     })
+  })
+
+  it('outlines only a window it knows, and not a minimized one', () => {
+    const bounds = { x: 60, y: 195, width: 1431, height: 1280 }
+    const windows = (minimized: boolean) => ({ windows: [{ window_id: 7, minimized, bounds }] })
+    expect(computerWindowBounds(windows(false), 7)).toEqual(bounds)
+    expect(computerWindowBounds(windows(true), 7)).toBeNull()
+    expect(computerWindowBounds(windows(false), 8)).toBeNull()
+    expect(computerWindowBounds('nonsense', 7)).toBeNull()
   })
 
   it('reads a single running app as well as many', () => {

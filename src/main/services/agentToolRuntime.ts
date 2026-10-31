@@ -805,7 +805,10 @@ export class AgentToolRuntime {
             this.credentials?.uses?.denied(request)
           }
         },
-        releaseRun: (runId) => this.credentials?.uses?.releaseRun(runId),
+        releaseRun: (runId) => {
+          this.credentials?.uses?.releaseRun(runId)
+          input.computer?.service.runEnded(input.conversationId ?? runId)
+        },
         ...(this.browser
           ? {
               reserveBrowserForHumanCheck: (conversationId: string) =>

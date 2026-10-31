@@ -108,6 +108,33 @@ export interface ComputerDriverResult {
   isError: boolean
   text: string
   images: Array<{ mimeType: string; data: string }>
+  structured?: unknown
+}
+
+/** In physical pixels, as Windows reports them. */
+export interface ComputerWindowBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** A window's place on screen from a `list_windows` result; null when it can't be outlined. */
+export function computerWindowBounds(
+  structured: unknown,
+  windowId: number
+): ComputerWindowBounds | null {
+  const windows = (structured as { windows?: unknown } | null | undefined)?.windows
+  if (!Array.isArray(windows)) return null
+  const found = (
+    windows as Array<{ window_id?: unknown; minimized?: unknown; bounds?: ComputerWindowBounds }>
+  ).find((window) => window?.window_id === windowId)
+  const bounds = found?.bounds
+  if (!bounds || found.minimized === true) return null
+  const { x, y, width, height } = bounds
+  return [x, y, width, height].every(Number.isFinite) && width > 0 && height > 0
+    ? { x, y, width, height }
+    : null
 }
 
 export type ComputerDriverCall = (
@@ -160,7 +187,8 @@ export async function startComputerDriver(
           part.type === 'image' && part.data
             ? [{ mimeType: part.mimeType ?? 'image/png', data: part.data }]
             : []
-        )
+        ),
+        structured: result.structuredContent
       }
     },
     close: () => client.close()

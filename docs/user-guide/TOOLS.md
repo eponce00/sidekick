@@ -55,17 +55,20 @@ On Windows, the agent can operate other apps on this computer when you turn this
   and reach any file.
 - **Software that may control real equipment,** such as TwinCAT, gets an extra warning. A wrong click
   or value could move a machine.
-- **Press Esc to stop it.** Everything the chat was allowed ends, and it has to ask you again. Esc is
-  held for about a minute after each action, so other apps don't receive it during that time.
-- **One chat at a time,** and never in a scheduled chat.
+- **Press Esc to stop it.** Everything the chat was allowed ends, and it has to ask you again. While
+  the border shows, for up to a minute after each action, other apps don't receive Esc.
+- **One chat at a time,** until its reply ends, and never in a scheduled chat.
 - **What the app shows goes to your selected model,** including any personal details on screen. A
   model that can't see images works from the app's list of controls alone.
 
-The agent normally works in the background without moving your mouse or taking focus, and a second
-cursor on screen shows where it is acting. Some apps ignore background input, as Chrome does for
-typing. The first time that happens in a chat, SideKick asks whether the agent may use your real
-mouse and keyboard in that app. Each such step waits until you pause, brings the app to the front for
-a moment, and then goes back to what you had open. Keys you press during that moment can land in the
+The agent normally works in the background without moving your mouse or taking focus. While it works,
+a border and a label mark the app, a second cursor shows where it is acting, and the chat shows its
+latest look at the app. Clicks pass through the border. All of this ends when the reply does.
+
+Some apps ignore background input, as Chrome does for typing. The first time that happens in a chat,
+SideKick asks whether the agent may use your real mouse and keyboard in that app, and the border turns
+orange if you allow it. Each such step waits until you pause, brings the app to the front for a
+moment, and then goes back to what you had open. Keys you press during that moment can land in the
 wrong window. This is never offered for software that may control real equipment.
 
 The native browser catalog includes `browser_open`, `browser_observe`, `browser_screenshot`,

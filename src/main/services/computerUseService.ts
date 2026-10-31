@@ -4,7 +4,8 @@ import {
   listComputerApps,
   type ComputerApp
 } from './computerUseApps'
-import { startComputerDriver, type ComputerDriver } from './computerUseDriver'
+import { computerWindowBounds, startComputerDriver, type ComputerDriver } from './computerUseDriver'
+import type { ComputerHighlightTarget } from './computerUseHighlight'
 
 export class ComputerUseRefusal extends Error {
   constructor(
@@ -31,6 +32,9 @@ export interface ComputerUseDependencies {
   /** Called while the agent can act, so the user can stop it from anywhere with Esc. */
   armStop: (stop: () => void) => () => void
   notifyActive: (appName: string) => void
+  /** Marks the app on screen for as long as Esc can stop the agent. */
+  showActive: (target: ComputerHighlightTarget) => void
+  hideActive: () => void
   listApps?: (signal: AbortSignal) => Promise<ComputerApp[]>
   findInstalled?: (name: string, signal: AbortSignal) => Promise<ComputerApp | null>
   startDriver?: typeof startComputerDriver
@@ -60,6 +64,8 @@ const POLL_MS = 500
 const TAKEOVER_IDLE_SECONDS = 2
 const TAKEOVER_WAIT_MS = 30_000
 const DRIVER_SESSION = 'sidekick'
+// Glow, ripple and squish are on by default. Its cursor hides when idle, a minute at most.
+const AGENT_CURSOR_MOTION = { effects: { trail: 'on' }, idle_hide_ms: 60_000 }
 const NEEDS_FOREGROUND = /background_unavailable|Background delivery is not available/i
 
 /** What the model reads comes from an app's window, which anyone can put words into. */
@@ -209,7 +215,11 @@ export class ComputerUseService {
   /** So the user can see where the agent acts. The work doesn't depend on it. */
   private async showAgentCursor(driver: ComputerDriver, signal: AbortSignal): Promise<void> {
     await driver
-      .call('start_session', { session: DRIVER_SESSION }, signal)
+      .call(
+        'start_session',
+        { session: DRIVER_SESSION, cursor_motion: AGENT_CURSOR_MOTION },
+        signal
+      )
       .then(() =>
         driver.call('set_agent_cursor_enabled', { session: DRIVER_SESSION, enabled: true }, signal)
       )
@@ -256,31 +266,54 @@ export class ComputerUseService {
     const last = access.windows.get(key)
     const windowId = chosenWindow ?? (last !== undefined && ids.includes(last) ? last : ids[0])
     access.windows.set(key, windowId)
-    this.markActive(chat, app.name)
+    this.markActive(chat, app, driver, app.pid, windowId)
     return { app, pid: app.pid, windowId, windows, driver }
   }
 
-  private markActive(chat: string, appName: string): void {
+  private markActive(
+    chat: string,
+    app: ComputerApp,
+    driver: ComputerDriver,
+    pid: number,
+    windowId: number
+  ): void {
     const access = this.access(chat)
     if (!access.notified) {
       access.notified = true
-      this.deps.notifyActive(appName)
+      this.deps.notifyActive(app.name)
     }
     const setTimer = this.deps.setTimer ?? setTimeout
     this.disarm ??= this.deps.armStop(() => void this.stop())
     if (this.disarmTimer) clearTimeout(this.disarmTimer)
     this.disarmTimer = setTimer(() => this.releaseStopKey(), STOP_KEY_HELD_MS)
+    this.deps.showActive({
+      appName: app.name,
+      takeover: access.takeover.has(app.path.toLowerCase()),
+      bounds: async () =>
+        computerWindowBounds(
+          (await driver.call('list_windows', { pid }, new AbortController().signal)).structured,
+          windowId
+        )
+    })
   }
 
   private releaseStopKey(): void {
     this.disarm?.()
     this.disarm = null
+    this.deps.hideActive()
   }
 
   private async release(): Promise<void> {
+    if (this.disarmTimer) clearTimeout(this.disarmTimer)
+    if (this.idleTimer) clearTimeout(this.idleTimer)
     this.releaseStopKey()
     this.activeChat = null
     await this.closeDriver()
+  }
+
+  /** A finished reply is done with the computer: other chats may have it, and Esc goes back. */
+  runEnded(chat: string): void {
+    if (this.activeChat === chat) void this.release()
   }
 
   /** Esc: everything the chat was allowed ends now, and asking again takes the user's answer. */
@@ -360,7 +393,9 @@ export class ComputerUseService {
     }
     let result = await driver.call(tool, targetArgs, signal)
     if (result.isError && NEEDS_FOREGROUND.test(result.text)) {
-      await this.takeOverInput(chat, app, signal)
+      await this.takeOverInput(chat, app, signal, () =>
+        this.markActive(chat, app, driver, pid, windowId)
+      )
       result = await driver.call(tool, { ...targetArgs, delivery_mode: 'foreground' }, signal)
     }
     if (result.isError) {
@@ -373,7 +408,12 @@ export class ComputerUseService {
   }
 
   /** Returns once this app may use the real mouse and keyboard, and the user has paused. */
-  private async takeOverInput(chat: string, app: ComputerApp, signal: AbortSignal): Promise<void> {
+  private async takeOverInput(
+    chat: string,
+    app: ComputerApp,
+    signal: AbortSignal,
+    allowed: () => void
+  ): Promise<void> {
     // A key the user happens to press can't be allowed to reach something that moves a machine.
     if (computerAppAccess(app.path).kind === 'physical') {
       throw new ComputerUseRefusal(
@@ -389,6 +429,7 @@ export class ComputerUseService {
         )
       }
       access.takeover.add(key)
+      allowed()
     }
     const deadline = Date.now() + TAKEOVER_WAIT_MS
     while (this.deps.userIdleSeconds() < TAKEOVER_IDLE_SECONDS) {

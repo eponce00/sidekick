@@ -4,6 +4,7 @@ import { existsSync } from 'fs'
 import { dirname, join } from 'path'
 import { appState } from '../ipc/state'
 import type { ComputerApp } from './computerUseApps'
+import { ComputerUseHighlight } from './computerUseHighlight'
 import { ComputerUseService } from './computerUseService'
 import { showTrustedDialog } from './trustedDialog'
 
@@ -76,6 +77,7 @@ function bundledDriverPath(): string {
 }
 
 let service: ComputerUseService | null = null
+const highlight = new ComputerUseHighlight()
 
 /**
  * The one service, with what only Electron can give it: the dialog, Esc, and the notification. Null
@@ -85,6 +87,8 @@ export function computerUseService(): ComputerUseService | null {
   const driverPath = bundledDriverPath()
   if (!existsSync(driverPath)) return null
   service ??= new ComputerUseService({
+    showActive: (target) => highlight.show(target),
+    hideActive: () => highlight.hide(),
     driverPath,
     dataFolder: () => join(app.getPath('userData'), 'computer-use'),
     confirmApp,

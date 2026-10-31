@@ -51,7 +51,8 @@ export function registerComputerToolHandlers(
         case 'request_app':
           return await succeed(await service.requestApp(chat, app, signal))
         case 'look': {
-          const seen = await service.look(chat, app, options.vision, signal, number(args, 'window'))
+          // The user sees it in the chat either way; only a model with vision is sent it.
+          const seen = await service.look(chat, app, true, signal, number(args, 'window'))
           const bounded = await outputs.apply(seen.text)
           const images = seen.images.filter((image) =>
             IMAGE_TYPES.includes(image.mimeType as ToolResultImageMimeType)
@@ -66,21 +67,22 @@ export function registerComputerToolHandlers(
             modelContent: bounded.content,
             output: bounded.output,
             // The model clicks by pixels in this image, so its copy must keep its size.
-            media: first
-              ? [
-                  {
-                    type: 'image',
-                    mimeType: first.mimeType as ToolResultImageMimeType,
-                    name: `${app} window`,
-                    description: `The ${app} window`,
-                    keepDimensions: true,
-                    source: {
-                      type: 'data_url',
-                      dataUrl: `data:${first.mimeType};base64,${first.data}`
+            media:
+              first && options.vision
+                ? [
+                    {
+                      type: 'image',
+                      mimeType: first.mimeType as ToolResultImageMimeType,
+                      name: `${app} window`,
+                      description: `The ${app} window`,
+                      keepDimensions: true,
+                      source: {
+                        type: 'data_url',
+                        dataUrl: `data:${first.mimeType};base64,${first.data}`
+                      }
                     }
-                  }
-                ]
-              : undefined
+                  ]
+                : undefined
           })
         }
         case 'click':
