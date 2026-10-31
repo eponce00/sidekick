@@ -8,8 +8,8 @@ import { promises as fs } from 'fs'
 import { dirname, join } from 'path'
 
 /**
- * The one build of cua-driver (MIT, https://github.com/trycua/cua) SideKick will start. A path in
- * settings says where it is, never what it is: anything else at that path is refused.
+ * The one build of cua-driver (MIT, https://github.com/trycua/cua) SideKick ships and will start.
+ * Anything else at its path is refused.
  */
 export const COMPUTER_DRIVER_VERSION = '0.38.0'
 const PINNED_WINDOWS_X64: Readonly<Record<string, string>> = {
@@ -18,10 +18,13 @@ const PINNED_WINDOWS_X64: Readonly<Record<string, string>> = {
 }
 
 /**
- * Everything the agent may reach in the driver. Left out on purpose: starting apps, `run_script`,
- * `run_steps`, the clipboard, whole-display capture, process control and the driver's own settings.
+ * Everything SideKick may reach in the driver. Left out on purpose: starting apps, which SideKick
+ * does itself, `run_script`, `run_steps`, the clipboard, whole-display capture, process control and
+ * the driver's own settings.
  */
 export const COMPUTER_DRIVER_TOOLS = [
+  'start_session',
+  'set_agent_cursor_enabled',
   'list_windows',
   'get_window_state',
   'click',
@@ -30,7 +33,8 @@ export const COMPUTER_DRIVER_TOOLS = [
   'type_text',
   'press_key',
   'set_value',
-  'scroll'
+  'scroll',
+  'drag'
 ] as const
 
 /** The driver's limits for one chat: deny by default, and only the apps the user approved. */

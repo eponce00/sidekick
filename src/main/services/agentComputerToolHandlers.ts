@@ -51,7 +51,7 @@ export function registerComputerToolHandlers(
         case 'request_app':
           return await succeed(await service.requestApp(chat, app, signal))
         case 'look': {
-          const seen = await service.look(chat, app, options.vision, signal)
+          const seen = await service.look(chat, app, options.vision, signal, number(args, 'window'))
           const bounded = await outputs.apply(seen.text)
           const images = seen.images.filter((image) =>
             IMAGE_TYPES.includes(image.mimeType as ToolResultImageMimeType)
@@ -97,6 +97,16 @@ export function registerComputerToolHandlers(
                 double: action === 'double_click',
                 button: action === 'right_click' ? 'right' : 'left'
               },
+              signal
+            )
+          )
+        case 'drag':
+          return await succeed(
+            await service.drag(
+              chat,
+              app,
+              { x: number(args, 'x'), y: number(args, 'y') },
+              { x: number(args, 'to_x'), y: number(args, 'to_y') },
               signal
             )
           )

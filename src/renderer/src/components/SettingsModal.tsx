@@ -313,7 +313,7 @@ function SettingsModal({
             >
               <ToggleField
                 label="Let the agent ask to use apps"
-                hint="Terminals, browsers, password managers and system tools are never available. Press Esc to stop it. What an app shows goes to your selected model."
+                hint="Password managers, Windows security prompts and SideKick itself are never available. Press Esc to stop it. What an app shows goes to your selected model."
                 checked={settings.computerUseEnabled ?? false}
                 onChange={(computerUseEnabled) => setSettings({ ...settings, computerUseEnabled })}
               />

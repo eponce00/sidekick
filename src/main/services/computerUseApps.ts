@@ -5,6 +5,8 @@ export type ComputerAppAccess =
   | { kind: 'allowed' }
   /** Can be approved, but the dialog says it may move real equipment and defaults to deny. */
   | { kind: 'physical' }
+  /** Can be approved, but the dialog says what approving it really hands over. */
+  | { kind: 'powerful'; warning: string }
   | { kind: 'blocked'; reason: string }
 
 export interface ComputerApp {
@@ -15,10 +17,10 @@ export interface ComputerApp {
   access: ComputerAppAccess
 }
 
-const SHELL_REASON = 'it can run any command, which would go around every other limit'
-const BLOCKED: ReadonlyArray<readonly [string, readonly string[]]> = [
+// Your call, per app and per chat, once the dialog has said this plainly.
+const POWERFUL: ReadonlyArray<readonly [string, readonly string[]]> = [
   [
-    SHELL_REASON,
+    'This app can run any command on this computer. Commands typed here skip SideKick’s command approvals and any Docker isolation.',
     [
       'cmd',
       'powershell',
@@ -41,27 +43,23 @@ const BLOCKED: ReadonlyArray<readonly [string, readonly string[]]> = [
     ]
   ],
   [
-    'it changes how this computer is set up, or reaches any file on it',
-    [
-      'explorer',
-      'regedit',
-      'mmc',
-      'taskmgr',
-      'msconfig',
-      'control',
-      'systemsettings',
-      'consent',
-      'lockapp',
-      'logonui'
-    ]
+    'This app can change how this computer is set up, and reach any file on it.',
+    ['explorer', 'regedit', 'mmc', 'taskmgr', 'msconfig', 'control', 'systemsettings']
   ],
+  [
+    'This browser holds your signed-in accounts. The agent could read and act in any of them, and a web page could try to steer it.',
+    ['chrome', 'msedge', 'firefox', 'brave', 'opera', 'vivaldi', 'arc']
+  ]
+]
+
+const BLOCKED: ReadonlyArray<readonly [string, readonly string[]]> = [
   [
     'it holds your passwords',
     ['1password', 'bitwarden', 'keepass', 'keepassxc', 'lastpass', 'dashlane', 'nordpass']
   ],
   [
-    'it holds your signed-in accounts; use SideKick’s own browser for web pages',
-    ['chrome', 'msedge', 'firefox', 'brave', 'opera', 'vivaldi', 'arc']
+    'it is a Windows security prompt, which only you may answer',
+    ['consent', 'credentialuibroker', 'lockapp', 'logonui']
   ],
   ['the agent may not operate SideKick itself', ['sidekick', 'electron']],
   [
@@ -91,6 +89,9 @@ export function computerAppAccess(executablePath: string): ComputerAppAccess {
     .toLowerCase()
   for (const [reason, names] of BLOCKED) {
     if (names.includes(name)) return { kind: 'blocked', reason }
+  }
+  for (const [warning, names] of POWERFUL) {
+    if (names.includes(name)) return { kind: 'powerful', warning }
   }
   return PHYSICAL.test(executablePath) ? { kind: 'physical' } : { kind: 'allowed' }
 }
@@ -126,7 +127,58 @@ export function parseComputerApps(stdout: string): ComputerApp[] {
  * email's subject, and the agent has not been given those apps. An elevated app reports no path,
  * so it is left out; Windows would refuse its input anyway.
  */
-export function listComputerApps(signal?: AbortSignal): Promise<ComputerApp[]> {
+export async function listComputerApps(signal?: AbortSignal): Promise<ComputerApp[]> {
+  return parseComputerApps(await runPowerShell(LIST_WINDOWED_PROCESSES, signal))
+}
+
+const LIST_START_MENU_APPS =
+  '[Console]::OutputEncoding=[Text.Encoding]::UTF8;' +
+  '$shell=New-Object -ComObject WScript.Shell;' +
+  "@([Environment]::GetFolderPath('CommonPrograms'),[Environment]::GetFolderPath('Programs')|" +
+  'ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -Filter *.lnk -ErrorAction SilentlyContinue }|' +
+  'ForEach-Object { $t=$shell.CreateShortcut($_.FullName).TargetPath;' +
+  "if ($t -like '*.exe') { [pscustomobject]@{Name=$_.BaseName;Path=$t} } }) | ConvertTo-Json -Compress"
+
+/** The Start Menu entry for a name: its executable's own name first, then the shortcut's. */
+export function matchInstalledApp(stdout: string, wanted: string): ComputerApp | null {
+  const trimmed = stdout.trim()
+  if (!trimmed) return null
+  const parsed = JSON.parse(trimmed) as unknown
+  const rows = (Array.isArray(parsed) ? parsed : [parsed]) as Array<{
+    Name?: unknown
+    Path?: unknown
+  }>
+  const name = wanted.toLowerCase()
+  const exeName = (path: string): string =>
+    basename(path.replaceAll('\\', '/'))
+      .replace(/\.exe$/i, '')
+      .toLowerCase()
+  const shortcuts = rows.flatMap((row) =>
+    typeof row?.Name === 'string' && typeof row.Path === 'string'
+      ? [{ shortcut: row.Name.toLowerCase(), path: row.Path }]
+      : []
+  )
+  const found =
+    shortcuts.find((row) => exeName(row.path) === name) ??
+    shortcuts.find((row) => row.shortcut === name)
+  if (!found) return null
+  return {
+    pid: 0,
+    name: basename(found.path.replaceAll('\\', '/')).replace(/\.exe$/i, ''),
+    path: found.path,
+    access: computerAppAccess(found.path)
+  }
+}
+
+/** An app that isn't running, found by name. Nothing here starts it. */
+export async function findInstalledApp(
+  name: string,
+  signal?: AbortSignal
+): Promise<ComputerApp | null> {
+  return matchInstalledApp(await runPowerShell(LIST_START_MENU_APPS, signal), name)
+}
+
+function runPowerShell(script: string, signal?: AbortSignal): Promise<string> {
   const powershell = join(
     process.env.SystemRoot ?? 'C:\\Windows',
     'System32',
@@ -143,12 +195,12 @@ export function listComputerApps(signal?: AbortSignal): Promise<ComputerApp[]> {
         '-ExecutionPolicy',
         'Bypass',
         '-EncodedCommand',
-        Buffer.from(LIST_WINDOWED_PROCESSES, 'utf16le').toString('base64')
+        Buffer.from(script, 'utf16le').toString('base64')
       ],
       { timeout: 20_000, signal, windowsHide: true, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 },
       (error, stdout) => {
         if (error) reject(error)
-        else resolve(parseComputerApps(stdout))
+        else resolve(stdout)
       }
     )
   })

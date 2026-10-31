@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { computerAppAccess, parseComputerApps, type ComputerApp } from './computerUseApps'
+import {
+  computerAppAccess,
+  matchInstalledApp,
+  parseComputerApps,
+  type ComputerApp
+} from './computerUseApps'
 import {
   COMPUTER_DRIVER_TOOLS,
   computerDriverEnvironment,
@@ -14,7 +19,7 @@ const app = (name: string, pid = 10): ComputerApp => {
 const signal = new AbortController().signal
 
 function harness(apps: ComputerApp[], confirm = true) {
-  const call = vi.fn(async (tool: string) => ({
+  const call = vi.fn(async (tool: string, _args?: Record<string, unknown>) => ({
     isError: false,
     images: [],
     text:
@@ -26,45 +31,181 @@ function harness(apps: ComputerApp[], confirm = true) {
   }))
   const startDriver = vi.fn(async () => ({ call, close: vi.fn(async () => undefined) }))
   const confirmApp = vi.fn(async () => confirm)
+  const confirmTakeover = vi.fn(async () => confirm)
+  const userIdleSeconds = vi.fn(() => 60)
+  const installed: ComputerApp[] = []
+  const startApp = vi.fn((path: string) => {
+    const started = installed.find((a) => a.path === path)
+    if (started) apps.push({ ...started, pid: 10 })
+  })
   const disarm = vi.fn()
   const armStop = vi.fn((_stop: () => void) => disarm)
   const service = new ComputerUseService({
-    driverPath: () => 'C:\\driver\\cua-driver.exe',
+    driverPath: 'C:\\driver\\cua-driver.exe',
     dataFolder: () => 'C:\\data',
     confirmApp,
+    confirmTakeover,
+    userIdleSeconds,
+    startApp,
     armStop,
     notifyActive: vi.fn(),
     listApps: async () => apps,
+    findInstalled: async (name) => installed.find((a) => a.name.toLowerCase() === name) ?? null,
     startDriver: startDriver as never,
     setTimer: (() => 0) as never
   })
-  return { service, call, startDriver, confirmApp, armStop }
+  return {
+    service,
+    call,
+    startDriver,
+    confirmApp,
+    confirmTakeover,
+    userIdleSeconds,
+    installed,
+    startApp,
+    armStop
+  }
+}
+
+/** A driver that takes this tool only with the real mouse and keyboard, as Chrome does for typing. */
+function needsForeground(call: ReturnType<typeof harness>['call'], tool: string): void {
+  call.mockImplementation(async (name, args) => ({
+    isError: name === tool && args?.delivery_mode !== 'foreground',
+    images: [],
+    text:
+      name === tool && args?.delivery_mode !== 'foreground'
+        ? 'Background delivery is not available for target window class'
+        : name === 'list_windows'
+          ? '- app (pid 10) "Window" [window_id: 77]'
+          : 'ok'
+  }))
 }
 
 describe('what the agent may reach', () => {
-  it.each([
-    'cmd',
-    'powershell',
-    'pwsh',
-    'WindowsTerminal',
-    'regedit',
-    'explorer',
-    'chrome',
-    'KeePass',
-    'SideKick'
-  ])('never offers %s, however it is spelled', async (name) => {
-    for (const spelled of [name, name.toUpperCase(), `${name}.exe`]) {
-      const { service, confirmApp } = harness([app(name)])
-      await expect(service.requestApp('chat', spelled, signal)).rejects.toThrow('cannot be used')
-      expect(confirmApp).not.toHaveBeenCalled()
+  it.each(['KeePass', 'Bitwarden', 'consent', 'LogonUI', 'LockApp', 'SideKick', 'electron'])(
+    'never offers %s, however it is spelled',
+    async (name) => {
+      for (const spelled of [name, name.toUpperCase(), `${name}.exe`]) {
+        const { service, confirmApp } = harness([app(name)])
+        await expect(service.requestApp('chat', spelled, signal)).rejects.toThrow('cannot be used')
+        expect(confirmApp).not.toHaveBeenCalled()
+      }
+      expect(await harness([app(name)]).service.apps(signal)).not.toContain(name)
     }
-    expect(await harness([app(name)]).service.apps(signal)).not.toContain(name)
-  })
+  )
 
   it('judges an app by its real path, not a friendly name', () => {
-    expect(computerAppAccess('C:\\Windows\\System32\\cmd.exe').kind).toBe('blocked')
-    expect(computerAppAccess('C:\\Tools\\notes\\CMD.EXE').kind).toBe('blocked')
+    expect(computerAppAccess('C:\\Windows\\System32\\consent.exe').kind).toBe('blocked')
+    expect(computerAppAccess('C:\\Tools\\notes\\KEEPASS.EXE').kind).toBe('blocked')
     expect(computerAppAccess('C:\\Windows\\System32\\charmap.exe').kind).toBe('allowed')
+  })
+
+  it.each(['cmd', 'WindowsTerminal', 'code', 'explorer', 'regedit', 'chrome', 'firefox'])(
+    'lets the user allow %s, only after a warning about what it hands over',
+    async (name) => {
+      const { service, confirmApp } = harness([app(name)])
+      expect(computerAppAccess(`C:\\Apps\\${name}.exe`)).toMatchObject({
+        kind: 'powerful',
+        warning: expect.stringMatching(/.+/)
+      })
+      await service.requestApp('chat', name, signal)
+      expect(confirmApp).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('starts an installed app only after approval, and never one it may not offer', async () => {
+    const denied = harness([], false)
+    denied.installed.push(app('notes'))
+    await expect(denied.service.requestApp('chat', 'notes', signal)).rejects.toThrow(
+      'did not allow'
+    )
+    expect(denied.startApp).not.toHaveBeenCalled()
+
+    const blocked = harness([])
+    blocked.installed.push(app('KeePass'))
+    await expect(blocked.service.requestApp('chat', 'keepass', signal)).rejects.toThrow(
+      'cannot be used'
+    )
+    expect(blocked.confirmApp).not.toHaveBeenCalled()
+    expect(blocked.startApp).not.toHaveBeenCalled()
+
+    const allowed = harness([])
+    allowed.installed.push(app('notes'))
+    await expect(allowed.service.requestApp('chat', 'notes', signal)).resolves.toContain('started')
+    expect(allowed.confirmApp).toHaveBeenCalledWith(expect.anything(), signal, true)
+    expect(allowed.startApp).toHaveBeenCalledWith('C:\\Apps\\notes.exe')
+  })
+
+  it('finds a Start Menu app by its executable or shortcut name', () => {
+    const stdout =
+      '[{"Name":"Google Chrome","Path":"C:\\\\Apps\\\\chrome.exe"},{"Name":"Notes","Path":"C:\\\\Apps\\\\n.exe"}]'
+    expect(matchInstalledApp(stdout, 'chrome')).toMatchObject({ name: 'chrome', pid: 0 })
+    expect(matchInstalledApp(stdout, 'google chrome')).toMatchObject({ name: 'chrome' })
+    expect(matchInstalledApp(stdout, 'calc')).toBeNull()
+  })
+
+  it('asks before using the real mouse and keyboard, once per chat', async () => {
+    const { service, call, confirmTakeover } = harness([app('notes')])
+    needsForeground(call, 'type_text')
+    await service.requestApp('chat', 'notes', signal)
+    await service.type('chat', 'notes', 'one', undefined, signal)
+    await service.type('chat', 'notes', 'two', undefined, signal)
+    expect(confirmTakeover).toHaveBeenCalledTimes(1)
+    expect(call).toHaveBeenLastCalledWith(
+      'type_text',
+      expect.objectContaining({ text: 'two', delivery_mode: 'foreground' }),
+      signal
+    )
+  })
+
+  it('never sends real input when the takeover is denied', async () => {
+    const { service, call, confirmApp } = harness([app('notes')], false)
+    confirmApp.mockResolvedValue(true)
+    needsForeground(call, 'type_text')
+    await service.requestApp('chat', 'notes', signal)
+    await expect(service.type('chat', 'notes', 'x', undefined, signal)).rejects.toThrow(
+      'did not let'
+    )
+    expect(call).not.toHaveBeenCalledWith(
+      'type_text',
+      expect.objectContaining({ delivery_mode: 'foreground' }),
+      signal
+    )
+  })
+
+  it('refuses real input for software that can move a machine, without asking', async () => {
+    const twincat: ComputerApp = {
+      pid: 10,
+      name: 'TcHmi',
+      path: 'C:\\TwinCAT\\TcHmi.exe',
+      access: computerAppAccess('C:\\TwinCAT\\TcHmi.exe')
+    }
+    const { service, call, confirmTakeover } = harness([twincat])
+    needsForeground(call, 'press_key')
+    await service.requestApp('chat', 'TcHmi', signal)
+    await expect(service.key('chat', 'TcHmi', 'return', [], signal)).rejects.toThrow('equipment')
+    expect(confirmTakeover).not.toHaveBeenCalled()
+  })
+
+  it('waits for the user to pause, and gives up rather than type over them', async () => {
+    vi.useFakeTimers()
+    try {
+      const { service, call, userIdleSeconds } = harness([app('notes')])
+      needsForeground(call, 'type_text')
+      userIdleSeconds.mockReturnValue(0)
+      await service.requestApp('chat', 'notes', signal)
+      const typing = service.type('chat', 'notes', 'x', undefined, signal)
+      const refused = expect(typing).rejects.toThrow('busy')
+      await vi.advanceTimersByTimeAsync(31_000)
+      await refused
+      expect(call).not.toHaveBeenCalledWith(
+        'type_text',
+        expect.objectContaining({ delivery_mode: 'foreground' }),
+        signal
+      )
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('flags software that can move real equipment, for the dialog to warn about', () => {
@@ -81,6 +222,27 @@ describe('what the agent may reach', () => {
       'not approved'
     )
     expect(startDriver).not.toHaveBeenCalled()
+  })
+
+  it('stays on the window the agent chose, and refuses one the app does not have', async () => {
+    const { service, call } = harness([app('notes')])
+    call.mockImplementation(async (tool) => ({
+      isError: false,
+      images: [],
+      text:
+        tool === 'list_windows'
+          ? '- app "One" [window_id: 77]\n- app "Two" [window_id: 88]'
+          : 'snapshot_id=s1'
+    }))
+    await service.requestApp('chat', 'notes', signal)
+    await expect(service.look('chat', 'notes', false, signal, 99)).rejects.toThrow('no window 99')
+    expect((await service.look('chat', 'notes', false, signal, 88)).text).toContain('"Two"')
+    await service.click('chat', 'notes', { element: 0 }, signal)
+    expect(call).toHaveBeenLastCalledWith(
+      'click',
+      expect.objectContaining({ window_id: 88, element_token: 's1:0' }),
+      signal
+    )
   })
 
   it('takes a denial as final and approves nothing', async () => {

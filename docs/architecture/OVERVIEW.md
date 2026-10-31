@@ -359,10 +359,13 @@ multimodal result path to raster files inside the active project.
 The `computer` tool operates other apps on Windows through a child process of
 [cua-driver](https://github.com/trycua/cua), which SideKick starts in its `bounded` mode with a
 manifest written per chat (`computerUseDriver.ts`). The manifest lists only the executables the user
-approved, in a trusted dialog, and only the driver tools SideKick uses, which leave out starting
-apps: the user opens an app, and the agent asks to use it. `computerUseService.ts` resolves an app from its real executable path
-on every call, keeps one chat in control at a time, and clears a chat's approvals when the user
-presses Esc. The driver's telemetry and update checks are turned off, and its files stay in SideKick's
+approved, in a trusted dialog, and only the driver tools SideKick uses. Those leave out starting
+apps: once approved, SideKick starts a Start Menu app's executable itself, with no arguments.
+`computerUseService.ts` resolves an app from its real executable path on every call, keeps one chat in
+control at a time, and clears a chat's approvals when the user presses Esc. Input goes in the
+background unless the driver reports that an app can't take it there. The real mouse and keyboard then
+need a second approval and a pause in the user's own input, and are refused for equipment software.
+The driver's telemetry and update checks are turned off, and its files stay in SideKick's
 folder. The Windows package ships the driver in `resources/computer-driver`, fetched at build time by
 `scripts/fetch-computer-driver.cjs`, with its licence and notices. Only the pinned build starts: both
 executables are checked against fixed SHA-256 hashes when packaging and again before each start.

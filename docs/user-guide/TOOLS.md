@@ -45,9 +45,14 @@ On Windows, the agent can operate other apps on this computer when you turn this
 **Settings › Computer use**. It is off by default, and there is nothing else to install.
 
 - **You approve each app, per chat.** The agent asks, and SideKick shows you the app and its path.
-  A denial is final for that request. The app must already be open; the agent cannot start apps.
-- **Some apps are never available:** terminals and code editors, system tools and File Explorer,
-  password managers, and browsers, which SideKick's own browser replaces.
+  A denial is final for that request. If the app isn't open and has a Start Menu entry, SideKick
+  starts it once you allow it.
+- **Some apps are never available:** password managers, Windows security and sign-in prompts, and
+  SideKick itself.
+- **Some apps come with a warning,** because allowing one hands over much more than one app:
+  browsers hold your signed-in accounts, terminals and code editors run commands without SideKick's
+  approvals or Docker isolation, and system tools and File Explorer can change your computer's setup
+  and reach any file.
 - **Software that may control real equipment,** such as TwinCAT, gets an extra warning. A wrong click
   or value could move a machine.
 - **Press Esc to stop it.** Everything the chat was allowed ends, and it has to ask you again. Esc is
@@ -56,8 +61,12 @@ On Windows, the agent can operate other apps on this computer when you turn this
 - **What the app shows goes to your selected model,** including any personal details on screen. A
   model that can't see images works from the app's list of controls alone.
 
-The agent normally works in the background without moving your mouse or taking focus. Some apps
-ignore background input; it then tells you it can't do that step.
+The agent normally works in the background without moving your mouse or taking focus, and a second
+cursor on screen shows where it is acting. Some apps ignore background input, as Chrome does for
+typing. The first time that happens in a chat, SideKick asks whether the agent may use your real
+mouse and keyboard in that app. Each such step waits until you pause, brings the app to the front for
+a moment, and then goes back to what you had open. Keys you press during that moment can land in the
+wrong window. This is never offered for software that may control real equipment.
 
 The native browser catalog includes `browser_open`, `browser_observe`, `browser_screenshot`,
 `browser_click`, `browser_type`, `browser_sign_in`, `browser_select`, `browser_fill_form`, `browser_scroll`, `browser_hover`,
