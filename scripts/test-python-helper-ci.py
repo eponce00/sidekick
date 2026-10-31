@@ -24,7 +24,7 @@ class PythonHelperCIContract(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/python-helpers.yml").read_text(encoding="utf-8")
         for required in ("contents: read", "actions/checkout@v7", "actions/setup-python@v7",
                          "python-version: '3.13'", "timeout-minutes: 10",
-                         "os: [windows-latest, macos-14, ubuntu-22.04]",
+                         "os: [windows-latest, macos-15, ubuntu-22.04]",
                          "python -B scripts/test-python-helper-ci.py",
                          "python -B scripts/run-python-helper-ci.py",
                          "--only-binary=:all: --no-deps -r scripts/requirements-python-helpers-ci.txt"):
