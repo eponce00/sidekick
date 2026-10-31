@@ -412,6 +412,75 @@ test(
       )
       if (process.env.SIDEKICK_GROUP_UPGRADE_DEBUG)
         await page.screenshot({ path: resolve(process.env.SIDEKICK_GROUP_UPGRADE_DEBUG) })
+      const sample = async (label) => {
+        const started = Date.now()
+        const pageState = await Promise.race([
+          page.evaluate(async () => {
+            const frames = await new Promise((done) => {
+              let count = 0
+              const tick = () => {
+                count++
+                requestAnimationFrame(tick)
+              }
+              requestAnimationFrame(tick)
+              setTimeout(() => done(count), 500)
+            })
+            return {
+              frames,
+              visibility: document.visibilityState,
+              focus: document.hasFocus(),
+              inner: [innerWidth, innerHeight],
+              found: document.body.innerText.includes('Desktop + API launch'),
+              html: document.body.innerHTML.includes('Desktop + API launch'),
+              ready: document.readyState,
+              text: document.body.innerText.slice(0, 300)
+            }
+          }),
+          new Promise((done) => setTimeout(() => done('evaluate stalled'), 5000))
+        ])
+        const count = await Promise.race([
+          page.getByText('Desktop + API launch', { exact: true }).count(),
+          new Promise((done) => setTimeout(() => done('count stalled'), 5000))
+        ])
+        const win = await application.evaluate(({ BrowserWindow }) => {
+          const w = BrowserWindow.getAllWindows()[0]
+          return {
+            bounds: w?.getBounds(),
+            visible: w?.isVisible(),
+            focused: w?.isFocused(),
+            minimized: w?.isMinimized(),
+            count: BrowserWindow.getAllWindows().length
+          }
+        })
+        console.log(
+          'SIDEKICK_DIAG',
+          label,
+          Date.now() - started,
+          JSON.stringify({ pageState, count, win })
+        )
+      }
+      await sample('before click')
+      const firstTry = await page
+        .getByText('Desktop + API launch', { exact: true })
+        .first()
+        .click({ timeout: 8000 })
+        .then(() => 'clicked')
+        .catch((error) => `failed: ${error.message.slice(0, 400)}`)
+      console.log('SIDEKICK_DIAG first click', firstTry)
+      await sample('after first click')
+      const shot = await page
+        .screenshot({ timeout: 8000, type: 'jpeg', quality: 30 })
+        .then((image) => image.toString('base64'))
+        .catch((error) => `screenshot failed: ${error.message.slice(0, 200)}`)
+      console.log('SIDEKICK_SHOT', shot)
+      if (firstTry !== 'clicked') {
+        await application.evaluate(({ app, BrowserWindow }) => {
+          app.focus({ steal: true })
+          BrowserWindow.getAllWindows()[0]?.show()
+          BrowserWindow.getAllWindows()[0]?.focus()
+        })
+        await sample('after focus')
+      }
       await page.getByText('Desktop + API launch', { exact: true }).first().click()
       await page
         .getByText('Agree on the contract for /v1/projects.')
