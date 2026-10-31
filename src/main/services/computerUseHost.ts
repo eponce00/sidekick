@@ -5,16 +5,30 @@ import { dirname, join } from 'path'
 import { appState } from '../ipc/state'
 import type { ComputerApp } from './computerUseApps'
 import { ComputerUseHighlight } from './computerUseHighlight'
+import { ComputerUseRememberedApps } from './computerUseRememberedApps'
 import { ComputerUseService } from './computerUseService'
 import { ComputerUseWindows } from './computerUseWindows'
 import { showTrustedDialog } from './trustedDialog'
+
+const ALLOW_FOR_CHAT = 'Allow for this chat'
+const ALWAYS_ALLOW = 'Always allow'
+
+export const rememberedApps = new ComputerUseRememberedApps(() =>
+  join(app.getPath('userData'), 'computer-use', 'always-allowed.json')
+)
 
 async function confirmApp(
   target: ComputerApp,
   signal: AbortSignal,
   starting: boolean
 ): Promise<boolean> {
+  // A wrong click in equipment software can move a machine, so it always asks.
+  const physical = target.access.kind === 'physical'
+  if (!physical && (await rememberedApps.has(target.path))) return true
   const icon = await app.getFileIcon(target.path, { size: 'large' }).catch(() => null)
+  const buttons = physical
+    ? ['Don’t allow', ALLOW_FOR_CHAT]
+    : ['Don’t allow', ALWAYS_ALLOW, ALLOW_FOR_CHAT]
   const window = appState.mainWindowRef
   const result = await showTrustedDialog(
     window && !window.isDestroyed() ? window : null,
@@ -24,7 +38,7 @@ async function confirmApp(
       message: `Let the agent ${starting ? 'start and use' : 'use'} ${target.name}?`,
       iconDataUrl: icon && !icon.isEmpty() ? icon.toDataURL() : undefined,
       detail: [
-        'For this chat, the agent can read what this app shows, and click and type in it. What it reads goes to the model you selected.',
+        'The agent can read what this app shows, and click and type in it. What it reads goes to the model you selected.',
         target.access.kind === 'powerful' ? target.access.warning : null,
         target.access.kind === 'physical'
           ? 'This looks like software that controls real equipment. A wrong click or value could move a machine. Only allow this if that is safe right now.'
@@ -34,14 +48,16 @@ async function confirmApp(
         .filter(Boolean)
         .join('\n\n'),
       facts: [{ label: 'App', value: target.path, code: true }],
-      buttons: ['Don’t allow', 'Allow for this chat'],
+      buttons,
       defaultId: 0,
       cancelId: 0,
       noLink: true
     },
     { signal }
   )
-  return result.response === 1
+  const answer = buttons[result.response]
+  if (answer === ALWAYS_ALLOW) await rememberedApps.add(target.path).catch(() => undefined)
+  return answer === ALWAYS_ALLOW || answer === ALLOW_FOR_CHAT
 }
 
 function startApp(path: string): void {

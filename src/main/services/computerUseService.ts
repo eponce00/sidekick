@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import {
   computerAppAccess,
   findInstalledApp,
@@ -27,6 +28,13 @@ export class ComputerUseRefusal extends Error {
   }
 }
 
+export interface ComputerLook {
+  text: string
+  images: Array<{ mimeType: string; data: string }>
+  /** Whether the picture differs from the last look at this app; null when there is nothing to compare. */
+  changed: boolean | null
+}
+
 export interface ComputerUseDependencies {
   driverPath: string
   dataFolder: () => string
@@ -35,7 +43,10 @@ export interface ComputerUseDependencies {
   /** Seconds since the user last touched the mouse or keyboard. */
   userIdleSeconds: () => number
   /** What the driver can't do: input with no focus, and handing the front back. */
-  appWindows: Pick<ComputerUseWindows, 'text' | 'key' | 'wheel' | 'restore' | 'visible'>
+  appWindows: Pick<
+    ComputerUseWindows,
+    'text' | 'key' | 'wheel' | 'restore' | 'visible' | 'front' | 'controlAt' | 'ignoresPostedClicks'
+  >
   /** Starts an approved executable, with no arguments. */
   startApp: (path: string) => void
   /** Called while the agent can act, so the user can stop it from anywhere with Esc. */
@@ -56,9 +67,24 @@ interface ChatAccess {
   /** Approved executables by lower-case path. */
   approved: Map<string, string>
   /** The last snapshot of each app, by lower-case path. An element number means nothing without it. */
-  snapshots: Map<string, { snapshot: string; pid: number; windowId: number; imageWidth?: number }>
+  snapshots: Map<
+    string,
+    {
+      snapshot: string
+      pid: number
+      windowId: number
+      imageWidth?: number
+      imageHash?: string
+      /** The list of controls this look returned, to say what a row number is. */
+      tree: string
+      /** The last zoom into this picture, to say where a click on the zoomed picture is. */
+      zoom?: { x: number; y: number; width: number; height: number; imageWidth: number }
+    }
+  >
   /** The window the agent last chose in each app with several, by lower-case path. */
   windows: Map<string, number>
+  /** Steps in a row that changed nothing on screen. */
+  unchangedSteps: number
   notified: boolean
 }
 
@@ -77,6 +103,20 @@ const TAKEOVER_WAIT_MS = 75_000
 const REAL_INPUT_SETTLE_MS = 150
 // Chromium drops the first wheel tick after the pointer jumps to a window.
 const MIN_REAL_WHEEL_TICKS = 2
+// An app takes a moment to draw what an action did.
+const ACTION_SETTLE_MS = 500
+// Some apps take over a second, so nothing changing yet doesn't mean nothing happened.
+const SLOW_APP_SETTLE_MS = 1_200
+const WARN_UNCHANGED_STEPS = 3
+// Past these, more of the same only risks the agent going somewhere strange in someone's app.
+const MAX_UNCHANGED_STEPS = 5
+const MAX_UNCHANGED_REAL_STEPS = 8
+// The driver pads a zoom by this much on every side, so the target stays in view.
+const ZOOM_PADDING = 0.2
+// Words on a control that can't be taken back. A name can't catch everything, so this makes the agent
+// stop and think about what it is pressing rather than promising safety.
+const RISKY_CONTROL =
+  /\b(send|delete|remove|erase|buy|pay|purchase|order|checkout|submit|confirm|transfer|post|publish|uninstall|format|reset|sign out|log out)\b/i
 const NEEDS_FOREGROUND =
   /background_unavailable|Background delivery is not available|UIA pixel click timeout/i
 
@@ -137,6 +177,7 @@ export class ComputerUseService {
         approved: new Map(),
         snapshots: new Map(),
         windows: new Map(),
+        unchangedSteps: 0,
         notified: false
       }
       this.chats.set(chat, access)
@@ -366,6 +407,8 @@ export class ComputerUseService {
 
   /** A finished reply is done with the computer: other chats may have it, and Esc goes back. */
   runEnded(chat: string): void {
+    const access = this.chats.get(chat)
+    if (access) access.unchangedSteps = 0
     if (this.activeChat === chat) void this.release()
   }
 
@@ -388,7 +431,7 @@ export class ComputerUseService {
     includeImage: boolean,
     signal: AbortSignal,
     chosenWindow?: number
-  ): Promise<{ text: string; images: Array<{ mimeType: string; data: string }> }> {
+  ): Promise<ComputerLook> {
     const { app, pid, windowId, windows, driver } = await this.target(
       chat,
       name,
@@ -407,12 +450,25 @@ export class ComputerUseService {
     )
     if (state.isError) throw new ComputerUseRefusal(state.text, true)
     const snapshot = /snapshot_id=(\S+)/.exec(state.text)?.[1]
+    let imageHash: string | undefined
+    let changed: boolean | null = null
     if (snapshot) {
-      this.access(chat).snapshots.set(app.path.toLowerCase(), {
+      const key = app.path.toLowerCase()
+      const before = this.access(chat).snapshots.get(key)
+      imageHash = state.images[0]
+        ? createHash('sha256').update(state.images[0].data).digest('hex')
+        : undefined
+      changed =
+        imageHash && before?.imageHash && before.windowId === windowId
+          ? imageHash !== before.imageHash
+          : null
+      this.access(chat).snapshots.set(key, {
         snapshot,
         pid,
         windowId,
-        imageWidth: pngWidth(state.images[0]?.data)
+        imageWidth: pngWidth(state.images[0]?.data),
+        imageHash,
+        tree: state.text
       })
     }
     const otherWindows =
@@ -422,8 +478,35 @@ export class ComputerUseService {
     return {
       // The driver's line about how to spell a token is about its own API, not this tool's.
       text: `${UNTRUSTED}\n${otherWindows}${state.text.replace(/^element_token for row.*$/m, '').trim()}`,
-      images: state.images
+      images: state.images,
+      changed
     }
+  }
+
+  /**
+   * The app after an action, with what the agent needs to know about it. A driver's success only says
+   * the input was sent: an app can ignore it, and an agent told it worked goes on guessing.
+   */
+  async lookAfterAction(
+    chat: string,
+    name: string,
+    signal: AbortSignal
+  ): Promise<ComputerLook & { note: string }> {
+    await new Promise((resolve) => setTimeout(resolve, ACTION_SETTLE_MS))
+    let seen = await this.look(chat, name, true, signal)
+    if (seen.changed === false) {
+      await new Promise((resolve) => setTimeout(resolve, SLOW_APP_SETTLE_MS))
+      seen = await this.look(chat, name, true, signal)
+    }
+    const access = this.access(chat)
+    if (seen.changed === false) access.unchangedSteps += 1
+    if (seen.changed === true) access.unchangedSteps = 0
+    if (seen.changed !== false) return { ...seen, note: '' }
+    const note =
+      access.unchangedSteps >= WARN_UNCHANGED_STEPS
+        ? `The window has not changed in ${access.unchangedSteps} steps in a row, so these are not landing. Stop trying, and tell the user what you were trying to do and what happened.`
+        : 'The window looks exactly as it did before this step, so it probably did not land. Do not assume it worked. Repeat it with real_input true, or tell the user what you need done.'
+    return { ...seen, note }
   }
 
   private async act(
@@ -433,9 +516,16 @@ export class ComputerUseService {
     args: Record<string, unknown>,
     element: number | undefined,
     signal: AbortSignal,
-    realInput = false
+    realInput = false,
+    confirmRisky = false
   ): Promise<string> {
     const { app, pid, windowId, bounds, driver } = await this.target(chat, name, signal)
+    const steps = this.access(chat).unchangedSteps
+    if (steps >= (realInput ? MAX_UNCHANGED_REAL_STEPS : MAX_UNCHANGED_STEPS)) {
+      throw new ComputerUseRefusal(
+        `${steps} steps in a row changed nothing in ${app.name}, so SideKick stopped sending more. Tell the user what you were trying to do.`
+      )
+    }
     const targetArgs: Record<string, unknown> = {
       pid,
       window_id: windowId,
@@ -448,8 +538,37 @@ export class ComputerUseService {
       }
       targetArgs.element_token = `${seen.snapshot}:${element}`
     }
-    let result = await driver.call(tool, targetArgs, signal)
-    if (result.isError && NEEDS_FOREGROUND.test(result.text)) {
+    const scaleNow = this.imageScale(chat, app, bounds)
+    const pressing =
+      tool === 'click' || tool === 'double_click'
+        ? await this.controlBeingClicked(chat, app, args, element, bounds, scaleNow)
+        : ''
+    if (RISKY_CONTROL.test(pressing) && !confirmRisky) {
+      throw new ComputerUseRefusal(
+        `This would press ${pressing} in ${app.name}, which may not be reversible, so nothing was sent. If the user clearly asked for this, repeat it with confirm_risky true. Otherwise stop and ask them.`
+      )
+    }
+    const isClick =
+      tool === 'click' || tool === 'double_click' || tool === 'right_click' || tool === 'drag'
+    if (!realInput && isClick && (await this.deps.appWindows.ignoresPostedClicks(windowId))) {
+      throw new ComputerUseRefusal(
+        `${app.name} ignores clicks sent in the background, so nothing was sent. You decide: repeat it with real_input true, which waits until the user has stepped away and then briefly uses their real mouse, or tell the user what you need done.`
+      )
+    }
+    if (realInput) await this.waitToUseRealInput(app, signal)
+    const frontBefore = realInput ? 0 : await this.deps.appWindows.front()
+    const result = realInput
+      ? await this.sendRealInput(app, driver, tool, targetArgs, signal)
+      : await driver.call(tool, targetArgs, signal)
+    // A background click can still make an app bring itself forward, over what the user is doing.
+    if (
+      frontBefore &&
+      frontBefore !== windowId &&
+      (await this.deps.appWindows.front()) === windowId
+    ) {
+      await this.deps.appWindows.restore(frontBefore)
+    }
+    if (!realInput && result.isError && NEEDS_FOREGROUND.test(result.text)) {
       const scale = this.imageScale(chat, app, bounds)
       const sent = await this.sendInBackground(tool, args, windowId, bounds, scale)
       if (sent) {
@@ -457,13 +576,9 @@ export class ComputerUseService {
         if (point) this.deps.moveCursor(point)
         return `Sent to ${app.name} in the background. It can't be confirmed from here, so use look to see whether it arrived.`
       }
-      if (!realInput) {
-        throw new ComputerUseRefusal(
-          `${app.name} can't take this step in the background. You decide: repeat it with real_input true, which waits until the user has stepped away and then briefly uses their real mouse and keyboard, or tell the user what you need done.`
-        )
-      }
-      await this.waitToUseRealInput(app, signal)
-      result = await this.sendRealInput(app, driver, tool, targetArgs, signal)
+      throw new ComputerUseRefusal(
+        `${app.name} can't take this step in the background. You decide: repeat it with real_input true, which waits until the user has stepped away and then briefly uses their real mouse and keyboard, or tell the user what you need done.`
+      )
     }
     if (result.isError) {
       throw new ComputerUseRefusal(
@@ -473,12 +588,41 @@ export class ComputerUseService {
     }
     const point = computerActionPoint(result.text)
     if (point) this.deps.moveCursor(point)
-    return result.text || 'Done.'
+    // Only that it was sent: whether it landed is for the look that follows to say.
+    return `${pressing ? `Click sent to ${pressing}. ` : ''}${(result.text || 'Sent.').replace(/^\W+/u, '')}`
   }
 
   private imageScale(chat: string, app: ComputerApp, bounds: ComputerWindowBounds | null): number {
     const width = this.access(chat).snapshots.get(app.path.toLowerCase())?.imageWidth
     return width && bounds ? bounds.width / width : 1
+  }
+
+  /** What a click is about to press: a row's own line, or what Windows says is at the point. */
+  private async controlBeingClicked(
+    chat: string,
+    app: ComputerApp,
+    args: Record<string, unknown>,
+    element: number | undefined,
+    bounds: ComputerWindowBounds | null,
+    scale: number
+  ): Promise<string> {
+    const seen = this.access(chat).snapshots.get(app.path.toLowerCase())
+    if (element !== undefined) {
+      const line = seen?.tree.split('\n').find((row) => row.includes(`[${element}] `))
+      return line?.replace(/^.*?\[\d+\]\s*/, '').replace(/\s*\[.*$/, '') ?? ''
+    }
+    const zoom = args.from_zoom === true ? seen?.zoom : undefined
+    const point = pointOnScreen(
+      zoom && typeof args.x === 'number' && typeof args.y === 'number'
+        ? {
+            x: zoom.x + (args.x * zoom.width) / zoom.imageWidth,
+            y: zoom.y + (args.y * zoom.width) / zoom.imageWidth
+          }
+        : args,
+      bounds,
+      scale
+    )
+    return point ? this.deps.appWindows.controlAt(app.pid, point).catch(() => '') : ''
   }
 
   /** Web-based apps take some input directly, with no focus. False when this step isn't one. */
@@ -577,11 +721,22 @@ export class ComputerUseService {
   async click(
     chat: string,
     name: string,
-    target: { element?: number; x?: number; y?: number; button?: string; double?: boolean },
+    target: {
+      element?: number
+      x?: number
+      y?: number
+      button?: string
+      double?: boolean
+      fromZoom?: boolean
+    },
     signal: AbortSignal,
-    realInput = false
+    realInput = false,
+    confirmRisky = false
   ): Promise<string> {
-    const point = target.element === undefined ? { x: target.x, y: target.y } : {}
+    const point =
+      target.element === undefined
+        ? { x: target.x, y: target.y, ...(target.fromZoom ? { from_zoom: true } : {}) }
+        : {}
     if (target.element === undefined && (target.x === undefined || target.y === undefined)) {
       throw new ComputerUseRefusal('Give an element number, or both x and y.')
     }
@@ -590,7 +745,41 @@ export class ComputerUseService {
       : target.button === 'right'
         ? 'right_click'
         : 'click'
-    return this.act(chat, name, tool, point, target.element, signal, realInput)
+    return this.act(chat, name, tool, point, target.element, signal, realInput, confirmRisky)
+  }
+
+  /** A part of the app at full resolution, for targets too small to judge in the shrunken picture. */
+  async zoom(
+    chat: string,
+    name: string,
+    region: { x: number; y: number; toX: number; toY: number },
+    signal: AbortSignal
+  ): Promise<ComputerLook> {
+    const { app, pid, windowId, driver } = await this.target(chat, name, signal)
+    const result = await driver.call(
+      'zoom',
+      { pid, window_id: windowId, x1: region.x, y1: region.y, x2: region.toX, y2: region.toY },
+      signal
+    )
+    if (result.isError) throw new ComputerUseRefusal(result.text, true)
+    const seen = this.access(chat).snapshots.get(app.path.toLowerCase())
+    const imageWidth = pngWidth(result.images[0]?.data)
+    if (seen && imageWidth) {
+      const width = region.toX - region.x
+      const height = region.toY - region.y
+      seen.zoom = {
+        x: region.x - width * ZOOM_PADDING,
+        y: region.y - height * ZOOM_PADDING,
+        width: width * (1 + ZOOM_PADDING * 2),
+        height: height * (1 + ZOOM_PADDING * 2),
+        imageWidth
+      }
+    }
+    return {
+      text: `${UNTRUSTED}\nThis is a closer view. To click something in it, use click with x and y from this picture and from_zoom true.`,
+      images: result.images,
+      changed: null
+    }
   }
 
   async drag(

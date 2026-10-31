@@ -33,6 +33,7 @@ export const COMPUTER_DRIVER_TOOLS = [
   'set_value',
   'scroll',
   'drag',
+  'zoom',
   'bring_to_front'
 ] as const
 

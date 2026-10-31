@@ -44,8 +44,10 @@ that.
 On Windows, the agent can operate other apps on this computer when you turn this on in
 **Settings › Computer use**. It is off by default, and there is nothing else to install.
 
-- **You approve each app, per chat.** The agent asks, and SideKick shows you the app and its path.
-  A denial is final for that request. If the app isn't open and has a Start Menu entry, SideKick
+- **You approve each app.** The agent asks, and SideKick shows you the app and its path. Allow it
+  for this chat, or always. An app you always allow asks again if its program changes, and you can
+  remove it in Settings. Software that may control real equipment asks every time. A denial is final
+  for that request. If the app isn't open and has a Start Menu entry, SideKick
   starts it once you allow it.
 - **Some apps are never available:** password managers, Windows security and sign-in prompts, and
   SideKick itself.
@@ -66,10 +68,17 @@ a soft glow and a label mark the app, SideKick's own pointer shows where it is a
 shows its latest look at the app. Clicks pass through all of this, and it ends when the reply does.
 
 Some apps ignore background input for some steps. WhatsApp scrolls in the background, for example,
-but needs a real click to type. The agent then chooses: it can tell you what it needs, or wait until
+but needs a real click to type, and Docker Desktop takes no background clicks at all. The agent then chooses: it can tell you what it needs, or wait until
 you have stepped away for 30 seconds, bring the app to the front for a moment, use your real mouse and
 keyboard, and go back to what you had open. This is never done for software that may control real
 equipment. If the app is covered or minimized, the glow gives way to a small label in the corner.
+
+Before a click, SideKick checks what is being pressed where it can tell. A control named something
+like Send, Delete or Pay is refused until the agent confirms that you asked for it. Names can't catch
+everything: web-based apps may not name their controls, and a covered app can't be checked.
+
+After each step the agent sees the app again and is told if nothing changed. After a few such steps
+it is told to stop and explain, and SideKick stops sending more.
 
 The native browser catalog includes `browser_open`, `browser_observe`, `browser_screenshot`,
 `browser_click`, `browser_type`, `browser_sign_in`, `browser_select`, `browser_fill_form`, `browser_scroll`, `browser_hover`,

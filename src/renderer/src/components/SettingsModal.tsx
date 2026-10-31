@@ -47,6 +47,7 @@ import { ACCENT_PALETTES, DEFAULT_ACCENT_PALETTE } from '../../../shared/accentP
 import { DEFAULT_TEXT_SCALE, nearestTextScale, steppedTextScale } from '../../../shared/textScale'
 import { applyAccentPalette } from '../constants/accentPalettes'
 import { CommandLineToolSettings } from './CommandLineToolSettings'
+import { ComputerUseAllowedApps } from './ComputerUseAllowedApps'
 import { CredentialSettings } from './CredentialSettings'
 import { McpServerSettings } from './McpServerSettings'
 import { ProviderSettingsPanel } from './ProviderSettingsPanel'
@@ -317,6 +318,7 @@ function SettingsModal({
                 checked={settings.computerUseEnabled ?? false}
                 onChange={(computerUseEnabled) => setSettings({ ...settings, computerUseEnabled })}
               />
+              <ComputerUseAllowedApps />
             </SettingsSection>
           )}
           <SettingsSection

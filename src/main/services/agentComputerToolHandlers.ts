@@ -2,7 +2,11 @@ import { toolExecutionFailed, toolExecutionSucceeded } from '../../shared/agentR
 import type { ToolResultImageMimeType } from '../../shared/agentRuntime'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
 import type { ToolOutputStore } from './toolOutputStore'
-import { ComputerUseRefusal, type ComputerUseService } from './computerUseService'
+import {
+  ComputerUseRefusal,
+  type ComputerLook,
+  type ComputerUseService
+} from './computerUseService'
 import { saveViewedImagePreview } from './viewedImagePreviews'
 
 const IMAGE_TYPES: readonly ToolResultImageMimeType[] = ['image/png', 'image/jpeg', 'image/webp']
@@ -30,6 +34,7 @@ export function registerComputerToolHandlers(
     const app = text(args, 'app')
     const element = number(args, 'element')
     const realInput = args.real_input === true
+    const confirmRisky = args.confirm_risky === true
     const succeed = async (content: string) => {
       const bounded = await outputs.apply(content)
       return toolExecutionSucceeded({
@@ -38,6 +43,54 @@ export function registerComputerToolHandlers(
         modelContent: bounded.content,
         output: bounded.output
       })
+    }
+    // The user sees the picture in the chat either way; only a model with vision is sent it.
+    const showLook = async (seen: ComputerLook, before = '', isZoom = false) => {
+      // Web-based apps often expose no controls, and then only the picture says what is there.
+      const bounded = await outputs.apply(
+        isZoom || /\[\d+\]/.test(seen.text)
+          ? `${before}${seen.text}`
+          : `${before}${seen.text}\n${options.vision ? 'This app lists no controls. Work from the image, by pixel.' : 'This app lists no controls, and this model cannot see the image, so it cannot operate this app. Tell the user.'}`
+      )
+      const images = seen.images.filter((image) =>
+        IMAGE_TYPES.includes(image.mimeType as ToolResultImageMimeType)
+      )
+      const first = images[0]
+      const previewUrl = first
+        ? await saveViewedImagePreview(Buffer.from(first.data, 'base64'))
+        : undefined
+      return toolExecutionSucceeded({
+        title,
+        data: { action, app, ...(previewUrl ? { previewUrl } : {}) },
+        modelContent: bounded.content,
+        output: bounded.output,
+        // The model clicks by pixels in this image, so its copy must keep its size.
+        media:
+          first && options.vision
+            ? [
+                {
+                  type: 'image',
+                  mimeType: first.mimeType as ToolResultImageMimeType,
+                  name: `${app} window`,
+                  description: `The ${app} window`,
+                  keepDimensions: true,
+                  source: {
+                    type: 'data_url',
+                    dataUrl: `data:${first.mimeType};base64,${first.data}`
+                  }
+                }
+              ]
+            : undefined
+      })
+    }
+    // An action comes back with the app as it now stands, so the agent sees what its step really did.
+    const acted = async (result: string) => {
+      const seen = await service.lookAfterAction(chat, app, signal).catch((error) => {
+        if (signal.aborted) throw error
+        return null
+      })
+      if (!seen) return succeed(result)
+      return showLook(seen, `${result}\n${seen.note ? `${seen.note}\n` : ''}`)
     }
     try {
       if (action === 'list_apps') return await succeed(await service.apps(signal))
@@ -51,50 +104,19 @@ export function registerComputerToolHandlers(
       switch (action) {
         case 'request_app':
           return await succeed(await service.requestApp(chat, app, signal))
-        case 'look': {
-          // The user sees it in the chat either way; only a model with vision is sent it.
-          const seen = await service.look(chat, app, true, signal, number(args, 'window'))
-          // Web-based apps often expose no controls, and then only the picture says what is there.
-          const bounded = await outputs.apply(
-            /\[\d+\]/.test(seen.text)
-              ? seen.text
-              : `${seen.text}\n${options.vision ? 'This app lists no controls. Work from the image, by pixel.' : 'This app lists no controls, and this model cannot see the image, so it cannot operate this app. Tell the user.'}`
-          )
-          const images = seen.images.filter((image) =>
-            IMAGE_TYPES.includes(image.mimeType as ToolResultImageMimeType)
-          )
-          const first = images[0]
-          const previewUrl = first
-            ? await saveViewedImagePreview(Buffer.from(first.data, 'base64'))
-            : undefined
-          return toolExecutionSucceeded({
-            title,
-            data: { action, app, ...(previewUrl ? { previewUrl } : {}) },
-            modelContent: bounded.content,
-            output: bounded.output,
-            // The model clicks by pixels in this image, so its copy must keep its size.
-            media:
-              first && options.vision
-                ? [
-                    {
-                      type: 'image',
-                      mimeType: first.mimeType as ToolResultImageMimeType,
-                      name: `${app} window`,
-                      description: `The ${app} window`,
-                      keepDimensions: true,
-                      source: {
-                        type: 'data_url',
-                        dataUrl: `data:${first.mimeType};base64,${first.data}`
-                      }
-                    }
-                  ]
-                : undefined
-          })
+        case 'look':
+          return await showLook(await service.look(chat, app, true, signal, number(args, 'window')))
+        case 'zoom': {
+          const [x, y, toX, toY] = ['x', 'y', 'to_x', 'to_y'].map((key) => number(args, key))
+          if (x === undefined || y === undefined || toX === undefined || toY === undefined) {
+            throw new ComputerUseRefusal('zoom needs x and y, and to_x and to_y.')
+          }
+          return await showLook(await service.zoom(chat, app, { x, y, toX, toY }, signal), '', true)
         }
         case 'click':
         case 'double_click':
         case 'right_click':
-          return await succeed(
+          return await acted(
             await service.click(
               chat,
               app,
@@ -103,14 +125,16 @@ export function registerComputerToolHandlers(
                 x: number(args, 'x'),
                 y: number(args, 'y'),
                 double: action === 'double_click',
-                button: action === 'right_click' ? 'right' : 'left'
+                button: action === 'right_click' ? 'right' : 'left',
+                fromZoom: args.from_zoom === true
               },
               signal,
-              realInput
+              realInput,
+              confirmRisky
             )
           )
         case 'drag':
-          return await succeed(
+          return await acted(
             await service.drag(
               chat,
               app,
@@ -121,16 +145,14 @@ export function registerComputerToolHandlers(
             )
           )
         case 'type':
-          return await succeed(
+          return await acted(
             await service.type(chat, app, text(args, 'text'), element, signal, realInput)
           )
         case 'set_value':
           if (element === undefined) throw new ComputerUseRefusal('set_value needs an element.')
-          return await succeed(
-            await service.setValue(chat, app, element, text(args, 'text'), signal)
-          )
+          return await acted(await service.setValue(chat, app, element, text(args, 'text'), signal))
         case 'key':
-          return await succeed(
+          return await acted(
             await service.key(
               chat,
               app,
@@ -141,7 +163,7 @@ export function registerComputerToolHandlers(
             )
           )
         case 'scroll':
-          return await succeed(
+          return await acted(
             await service.scroll(
               chat,
               app,

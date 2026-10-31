@@ -502,6 +502,15 @@ export function registerSettingsHandlers(): void {
     }
   })
 
+  // Listing and forgetting only: nothing but SideKick's own dialog may add an app.
+  ipcMain.handle('computerUse:rememberedApps', async () =>
+    (await import('../services/computerUseHost')).rememberedApps.list()
+  )
+  ipcMain.handle('computerUse:forgetApp', async (_event, path: unknown) => {
+    if (typeof path !== 'string') return
+    await (await import('../services/computerUseHost')).rememberedApps.remove(path)
+  })
+
   // A save names only the settings it changes; every other setting keeps what is stored.
   ipcMain.handle('settings:save', async (event, changes) => {
     try {

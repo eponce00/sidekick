@@ -12,6 +12,7 @@ const HELPER_SCRIPT = `
 $ErrorActionPreference = 'Stop'
 [Console]::InputEncoding = New-Object Text.UTF8Encoding $false
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase
 Add-Type -TypeDefinition @'
 using System; using System.Text; using System.Runtime.InteropServices;
 public static class SideKickWindows {
@@ -90,6 +91,15 @@ public static class SideKickWindows {
     for (int i = 0; i < Math.Max(1, (ticks + 2) / 3); i++) Key(page, down ? VK_NEXT : VK_PRIOR);
     return true;
   }
+  // Measured on Docker Desktop: with no separate page window, a click posted to it never lands, and
+  // can still pull the app forward.
+  public static bool IgnoresPostedClicks(long window) {
+    IntPtr top = new IntPtr(window);
+    return ClassOf(top).StartsWith("Chrome_WidgetWin")
+      && Child(top, "Chrome_RenderWidgetHostHWND") == IntPtr.Zero
+      && Child(top, "InputSiteWindowClass") == IntPtr.Zero;
+  }
+  public static long Front() { return GetForegroundWindow().ToInt64(); }
   public static bool Restore(long window) {
     IntPtr h = new IntPtr(window);
     uint me = GetCurrentThreadId();
@@ -119,18 +129,25 @@ public static class SideKickWindows {
 '@
 [void][SideKickWindows]::SetProcessDPIAware()
 while ($null -ne ($line = [Console]::In.ReadLine())) {
-  $ok = $false
+  $answer = $false
   try {
     $c = $line | ConvertFrom-Json
     switch ($c.op) {
-      'text' { $ok = [SideKickWindows]::SendText([long]$c.window, [string]$c.text) }
-      'key' { $ok = [SideKickWindows]::SendKey([long]$c.window, [int]$c.vk) }
-      'wheel' { $ok = [SideKickWindows]::SendWheel([long]$c.window, [bool]$c.down, [int]$c.ticks, [int]$c.x, [int]$c.y) }
-      'restore' { $ok = [SideKickWindows]::Restore([long]$c.window) }
-      'visible' { $ok = [SideKickWindows]::Visible([long]$c.window) }
+      'text' { $answer = [SideKickWindows]::SendText([long]$c.window, [string]$c.text) }
+      'key' { $answer = [SideKickWindows]::SendKey([long]$c.window, [int]$c.vk) }
+      'wheel' { $answer = [SideKickWindows]::SendWheel([long]$c.window, [bool]$c.down, [int]$c.ticks, [int]$c.x, [int]$c.y) }
+      'restore' { $answer = [SideKickWindows]::Restore([long]$c.window) }
+      'visible' { $answer = [SideKickWindows]::Visible([long]$c.window) }
+      'front' { $answer = [SideKickWindows]::Front() }
+      'ignoresClicks' { $answer = [SideKickWindows]::IgnoresPostedClicks([long]$c.window) }
+      'at' {
+        $found = [System.Windows.Automation.AutomationElement]::FromPoint((New-Object System.Windows.Point ([double]$c.x), ([double]$c.y)))
+        $info = $found.Current
+        $answer = if ($info.ProcessId -eq [int]$c.pid) { ([string]$info.ControlType.ProgrammaticName -replace '^ControlType\\.', '') + ' ' + ([string]$info.Name -replace '[\\r\\n]+', ' ') } else { '-' }
+      }
     }
-  } catch { $ok = $false }
-  [Console]::Out.WriteLine($(if ($ok) { 'yes' } else { 'no' }))
+  } catch { $answer = $false }
+  [Console]::Out.WriteLine($(if ($answer -is [bool]) { if ($answer) { 'yes' } else { 'no' } } else { [string]$answer }))
 }
 `
 
@@ -168,7 +185,7 @@ export function computerVirtualKey(name: string): number | null {
  */
 export class ComputerUseWindows {
   private child: ChildProcessWithoutNullStreams | null = null
-  private waiting: Array<(answer: boolean) => void> = []
+  private waiting: Array<(answer: string) => void> = []
   private idle: ReturnType<typeof setTimeout> | null = null
 
   private start(): ChildProcessWithoutNullStreams {
@@ -185,12 +202,12 @@ export class ComputerUseWindows {
       { windowsHide: true, stdio: 'pipe' }
     )
     createInterface({ input: child.stdout }).on('line', (line) => {
-      this.waiting.shift()?.(line.trim() === 'yes')
+      this.waiting.shift()?.(line.trim())
     })
     child.stderr.resume()
     const gone = (): void => {
       if (this.child === child) this.child = null
-      for (const answer of this.waiting.splice(0)) answer(false)
+      for (const answer of this.waiting.splice(0)) answer('no')
     }
     child.on('error', gone)
     child.on('exit', gone)
@@ -198,7 +215,7 @@ export class ComputerUseWindows {
     return child
   }
 
-  private ask(request: Record<string, unknown>): Promise<boolean> {
+  private ask(request: Record<string, unknown>): Promise<string> {
     this.child ??= this.start()
     if (this.idle) clearTimeout(this.idle)
     this.idle = setTimeout(() => this.close(), HELPER_IDLE_MS)
@@ -206,7 +223,7 @@ export class ComputerUseWindows {
       const timer = setTimeout(() => {
         // Answers come back in order, so one that never came means the helper is stuck.
         this.close()
-        resolve(false)
+        resolve('no')
       }, REQUEST_TIMEOUT_MS)
       this.waiting.push((answer) => {
         clearTimeout(timer)
@@ -216,12 +233,16 @@ export class ComputerUseWindows {
     })
   }
 
+  private async confirm(request: Record<string, unknown>): Promise<boolean> {
+    return (await this.ask(request)) === 'yes'
+  }
+
   text(window: number, text: string): Promise<boolean> {
-    return this.ask({ op: 'text', window, text })
+    return this.confirm({ op: 'text', window, text })
   }
 
   key(window: number, vk: number): Promise<boolean> {
-    return this.ask({ op: 'key', window, vk })
+    return this.confirm({ op: 'key', window, vk })
   }
 
   wheel(
@@ -230,15 +251,33 @@ export class ComputerUseWindows {
     ticks: number,
     point: { x: number; y: number }
   ): Promise<boolean> {
-    return this.ask({ op: 'wheel', window, down: direction === 'down', ticks, ...point })
+    return this.confirm({ op: 'wheel', window, down: direction === 'down', ticks, ...point })
   }
 
   restore(window: number): Promise<boolean> {
-    return this.ask({ op: 'restore', window })
+    return this.confirm({ op: 'restore', window })
   }
 
   visible(window: number): Promise<boolean> {
-    return this.ask({ op: 'visible', window })
+    return this.confirm({ op: 'visible', window })
+  }
+
+  /**
+   * The control at a screen point, as "Button Delete", or '' when it can't be told. Windows can only
+   * say what is on top there, so an app that is covered gets no answer.
+   */
+  async controlAt(pid: number, point: { x: number; y: number }): Promise<string> {
+    const answer = await this.ask({ op: 'at', pid, ...point })
+    return answer === 'no' || answer === '-' ? '' : answer
+  }
+
+  ignoresPostedClicks(window: number): Promise<boolean> {
+    return this.confirm({ op: 'ignoresClicks', window })
+  }
+
+  /** The window in front, or 0 when that can't be told. */
+  async front(): Promise<number> {
+    return Number(await this.ask({ op: 'front' })) || 0
   }
 
   close(): void {

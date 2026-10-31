@@ -62,6 +62,10 @@ const api = {
     choose: (token: string, itemId: string) => ipcRenderer.invoke('menus:choose', token, itemId),
     dismiss: (token: string) => ipcRenderer.invoke('menus:dismiss', token)
   },
+  computerUse: {
+    rememberedApps: () => ipcRenderer.invoke('computerUse:rememberedApps'),
+    forgetApp: (path: string) => ipcRenderer.invoke('computerUse:forgetApp', path)
+  },
   settings: {
     selectOfficeInterpreter: () => ipcRenderer.invoke('settings:selectOfficeInterpreter'),
     save: (settings: unknown) => ipcRenderer.invoke('settings:save', settings),

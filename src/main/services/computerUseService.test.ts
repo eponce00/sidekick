@@ -24,7 +24,8 @@ const signal = new AbortController().signal
 function harness(apps: ComputerApp[], confirm = true) {
   const call = vi.fn(async (tool: string, _args?: Record<string, unknown>) => ({
     isError: false,
-    images: [],
+    images: [] as Array<{ mimeType: string; data: string }>,
+    structured: undefined as unknown,
     text:
       tool === 'list_windows'
         ? '- app (pid 10) "Window" [window_id: 77]'
@@ -56,7 +57,10 @@ function harness(apps: ComputerApp[], confirm = true) {
       ) => false
     ),
     restore: restoreForeground,
-    visible: vi.fn(async (_window: number) => true)
+    visible: vi.fn(async (_window: number) => true),
+    front: vi.fn(async () => 0),
+    controlAt: vi.fn(async (_pid: number, _point: { x: number; y: number }) => ''),
+    ignoresPostedClicks: vi.fn(async (_window: number) => false)
   }
   const hideActive = vi.fn()
   const moveCursor = vi.fn()
@@ -99,7 +103,7 @@ function harness(apps: ComputerApp[], confirm = true) {
 function needsForeground(call: ReturnType<typeof harness>['call'], tool: string): void {
   call.mockImplementation(async (name, args) => ({
     isError: name === tool && args?.delivery_mode !== 'foreground',
-    images: [],
+    images: [] as Array<{ mimeType: string; data: string }>,
     text:
       name === tool && args?.delivery_mode !== 'foreground'
         ? 'Background delivery is not available for target window class'
@@ -231,6 +235,121 @@ describe('what the agent may reach', () => {
     )
   })
 
+  it('uses real input when the agent asks, instead of trying the background again', async () => {
+    const { service, call, appWindows } = harness([app('notes')])
+    needsForeground(call, 'never refused')
+    await service.requestApp('chat', 'notes', signal)
+    await service.click('chat', 'notes', { x: 1, y: 2 }, signal, true)
+    expect(call).toHaveBeenCalledWith('bring_to_front', expect.anything(), signal)
+    expect(call).toHaveBeenLastCalledWith(
+      'click',
+      expect.objectContaining({ delivery_mode: 'foreground' }),
+      signal
+    )
+    expect(appWindows.text).not.toHaveBeenCalled()
+  })
+
+  it('says when a step changed nothing, whatever the driver claimed, then stops sending', async () => {
+    const { service, call } = harness([app('notes')])
+    const png = Buffer.from('same picture').toString('base64')
+    const answer = call.getMockImplementation()!
+    call.mockImplementation(async (tool, args) => ({
+      ...(await answer(tool, args)),
+      images: tool === 'get_window_state' ? [{ mimeType: 'image/png', data: png }] : []
+    }))
+    await service.requestApp('chat', 'notes', signal)
+    await service.look('chat', 'notes', true, signal)
+    const notes: string[] = []
+    for (let step = 0; step < 5; step++) {
+      await service.scroll('chat', 'notes', 'up', 3, {}, signal)
+      notes.push((await service.lookAfterAction('chat', 'notes', signal)).note)
+    }
+    expect(notes[0]).toContain('did not land')
+    expect(notes[2]).toContain('Stop trying')
+    await expect(service.scroll('chat', 'notes', 'up', 3, {}, signal)).rejects.toThrow(
+      'changed nothing'
+    )
+    service.runEnded('chat')
+    await service.requestApp('chat', 'notes', signal)
+    await expect(service.scroll('chat', 'notes', 'up', 3, {}, signal)).resolves.toBeTruthy()
+  })
+
+  it('sends no click to an app that ignores them, and lets the agent choose real input', async () => {
+    const { service, call, appWindows } = harness([app('notes')])
+    needsForeground(call, 'never refused')
+    appWindows.ignoresPostedClicks.mockResolvedValue(true)
+    await service.requestApp('chat', 'notes', signal)
+    await expect(service.click('chat', 'notes', { x: 1, y: 2 }, signal)).rejects.toThrow(
+      'ignores clicks'
+    )
+    expect(call).not.toHaveBeenCalledWith('click', expect.anything(), signal)
+    await service.click('chat', 'notes', { x: 1, y: 2 }, signal, true)
+    expect(call).toHaveBeenLastCalledWith(
+      'click',
+      expect.objectContaining({ delivery_mode: 'foreground' }),
+      signal
+    )
+  })
+
+  it('stops before pressing something risky, whether by row or by pixel', async () => {
+    const { service, call, appWindows } = harness([app('notes')])
+    call.mockImplementation(async (tool) => ({
+      isError: false,
+      images: [] as Array<{ mimeType: string; data: string }>,
+      structured:
+        tool === 'list_windows'
+          ? {
+              windows: [
+                { window_id: 77, title: 'W', bounds: { x: 0, y: 0, width: 100, height: 100 } }
+              ]
+            }
+          : (undefined as unknown),
+      text:
+        tool === 'list_windows'
+          ? '- app (pid 10) "Window" [window_id: 77]'
+          : tool === 'get_window_state'
+            ? 'window_id=77 pid=10 elements=2 snapshot_id=s1\n- [0] Button "OK"\n- [1] Button "Delete account" [actions=[invoke]]'
+            : 'ok'
+    }))
+    const sent = () => call.mock.calls.filter(([tool]) => tool === 'click')
+    await service.requestApp('chat', 'notes', signal)
+    await service.look('chat', 'notes', false, signal)
+    await expect(service.click('chat', 'notes', { element: 1 }, signal)).rejects.toThrow('Delete')
+    appWindows.controlAt.mockResolvedValueOnce('Button Send')
+    await expect(service.click('chat', 'notes', { x: 5, y: 5 }, signal)).rejects.toThrow('Send')
+    expect(sent()).toHaveLength(0)
+    await expect(service.click('chat', 'notes', { element: 0 }, signal)).resolves.toContain(
+      'Click sent to Button "OK"'
+    )
+    await service.click('chat', 'notes', { element: 1 }, signal, false, true)
+    expect(sent()).toHaveLength(2)
+  })
+
+  it('zooms through the driver and clicks on what the zoom showed', async () => {
+    const { service, call } = harness([app('notes')])
+    await service.requestApp('chat', 'notes', signal)
+    await service.zoom('chat', 'notes', { x: 10, y: 20, toX: 110, toY: 80 }, signal)
+    expect(call).toHaveBeenLastCalledWith(
+      'zoom',
+      expect.objectContaining({ x1: 10, y1: 20, x2: 110, y2: 80 }),
+      signal
+    )
+    await service.click('chat', 'notes', { x: 3, y: 4, fromZoom: true }, signal)
+    expect(call).toHaveBeenLastCalledWith(
+      'click',
+      expect.objectContaining({ x: 3, y: 4, from_zoom: true }),
+      signal
+    )
+  })
+
+  it('puts the user’s window back when a background click pulls the app forward', async () => {
+    const { service, appWindows } = harness([app('notes')])
+    appWindows.front.mockResolvedValueOnce(500).mockResolvedValueOnce(77)
+    await service.requestApp('chat', 'notes', signal)
+    await service.click('chat', 'notes', { x: 1, y: 2 }, signal)
+    expect(appWindows.restore).toHaveBeenCalledWith(500)
+  })
+
   it('does not send a key with modifiers through the background path', async () => {
     const { service, call, appWindows } = harness([app('notes')])
     needsForeground(call, 'press_key')
@@ -316,7 +435,8 @@ describe('what the agent may reach', () => {
     const { service, call } = harness([app('notes')])
     call.mockImplementation(async (tool) => ({
       isError: false,
-      images: [],
+      images: [] as Array<{ mimeType: string; data: string }>,
+      structured: undefined as unknown,
       text:
         tool === 'list_windows'
           ? '- app "One" [window_id: 77]\n- app "Two" [window_id: 88]'
