@@ -69,9 +69,11 @@ shows its latest look at the app. Clicks pass through all of this, and it ends w
 
 Some apps ignore background input for some steps. WhatsApp scrolls in the background, for example,
 but needs a real click to type, and Docker Desktop takes no background clicks at all. The agent then chooses: it can tell you what it needs, or wait until
-you have stepped away for 30 seconds, bring the app to the front for a moment, use your real mouse and
-keyboard, and go back to what you had open. This is never done for software that may control real
-equipment. If the app is covered or minimized, the glow gives way to a small label in the corner.
+you have stepped away for 30 seconds, bring the app to the front, and use your real mouse and keyboard.
+The app stays in front until the reply ends, and then what you had open comes back, unless you have
+already moved on. This is never done for software that may control real
+equipment. If the app is covered or minimized, the glow gives way to a small label in the corner with a picture
+of what the agent last saw.
 
 Before a click, SideKick checks what is being pressed where it can tell. A control named something
 like Send, Delete or Pay is refused until the agent confirms that you asked for it. Names can't catch

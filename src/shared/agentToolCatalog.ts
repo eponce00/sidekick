@@ -831,6 +831,10 @@ const computer = definition(
       },
       app: { type: 'string', description: 'App name. All but list_apps need it.' },
       window: { type: 'number', description: 'For look: a window id it listed, to switch to.' },
+      find: {
+        type: 'string',
+        description: 'For look: list only the controls containing this text, across all of them.'
+      },
       element: { type: 'number', description: 'Row number from the last look. Prefer this.' },
       x: {
         type: 'number',

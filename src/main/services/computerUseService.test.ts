@@ -76,6 +76,7 @@ function harness(apps: ComputerApp[], confirm = true) {
     showActive,
     hideActive,
     moveCursor,
+    showPreview: vi.fn(),
     listApps: async () => apps,
     findInstalled: async (name) => installed.find((a) => a.name.toLowerCase() === name) ?? null,
     startDriver: startDriver as never,
@@ -180,8 +181,8 @@ describe('what the agent may reach', () => {
     expect(matchInstalledApp(stdout, 'calc')).toBeNull()
   })
 
-  it('brings the app forward before real input, and puts the user’s window back', async () => {
-    const { service, call, restoreForeground } = harness([app('notes')])
+  it('keeps the app in front through real input, and gives the front back when the reply ends', async () => {
+    const { service, call, restoreForeground, appWindows } = harness([app('notes')])
     needsForeground(call, 'scroll')
     await service.requestApp('chat', 'notes', signal)
     await service.scroll('chat', 'notes', 'up', 1, { x: 5, y: 6 }, signal, true)
@@ -193,7 +194,22 @@ describe('what the agent may reach', () => {
       expect.objectContaining({ delivery_mode: 'foreground', amount: 2, x: 5, y: 6 }),
       signal
     )
-    expect(restoreForeground).toHaveBeenCalledWith(9)
+    expect(restoreForeground).not.toHaveBeenCalled()
+    appWindows.front.mockResolvedValue(77)
+    service.runEnded('chat')
+    await vi.waitFor(() => expect(restoreForeground).toHaveBeenCalledWith(9))
+  })
+
+  it('leaves the user alone if they have already moved on when the reply ends', async () => {
+    const { service, call, restoreForeground, appWindows } = harness([app('notes')])
+    needsForeground(call, 'scroll')
+    await service.requestApp('chat', 'notes', signal)
+    await service.scroll('chat', 'notes', 'up', 1, {}, signal, true)
+    appWindows.front.mockResolvedValue(500)
+    service.runEnded('chat')
+    await vi.waitFor(() => expect(appWindows.front).toHaveBeenCalled())
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(restoreForeground).not.toHaveBeenCalled()
   })
 
   it('does not stop itself when the agent presses Esc with real input', async () => {
@@ -323,6 +339,37 @@ describe('what the agent may reach', () => {
     )
     await service.click('chat', 'notes', { element: 1 }, signal, false, true)
     expect(sent()).toHaveLength(2)
+  })
+
+  it('reads the size of a zoom picture, and fits a region that is too wide', async () => {
+    const { service, call, appWindows } = harness([app('notes')])
+    const answer = call.getMockImplementation()!
+    // A minimal JPEG: start, then a frame header 500 wide.
+    const jpeg = Buffer.from([
+      0xff, 0xd8, 0xff, 0xc0, 0, 11, 8, 0, 100, 0x01, 0xf4, 1, 0, 0, 0, 0
+    ]).toString('base64')
+    call.mockImplementation(async (tool, args) => ({
+      ...(await answer(tool, args)),
+      images: tool === 'zoom' ? [{ mimeType: 'image/jpeg', data: jpeg }] : [],
+      structured:
+        tool === 'list_windows'
+          ? {
+              windows: [
+                { window_id: 77, title: 'W', bounds: { x: 0, y: 0, width: 1000, height: 500 } }
+              ]
+            }
+          : undefined
+    }))
+    await service.requestApp('chat', 'notes', signal)
+    await service.look('chat', 'notes', false, signal)
+    await service.zoom('chat', 'notes', { x: 0, y: 0, toX: 1000, toY: 50 }, signal)
+    expect(call).toHaveBeenLastCalledWith(
+      'zoom',
+      expect.objectContaining({ x1: 250, x2: 750 }),
+      signal
+    )
+    await service.click('chat', 'notes', { x: 250, y: 10, fromZoom: true }, signal)
+    expect(appWindows.controlAt).toHaveBeenCalledTimes(1)
   })
 
   it('zooms through the driver and clicks on what the zoom showed', async () => {
@@ -521,6 +568,26 @@ describe('what the agent may reach', () => {
     await expect(service.look('chat', 'notes', false, signal)).rejects.toThrow('not approved')
     await service.requestApp('chat', 'notes', signal)
     expect(confirmApp).toHaveBeenCalledTimes(2)
+  })
+
+  it('searches all the controls on request, and says when the list is cut off', async () => {
+    const { service, call } = harness([app('notes')])
+    const answer = call.getMockImplementation()!
+    call.mockImplementation(async (tool, args) => ({
+      ...(await answer(tool, args)),
+      structured:
+        tool === 'get_window_state'
+          ? { truncated: true, returned_element_count: 500, total_element_count: 900 }
+          : undefined
+    }))
+    await service.requestApp('chat', 'notes', signal)
+    expect((await service.look('chat', 'notes', false, signal)).text).toContain('500 of 900')
+    await service.look('chat', 'notes', false, signal, undefined, 'station')
+    expect(call).toHaveBeenLastCalledWith(
+      'get_window_state',
+      expect.objectContaining({ query: 'station', max_elements: 5_000 }),
+      signal
+    )
   })
 
   it('marks what an app shows as data', async () => {

@@ -1,5 +1,5 @@
 import { createHash } from 'crypto'
-import { BrowserWindow, screen } from 'electron'
+import { BrowserWindow, nativeImage, screen } from 'electron'
 import { appState } from '../ipc/state'
 import type { ComputerWindowBounds } from './computerUseDriver'
 import { escapeHtml, trustedLook, trustedLookCss, type TrustedLook } from './trustedLook'
@@ -7,13 +7,14 @@ import { escapeHtml, trustedLook, trustedLookCss, type TrustedLook } from './tru
 const FOLLOW_MS = 400
 // Room around the app's window for the glow to fade out in.
 const GLOW_DIP = 32
-const CURSOR_WINDOW_DIP = 120
+const CURSOR_WINDOW_DIP = 76
 // Where the arrow's tip sits in its window, with room for the ripple around it.
-const CURSOR_TIP_DIP = 40
-const CURSOR_GLIDE_MS = 480
+const CURSOR_TIP_DIP = 26
+const CURSOR_GLIDE_MS = 300
 const CURSOR_FRAME_MS = 16
 const PILL_WIDTH_DIP = 380
 const PILL_HEIGHT_DIP = 52
+const PREVIEW_WIDTH_DIP = 340
 const PILL_MARGIN_DIP = 12
 
 export interface ComputerHighlightTarget {
@@ -31,14 +32,15 @@ export interface ComputerHighlightTarget {
 export function computerHighlightPage(
   appName: string,
   look: TrustedLook,
-  mode: 'glow' | 'pill'
+  mode: 'glow' | 'pill',
+  preview = ''
 ): string {
   const name = escapeHtml(appName)
   return `<!doctype html>
 <html data-theme="${look.theme}">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">
 <title>SideKick is using ${name}</title>
 <style>
 ${trustedLookCss(look)}
@@ -62,6 +64,11 @@ html, body { height: 100%; padding: 0; }
   box-shadow: 0 6px 20px var(--shadow);
   font-size: 12px; font-weight: 500; white-space: nowrap;
 }
+.preview {
+  position: fixed; right: 10px; bottom: 54px; width: ${PREVIEW_WIDTH_DIP}px;
+  border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 24px var(--shadow);
+}
 .dot { flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .text { overflow: hidden; text-overflow: ellipsis; }
 .stop { color: var(--text-2); }
@@ -69,6 +76,7 @@ html, body { height: 100%; padding: 0; }
 </head>
 <body>
 ${mode === 'glow' ? '<div class="glow"></div>' : ''}
+${mode === 'pill' && preview ? `<img class="preview" alt="" src="${escapeHtml(preview)}">` : ''}
 <div class="label"><span class="dot"></span><span class="text">SideKick is using ${name} <span class="stop">· Esc to stop</span></span></div>
 </body>
 </html>`
@@ -76,10 +84,11 @@ ${mode === 'glow' ? '<div class="glow"></div>' : ''}
 
 const CURSOR_SCRIPT = `
 window.ripple = () => {
-  const ring = document.querySelector('.ring')
-  ring.classList.remove('go')
-  void ring.offsetWidth
-  ring.classList.add('go')
+  for (const part of [document.querySelector('.ring'), document.querySelector('.arrow')]) {
+    part.classList.remove('go')
+    void part.getBoundingClientRect()
+    part.classList.add('go')
+  }
 }
 `
 
@@ -95,19 +104,24 @@ export function computerCursorPage(look: TrustedLook): string {
 <style>
 ${trustedLookCss(look)}
 html, body { height: 100%; padding: 0; }
-.arrow { position: fixed; left: ${CURSOR_TIP_DIP}px; top: ${CURSOR_TIP_DIP}px; filter: drop-shadow(0 3px 7px var(--shadow)) drop-shadow(0 0 9px color-mix(in srgb, var(--accent) 55%, transparent)); }
-.ring {
-  position: fixed; left: ${CURSOR_TIP_DIP - 20}px; top: ${CURSOR_TIP_DIP - 20}px; width: 40px; height: 40px;
-  border: 2.5px solid var(--accent); border-radius: 50%; opacity: 0;
+.arrow {
+  position: fixed; left: ${CURSOR_TIP_DIP - 3}px; top: ${CURSOR_TIP_DIP - 2}px; transform-origin: 3px 2px;
+  filter: drop-shadow(0 2px 4px var(--shadow)) drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 45%, transparent));
 }
-.ring.go { animation: ripple 520ms ease-out; }
+.arrow.go { animation: squish 240ms ease-out; }
+@keyframes squish { 40% { transform: scale(0.82); } }
+.ring {
+  position: fixed; left: ${CURSOR_TIP_DIP - 16}px; top: ${CURSOR_TIP_DIP - 16}px; width: 32px; height: 32px;
+  border: 2px solid var(--accent); border-radius: 50%; opacity: 0;
+}
+.ring.go { animation: ripple 460ms ease-out; }
 @keyframes ripple { from { opacity: 0.9; transform: scale(0.2); } to { opacity: 0; transform: scale(1.3); } }
 </style>
 </head>
 <body>
 <div class="ring"></div>
-<svg class="arrow" width="38" height="46" viewBox="0 0 38 46" aria-hidden="true">
-  <path d="M2 2 L2 37 L11.5 28.5 L18 43 L25 40 L18.5 25.5 L31 25.5 Z" fill="var(--accent)" stroke="#ffffff" stroke-width="2.5" stroke-linejoin="round"/>
+<svg class="arrow" width="26" height="30" viewBox="0 0 26 30" aria-hidden="true">
+  <path d="M3 4.4C3 2.6 5 1.6 6.4 2.7l15.5 12.4c1.5 1.2.7 3.6-1.2 3.7l-6.1.3c-.8 0-1.5.5-1.9 1.2l-3.1 5.9c-.9 1.7-3.5 1.3-3.8-.6z" fill="var(--accent)" stroke="#ffffff" stroke-width="2" stroke-linejoin="round"/>
 </svg>
 <script>${CURSOR_SCRIPT}</script>
 </body>
@@ -162,6 +176,8 @@ export class ComputerUseHighlight {
   private gliding: ReturnType<typeof setInterval> | null = null
   private center: { x: number; y: number } | null = null
   private mode: 'glow' | 'pill' = 'pill'
+  private preview = ''
+  private previewHeight = 0
 
   show(target: ComputerHighlightTarget): void {
     const running = this.target !== null
@@ -180,6 +196,8 @@ export class ComputerUseHighlight {
     this.cursorAt = null
     this.center = null
     this.mode = 'pill'
+    this.preview = ''
+    this.previewHeight = 0
     for (const window of [this.window, this.cursor]) {
       if (window && !window.isDestroyed()) window.destroy()
     }
@@ -187,10 +205,28 @@ export class ComputerUseHighlight {
     this.cursor = null
   }
 
-  /** Glides the pointer to a screen point, in physical pixels, and shows the click landing. */
-  moveCursor(point: { x: number; y: number }): void {
+  /** The agent's latest look, shrunk, for the corner label when the app itself can't be seen. */
+  showPreview(image: { data: string }): void {
+    const shrunk = nativeImage.createFromBuffer(Buffer.from(image.data, 'base64'))
+    if (shrunk.isEmpty()) return
+    const small = shrunk.resize({ width: PREVIEW_WIDTH_DIP * 2, quality: 'good' })
+    this.preview = `data:image/jpeg;base64,${small.toJPEG(72).toString('base64')}`
+    this.previewHeight = Math.round(small.getSize().height / 2)
+    if (this.target && this.mode === 'pill') void this.showPage(this.target)
+  }
+
+  /**
+   * Glides the pointer to a screen point, in physical pixels, and shows the click landing. Resolves
+   * when it arrives, so a click can wait for it rather than happen first. No pointer shows while the
+   * app can't be seen, so nothing moves over whatever the user has in front.
+   */
+  async moveCursor(point: { x: number; y: number }): Promise<void> {
     if (!this.target) return
-    void this.glide(screen.screenToDipPoint(point))
+    if (this.mode !== 'glow') {
+      this.cursorAt = screen.screenToDipPoint(point)
+      return
+    }
+    await this.glide(screen.screenToDipPoint(point))
   }
 
   private async glide(to: { x: number; y: number }): Promise<void> {
@@ -210,18 +246,24 @@ export class ComputerUseHighlight {
     const from = this.cursorAt ?? to
     if (this.gliding) clearInterval(this.gliding)
     const started = Date.now()
-    this.gliding = setInterval(() => {
-      if (cursor.isDestroyed()) return
-      const t = Math.min((Date.now() - started) / CURSOR_GLIDE_MS, 1)
-      const eased = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2
-      const at = { x: from.x + (to.x - from.x) * eased, y: from.y + (to.y - from.y) * eased }
-      this.cursorAt = at
-      cursor.setBounds(this.cursorBounds(at))
-      if (t < 1) return
-      if (this.gliding) clearInterval(this.gliding)
-      this.gliding = null
-      void cursor.webContents.executeJavaScript('window.ripple()').catch(() => undefined)
-    }, CURSOR_FRAME_MS)
+    await new Promise<void>((arrive) => {
+      const finish = (): void => {
+        if (this.gliding) clearInterval(this.gliding)
+        this.gliding = null
+        arrive()
+      }
+      this.gliding = setInterval(() => {
+        if (cursor.isDestroyed()) return finish()
+        const t = Math.min((Date.now() - started) / CURSOR_GLIDE_MS, 1)
+        const eased = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2
+        const at = { x: from.x + (to.x - from.x) * eased, y: from.y + (to.y - from.y) * eased }
+        this.cursorAt = at
+        cursor.setBounds(this.cursorBounds(at))
+        if (t < 1) return
+        void cursor.webContents.executeJavaScript('window.ripple()').catch(() => undefined)
+        finish()
+      }, CURSOR_FRAME_MS)
+    })
   }
 
   private cursorBounds(at: { x: number; y: number }): Electron.Rectangle {
@@ -236,7 +278,7 @@ export class ComputerUseHighlight {
   private async showPage(target: ComputerHighlightTarget): Promise<void> {
     const look = await trustedLook(appState.mainWindowRef)
     if (this.target !== target) return
-    const page = computerHighlightPage(target.appName, look, this.mode)
+    const page = computerHighlightPage(target.appName, look, this.mode, this.preview)
     if (page === this.page) return
     this.page = page
     if (!this.window || this.window.isDestroyed()) {
@@ -276,11 +318,12 @@ export class ComputerUseHighlight {
         })
       } else {
         const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+        const height = PILL_HEIGHT_DIP + this.previewHeight + (this.previewHeight ? 4 : 0)
         window.setBounds({
           x: workArea.x + workArea.width - PILL_WIDTH_DIP - PILL_MARGIN_DIP,
-          y: workArea.y + workArea.height - PILL_HEIGHT_DIP - PILL_MARGIN_DIP,
+          y: workArea.y + workArea.height - height - PILL_MARGIN_DIP,
           width: PILL_WIDTH_DIP,
-          height: PILL_HEIGHT_DIP
+          height
         })
       }
       if (!window.isVisible()) window.showInactive()
@@ -288,6 +331,9 @@ export class ComputerUseHighlight {
     if (this.cursor && !this.cursor.isDestroyed()) {
       if (mode === 'pill' && this.cursor.isVisible()) this.cursor.hide()
       else if (mode === 'glow' && !this.cursor.isVisible()) this.cursor.showInactive()
+    } else if (mode === 'glow' && this.cursorAt) {
+      // The agent acted while the app was out of sight; show where, now that it can be seen.
+      void this.glide(this.cursorAt)
     }
     this.following = setTimeout(() => void this.follow(), FOLLOW_MS)
   }

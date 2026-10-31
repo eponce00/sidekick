@@ -42,7 +42,7 @@ async function confirmApp(
         target.access.kind === 'powerful' ? target.access.warning : null,
         target.access.kind === 'physical'
           ? 'This looks like software that controls real equipment. A wrong click or value could move a machine. Only allow this if that is safe right now.'
-          : 'Some apps only respond to your real mouse and keyboard. For those steps, the agent can wait until you have stepped away, bring the app forward for a moment, and go back to what you had open.',
+          : 'Some apps only respond to your real mouse and keyboard. For those steps, the agent can wait until you have stepped away, then bring the app forward until its reply ends.',
         'Press Esc at any time to stop it.'
       ]
         .filter(Boolean)
@@ -89,6 +89,7 @@ export function computerUseService(): ComputerUseService | null {
     showActive: (target) => highlight.show(target),
     hideActive: () => highlight.hide(),
     moveCursor: (point) => highlight.moveCursor(point),
+    showPreview: (image) => highlight.showPreview(image),
     driverPath,
     dataFolder: () => join(app.getPath('userData'), 'computer-use'),
     confirmApp,

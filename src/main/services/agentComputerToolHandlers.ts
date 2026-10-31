@@ -105,7 +105,16 @@ export function registerComputerToolHandlers(
         case 'request_app':
           return await succeed(await service.requestApp(chat, app, signal))
         case 'look':
-          return await showLook(await service.look(chat, app, true, signal, number(args, 'window')))
+          return await showLook(
+            await service.look(
+              chat,
+              app,
+              true,
+              signal,
+              number(args, 'window'),
+              text(args, 'find') || undefined
+            )
+          )
         case 'zoom': {
           const [x, y, toX, toY] = ['x', 'y', 'to_x', 'to_y'].map((key) => number(args, key))
           if (x === undefined || y === undefined || toX === undefined || toY === undefined) {

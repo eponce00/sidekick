@@ -86,7 +86,8 @@ public static class SideKickWindows {
       for (int i = 0; i < ticks; i++) PostMessage(site, WM_MOUSEWHEEL, wheel, point);
       return true;
     }
-    IntPtr page = ChromiumPage(window);
+    // Keys scroll a page with its own window. Docker Desktop's main window took them and didn't move.
+    IntPtr page = Child(new IntPtr(window), "Chrome_RenderWidgetHostHWND");
     if (page == IntPtr.Zero) return false;
     for (int i = 0; i < Math.Max(1, (ticks + 2) / 3); i++) Key(page, down ? VK_NEXT : VK_PRIOR);
     return true;
