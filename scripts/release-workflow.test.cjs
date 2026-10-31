@@ -26,7 +26,7 @@ test('a release runs every check, the suite on every platform, and each packaged
   for (const entry of jobs.tests.strategy.matrix.include) {
     ;(shards[entry.os] ??= []).push(entry.shard)
   }
-  assert.deepEqual(Object.keys(shards).sort(), ['macos-14', 'ubuntu-22.04', 'windows-latest'])
+  assert.deepEqual(Object.keys(shards).sort(), ['macos-15', 'ubuntu-22.04', 'windows-latest'])
   for (const list of Object.values(shards)) {
     const total = Number(list[0].split('/')[1])
     assert.deepEqual(

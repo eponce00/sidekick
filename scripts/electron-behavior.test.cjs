@@ -13,6 +13,7 @@ const { tmpdir } = require('node:os')
 const { join, resolve, sep } = require('node:path')
 const { test } = require('node:test')
 const { _electron: electron } = require('playwright')
+const { openChatFromSidebar } = require('./open-chat-from-sidebar.cjs')
 const { startScriptedModel, text } = require('./scripted-model.cjs')
 
 const ROOT = resolve(__dirname, '..')
@@ -433,7 +434,7 @@ test(
       // list later than the test created it.
       await page.reload()
       await page.waitForFunction(() => Boolean(window.api?.sessions))
-      await page.getByText('COMPACTION-FIXTURE', { exact: true }).first().click()
+      await openChatFromSidebar(page, 'COMPACTION-FIXTURE')
       const card = await until(
         () =>
           page.evaluate(() => {
@@ -783,7 +784,7 @@ test(
       // The sidebar lists chats made through the API after a reload.
       await page.reload()
       await page.waitForFunction(() => Boolean(window.api?.sessions))
-      await page.getByText('Gateway checks', { exact: true }).first().click()
+      await openChatFromSidebar(page, 'Gateway checks')
       const failure = await until(
         () =>
           page.evaluate(() => {
