@@ -29,6 +29,7 @@ export function registerComputerToolHandlers(
     const action = text(args, 'action')
     const app = text(args, 'app')
     const element = number(args, 'element')
+    const realInput = args.real_input === true
     const succeed = async (content: string) => {
       const bounded = await outputs.apply(content)
       return toolExecutionSucceeded({
@@ -53,7 +54,12 @@ export function registerComputerToolHandlers(
         case 'look': {
           // The user sees it in the chat either way; only a model with vision is sent it.
           const seen = await service.look(chat, app, true, signal, number(args, 'window'))
-          const bounded = await outputs.apply(seen.text)
+          // Web-based apps often expose no controls, and then only the picture says what is there.
+          const bounded = await outputs.apply(
+            /\[\d+\]/.test(seen.text)
+              ? seen.text
+              : `${seen.text}\n${options.vision ? 'This app lists no controls. Work from the image, by pixel.' : 'This app lists no controls, and this model cannot see the image, so it cannot operate this app. Tell the user.'}`
+          )
           const images = seen.images.filter((image) =>
             IMAGE_TYPES.includes(image.mimeType as ToolResultImageMimeType)
           )
@@ -99,7 +105,8 @@ export function registerComputerToolHandlers(
                 double: action === 'double_click',
                 button: action === 'right_click' ? 'right' : 'left'
               },
-              signal
+              signal,
+              realInput
             )
           )
         case 'drag':
@@ -109,11 +116,14 @@ export function registerComputerToolHandlers(
               app,
               { x: number(args, 'x'), y: number(args, 'y') },
               { x: number(args, 'to_x'), y: number(args, 'to_y') },
-              signal
+              signal,
+              realInput
             )
           )
         case 'type':
-          return await succeed(await service.type(chat, app, text(args, 'text'), element, signal))
+          return await succeed(
+            await service.type(chat, app, text(args, 'text'), element, signal, realInput)
+          )
         case 'set_value':
           if (element === undefined) throw new ComputerUseRefusal('set_value needs an element.')
           return await succeed(
@@ -126,7 +136,8 @@ export function registerComputerToolHandlers(
               app,
               text(args, 'key'),
               Array.isArray(args.modifiers) ? args.modifiers.map(String) : [],
-              signal
+              signal,
+              realInput
             )
           )
         case 'scroll':
@@ -136,7 +147,9 @@ export function registerComputerToolHandlers(
               app,
               text(args, 'direction'),
               number(args, 'amount') ?? 3,
-              signal
+              { x: number(args, 'x'), y: number(args, 'y') },
+              signal,
+              realInput
             )
           )
         default:

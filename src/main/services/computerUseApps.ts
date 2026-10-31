@@ -178,17 +178,20 @@ export async function findInstalledApp(
   return matchInstalledApp(await runPowerShell(LIST_START_MENU_APPS, signal), name)
 }
 
-function runPowerShell(script: string, signal?: AbortSignal): Promise<string> {
-  const powershell = join(
+export function powershellPath(): string {
+  return join(
     process.env.SystemRoot ?? 'C:\\Windows',
     'System32',
     'WindowsPowerShell',
     'v1.0',
     'powershell.exe'
   )
+}
+
+function runPowerShell(script: string, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
-      powershell,
+      powershellPath(),
       [
         '-NoProfile',
         '-NonInteractive',

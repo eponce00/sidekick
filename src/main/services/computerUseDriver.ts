@@ -23,8 +23,6 @@ const PINNED_WINDOWS_X64: Readonly<Record<string, string>> = {
  * the driver's own settings.
  */
 export const COMPUTER_DRIVER_TOOLS = [
-  'start_session',
-  'set_agent_cursor_enabled',
   'list_windows',
   'get_window_state',
   'click',
@@ -34,7 +32,8 @@ export const COMPUTER_DRIVER_TOOLS = [
   'press_key',
   'set_value',
   'scroll',
-  'drag'
+  'drag',
+  'bring_to_front'
 ] as const
 
 /** The driver's limits for one chat: deny by default, and only the apps the user approved. */
@@ -119,6 +118,45 @@ export interface ComputerWindowBounds {
   height: number
 }
 
+/**
+ * An app's windows the agent can work in, largest first, or null without that detail. Its first
+ * listed one can be a hidden helper, and File Explorer also owns the desktop and the taskbar.
+ */
+export function computerOpenWindows(structured: unknown): number[] | null {
+  const windows = (structured as { windows?: unknown } | null | undefined)?.windows
+  if (!Array.isArray(windows)) return null
+  const area = (window: { bounds?: Partial<ComputerWindowBounds> }): number =>
+    (window.bounds?.width ?? 0) * (window.bounds?.height ?? 0)
+  return (
+    windows as Array<{
+      window_id: number
+      title?: unknown
+      minimized?: unknown
+      is_on_screen?: unknown
+      bounds?: Partial<ComputerWindowBounds>
+    }>
+  )
+    .filter(
+      (window) =>
+        typeof window?.window_id === 'number' &&
+        window.minimized !== true &&
+        window.is_on_screen !== false &&
+        typeof window.title === 'string' &&
+        window.title !== '' &&
+        window.title !== 'Program Manager'
+    )
+    .sort((a, b) => area(b) - area(a))
+    .map((window) => window.window_id)
+}
+
+/** Where an action landed, from what the driver reports. Typing has no such place. */
+export function computerActionPoint(text: string): { x: number; y: number } | null {
+  const points = [...text.matchAll(/(?:screen |\bat )\((\d+),\s*(\d+)\)|→ \((\d+),\s*(\d+)\)/g)]
+  const last = points.at(-1)
+  if (!last) return null
+  return { x: Number(last[1] ?? last[3]), y: Number(last[2] ?? last[4]) }
+}
+
 /** A window's place on screen from a `list_windows` result; null when it can't be outlined. */
 export function computerWindowBounds(
   structured: unknown,
@@ -127,10 +165,15 @@ export function computerWindowBounds(
   const windows = (structured as { windows?: unknown } | null | undefined)?.windows
   if (!Array.isArray(windows)) return null
   const found = (
-    windows as Array<{ window_id?: unknown; minimized?: unknown; bounds?: ComputerWindowBounds }>
+    windows as Array<{
+      window_id?: unknown
+      minimized?: unknown
+      is_on_screen?: unknown
+      bounds?: ComputerWindowBounds
+    }>
   ).find((window) => window?.window_id === windowId)
   const bounds = found?.bounds
-  if (!bounds || found.minimized === true) return null
+  if (!bounds || found.minimized === true || found.is_on_screen === false) return null
   const { x, y, width, height } = bounds
   return [x, y, width, height].every(Number.isFinite) && width > 0 && height > 0
     ? { x, y, width, height }

@@ -13,12 +13,15 @@ const RESPONSE_SCHEME = 'sidekick-dialog:'
 export interface TrustedDialogOptions extends MessageBoxOptions {
   facts?: Array<{ label: string; value: string; code?: boolean }>
   footnote?: string
+  /** A PNG data URL made by SideKick itself, shown in place of the warning sign. */
+  iconDataUrl?: string
 }
 
 /** The system dialog has only its text, so what SideKick's own lays out goes into it. */
 function systemDialogOptions({
   facts,
   footnote,
+  iconDataUrl: _iconDataUrl,
   ...options
 }: TrustedDialogOptions): MessageBoxOptions {
   const lines = facts?.map(({ label, value }) => `${label}: ${value}`).join('\n')
@@ -72,14 +75,16 @@ document.addEventListener('keydown', (event) => {
 const report = () => {
   location.href = '${RESPONSE_SCHEME}size/' + Math.ceil(document.querySelector('.card').getBoundingClientRect().height)
 }
-requestAnimationFrame(report)
+// Once the page has loaded: reporting by navigation before then would cancel the load of its icon.
+if (document.readyState === 'complete') requestAnimationFrame(report)
+else addEventListener('load', () => requestAnimationFrame(report))
 `
   const scriptHash = createHash('sha256').update(script).digest('base64')
   return `<!doctype html>
 <html data-theme="${look.theme}">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-${scriptHash}'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'sha256-${scriptHash}'">
 <title>${escapeHtml(options.title || 'SideKick')}</title>
 <style>
 ${trustedLookCss(look)}
@@ -132,11 +137,15 @@ button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, v
 <div class="card" role="${warning ? 'alertdialog' : 'dialog'}" aria-labelledby="message">
   <div class="head">
     <div class="icon" aria-hidden="true">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${
-        warning
-          ? '<path d="M12 3 2 21h20L12 3z"/><path d="M12 10v4"/><path d="M12 17.5v.5"/>'
-          : '<circle cx="12" cy="12" r="9"/><path d="M12 8v.5"/><path d="M12 11v5"/>'
-      }</svg>
+      ${
+        options.iconDataUrl?.startsWith('data:image/png;base64,')
+          ? `<img width="26" height="26" alt="" src="${escapeHtml(options.iconDataUrl)}">`
+          : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${
+              warning
+                ? '<path d="M12 3 2 21h20L12 3z"/><path d="M12 10v4"/><path d="M12 17.5v.5"/>'
+                : '<circle cx="12" cy="12" r="9"/><path d="M12 8v.5"/><path d="M12 11v5"/>'
+            }</svg>`
+      }
     </div>
     <h1 id="message">${escapeHtml(options.message)}</h1>
   </div>

@@ -62,14 +62,14 @@ On Windows, the agent can operate other apps on this computer when you turn this
   model that can't see images works from the app's list of controls alone.
 
 The agent normally works in the background without moving your mouse or taking focus. While it works,
-a border and a label mark the app, a second cursor shows where it is acting, and the chat shows its
-latest look at the app. Clicks pass through the border. All of this ends when the reply does.
+a soft glow and a label mark the app, SideKick's own pointer shows where it is acting, and the chat
+shows its latest look at the app. Clicks pass through all of this, and it ends when the reply does.
 
-Some apps ignore background input, as Chrome does for typing. The first time that happens in a chat,
-SideKick asks whether the agent may use your real mouse and keyboard in that app, and the border turns
-orange if you allow it. Each such step waits until you pause, brings the app to the front for a
-moment, and then goes back to what you had open. Keys you press during that moment can land in the
-wrong window. This is never offered for software that may control real equipment.
+Some apps ignore background input for some steps. WhatsApp scrolls in the background, for example,
+but needs a real click to type. The agent then chooses: it can tell you what it needs, or wait until
+you have stepped away for 30 seconds, bring the app to the front for a moment, use your real mouse and
+keyboard, and go back to what you had open. This is never done for software that may control real
+equipment. If the app is covered or minimized, the glow gives way to a small label in the corner.
 
 The native browser catalog includes `browser_open`, `browser_observe`, `browser_screenshot`,
 `browser_click`, `browser_type`, `browser_sign_in`, `browser_select`, `browser_fill_form`, `browser_scroll`, `browser_hover`,

@@ -6,22 +6,34 @@ import { appState } from '../ipc/state'
 import type { ComputerApp } from './computerUseApps'
 import { ComputerUseHighlight } from './computerUseHighlight'
 import { ComputerUseService } from './computerUseService'
+import { ComputerUseWindows } from './computerUseWindows'
 import { showTrustedDialog } from './trustedDialog'
 
-async function askAllowForChat(
-  title: string,
-  message: string,
-  detail: ReadonlyArray<string | null>,
-  signal: AbortSignal
+async function confirmApp(
+  target: ComputerApp,
+  signal: AbortSignal,
+  starting: boolean
 ): Promise<boolean> {
+  const icon = await app.getFileIcon(target.path, { size: 'large' }).catch(() => null)
   const window = appState.mainWindowRef
   const result = await showTrustedDialog(
     window && !window.isDestroyed() ? window : null,
     {
       type: 'warning',
-      title,
-      message,
-      detail: detail.filter(Boolean).join('\n\n'),
+      title: 'Let the agent use this app?',
+      message: `Let the agent ${starting ? 'start and use' : 'use'} ${target.name}?`,
+      iconDataUrl: icon && !icon.isEmpty() ? icon.toDataURL() : undefined,
+      detail: [
+        'For this chat, the agent can read what this app shows, and click and type in it. What it reads goes to the model you selected.',
+        target.access.kind === 'powerful' ? target.access.warning : null,
+        target.access.kind === 'physical'
+          ? 'This looks like software that controls real equipment. A wrong click or value could move a machine. Only allow this if that is safe right now.'
+          : 'Some apps only respond to your real mouse and keyboard. For those steps, the agent can wait until you have stepped away, bring the app forward for a moment, and go back to what you had open.',
+        'Press Esc at any time to stop it.'
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
+      facts: [{ label: 'App', value: target.path, code: true }],
       buttons: ['Don’t allow', 'Allow for this chat'],
       defaultId: 0,
       cancelId: 0,
@@ -30,36 +42,6 @@ async function askAllowForChat(
     { signal }
   )
   return result.response === 1
-}
-
-function confirmApp(target: ComputerApp, signal: AbortSignal, starting: boolean): Promise<boolean> {
-  return askAllowForChat(
-    'Let the agent use this app?',
-    `Let the agent ${starting ? 'start, see' : 'see'} and operate ${target.name}?`,
-    [
-      target.path,
-      'For this chat, the agent can read what this app shows, and click and type in it. Anything shown there, including personal details, goes to the model you selected.',
-      target.access.kind === 'powerful' ? target.access.warning : null,
-      target.access.kind === 'physical'
-        ? 'This looks like software that controls real equipment. A wrong click or value could move a machine. Only allow this if that is safe right now.'
-        : null,
-      'Press Esc at any time to stop it.'
-    ],
-    signal
-  )
-}
-
-function confirmTakeover(target: ComputerApp, signal: AbortSignal): Promise<boolean> {
-  return askAllowForChat(
-    'Let the agent use your mouse and keyboard?',
-    `Let the agent use your real mouse and keyboard in ${target.name}?`,
-    [
-      `${target.name} ignores input sent in the background. For each such step, SideKick waits until you pause, brings ${target.name} to the front, uses your mouse and keyboard for a moment, and then goes back to what you had open.`,
-      `If you type during that moment, your keys can land in ${target.name}, or the agent’s keys in another window.`,
-      'Press Esc at any time to stop it.'
-    ],
-    signal
-  )
 }
 
 function startApp(path: string): void {
@@ -78,6 +60,7 @@ function bundledDriverPath(): string {
 
 let service: ComputerUseService | null = null
 const highlight = new ComputerUseHighlight()
+const appWindows = new ComputerUseWindows()
 
 /**
  * The one service, with what only Electron can give it: the dialog, Esc, and the notification. Null
@@ -89,11 +72,12 @@ export function computerUseService(): ComputerUseService | null {
   service ??= new ComputerUseService({
     showActive: (target) => highlight.show(target),
     hideActive: () => highlight.hide(),
+    moveCursor: (point) => highlight.moveCursor(point),
     driverPath,
     dataFolder: () => join(app.getPath('userData'), 'computer-use'),
     confirmApp,
-    confirmTakeover,
     userIdleSeconds: () => powerMonitor.getSystemIdleTime(),
+    appWindows,
     startApp,
     armStop: (stop) => {
       globalShortcut.register('Escape', stop)

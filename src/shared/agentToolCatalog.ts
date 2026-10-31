@@ -831,8 +831,17 @@ const computer = definition(
       app: { type: 'string', description: 'App name. All but list_apps need it.' },
       window: { type: 'number', description: 'For look: a window id it listed, to switch to.' },
       element: { type: 'number', description: 'Row number from the last look. Prefer this.' },
-      x: { type: 'number', description: 'Pixel in the last look image, only without element.' },
+      x: {
+        type: 'number',
+        description:
+          'Pixel in the last look image, only without element. For scroll, which pane to scroll.'
+      },
       y: { type: 'number' },
+      real_input: {
+        type: 'boolean',
+        description:
+          'Only after a step was refused for needing it: wait until the user steps away, then briefly use their real mouse and keyboard.'
+      },
       to_x: { type: 'number', description: 'For drag: where to end. x and y are the start.' },
       to_y: { type: 'number' },
       text: { type: 'string', description: 'For type and set_value.' },

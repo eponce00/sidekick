@@ -9,6 +9,8 @@ import {
   COMPUTER_DRIVER_TOOLS,
   computerDriverEnvironment,
   computerDriverManifest,
+  computerActionPoint,
+  computerOpenWindows,
   computerWindowBounds
 } from './computerUseDriver'
 import { ComputerUseService } from './computerUseService'
@@ -32,7 +34,6 @@ function harness(apps: ComputerApp[], confirm = true) {
   }))
   const startDriver = vi.fn(async () => ({ call, close: vi.fn(async () => undefined) }))
   const confirmApp = vi.fn(async () => confirm)
-  const confirmTakeover = vi.fn(async () => confirm)
   const userIdleSeconds = vi.fn(() => 60)
   const installed: ComputerApp[] = []
   const startApp = vi.fn((path: string) => {
@@ -42,18 +43,35 @@ function harness(apps: ComputerApp[], confirm = true) {
   const disarm = vi.fn()
   const armStop = vi.fn((_stop: () => void) => disarm)
   const showActive = vi.fn()
+  const restoreForeground = vi.fn(async (_window: number) => true)
+  const appWindows = {
+    text: vi.fn(async (_window: number, _text: string) => false),
+    key: vi.fn(async (_window: number, _vk: number) => false),
+    wheel: vi.fn(
+      async (
+        _window: number,
+        _direction: 'up' | 'down',
+        _ticks: number,
+        _point: { x: number; y: number }
+      ) => false
+    ),
+    restore: restoreForeground,
+    visible: vi.fn(async (_window: number) => true)
+  }
   const hideActive = vi.fn()
+  const moveCursor = vi.fn()
   const service = new ComputerUseService({
     driverPath: 'C:\\driver\\cua-driver.exe',
     dataFolder: () => 'C:\\data',
     confirmApp,
-    confirmTakeover,
     userIdleSeconds,
+    appWindows,
     startApp,
     armStop,
     notifyActive: vi.fn(),
     showActive,
     hideActive,
+    moveCursor,
     listApps: async () => apps,
     findInstalled: async (name) => installed.find((a) => a.name.toLowerCase() === name) ?? null,
     startDriver: startDriver as never,
@@ -64,14 +82,16 @@ function harness(apps: ComputerApp[], confirm = true) {
     call,
     startDriver,
     confirmApp,
-    confirmTakeover,
     userIdleSeconds,
     installed,
     startApp,
     armStop,
     disarm,
+    restoreForeground,
+    appWindows,
     showActive,
-    hideActive
+    hideActive,
+    moveCursor
   }
 }
 
@@ -85,7 +105,11 @@ function needsForeground(call: ReturnType<typeof harness>['call'], tool: string)
         ? 'Background delivery is not available for target window class'
         : name === 'list_windows'
           ? '- app (pid 10) "Window" [window_id: 77]'
-          : 'ok'
+          : 'ok',
+    structured:
+      name === 'bring_to_front'
+        ? { landed_on_target: true, previous_fg_hwnd: '0x9', target_hwnd: '0x4d' }
+        : undefined
   }))
 }
 
@@ -152,30 +176,84 @@ describe('what the agent may reach', () => {
     expect(matchInstalledApp(stdout, 'calc')).toBeNull()
   })
 
-  it('asks before using the real mouse and keyboard, once per chat', async () => {
-    const { service, call, confirmTakeover } = harness([app('notes')])
+  it('brings the app forward before real input, and puts the user’s window back', async () => {
+    const { service, call, restoreForeground } = harness([app('notes')])
+    needsForeground(call, 'scroll')
+    await service.requestApp('chat', 'notes', signal)
+    await service.scroll('chat', 'notes', 'up', 1, { x: 5, y: 6 }, signal, true)
+    const tools = call.mock.calls.map(([tool]) => tool)
+    expect(tools.indexOf('bring_to_front')).toBeGreaterThan(-1)
+    expect(tools.lastIndexOf('scroll')).toBeGreaterThan(tools.indexOf('bring_to_front'))
+    expect(call).toHaveBeenLastCalledWith(
+      'scroll',
+      expect.objectContaining({ delivery_mode: 'foreground', amount: 2, x: 5, y: 6 }),
+      signal
+    )
+    expect(restoreForeground).toHaveBeenCalledWith(9)
+  })
+
+  it('does not stop itself when the agent presses Esc with real input', async () => {
+    const { service, call, armStop, confirmApp } = harness([app('notes')])
+    needsForeground(call, 'press_key')
+    await service.requestApp('chat', 'notes', signal)
+    await service.key('chat', 'notes', 'escape', [], signal, true)
+    const disarmed = armStop.mock.results[0].value as ReturnType<typeof vi.fn>
+    expect(disarmed).toHaveBeenCalled()
+    expect(armStop.mock.calls.length).toBeGreaterThan(1)
+    await service.key('chat', 'notes', 'a', [], signal, true)
+    expect(confirmApp).toHaveBeenCalledTimes(1)
+  })
+
+  it('tries the background first, without asking and without real input', async () => {
+    const { service, call, appWindows } = harness([app('notes')])
+    needsForeground(call, 'type_text')
+    appWindows.text.mockResolvedValue(true)
+    await service.requestApp('chat', 'notes', signal)
+    await expect(service.type('chat', 'notes', 'hi', undefined, signal)).resolves.toContain(
+      'in the background'
+    )
+    expect(appWindows.text).toHaveBeenCalledWith(77, 'hi')
+    expect(call).not.toHaveBeenCalledWith('bring_to_front', expect.anything(), signal)
+  })
+
+  it('leaves real input to the agent: nothing happens unless it chooses that', async () => {
+    const { service, call } = harness([app('notes')])
     needsForeground(call, 'type_text')
     await service.requestApp('chat', 'notes', signal)
-    await service.type('chat', 'notes', 'one', undefined, signal)
-    await service.type('chat', 'notes', 'two', undefined, signal)
-    expect(confirmTakeover).toHaveBeenCalledTimes(1)
-    expect(call).toHaveBeenLastCalledWith(
+    await expect(service.type('chat', 'notes', 'hi', undefined, signal)).rejects.toThrow(
+      'real_input'
+    )
+    expect(call).not.toHaveBeenCalledWith('bring_to_front', expect.anything(), signal)
+    expect(call).not.toHaveBeenCalledWith(
       'type_text',
-      expect.objectContaining({ text: 'two', delivery_mode: 'foreground' }),
+      expect.objectContaining({ delivery_mode: 'foreground' }),
       signal
     )
   })
 
-  it('never sends real input when the takeover is denied', async () => {
-    const { service, call, confirmApp } = harness([app('notes')], false)
-    confirmApp.mockResolvedValue(true)
-    needsForeground(call, 'type_text')
+  it('does not send a key with modifiers through the background path', async () => {
+    const { service, call, appWindows } = harness([app('notes')])
+    needsForeground(call, 'press_key')
     await service.requestApp('chat', 'notes', signal)
-    await expect(service.type('chat', 'notes', 'x', undefined, signal)).rejects.toThrow(
-      'did not let'
+    await expect(service.key('chat', 'notes', 'a', ['ctrl'], signal)).rejects.toThrow('real_input')
+    expect(appWindows.key).not.toHaveBeenCalled()
+  })
+
+  it('sends no real input when the app did not reach the front', async () => {
+    const { service, call } = harness([app('notes')])
+    needsForeground(call, 'scroll')
+    const answer = call.getMockImplementation()!
+    call.mockImplementation(async (tool, args) =>
+      tool === 'bring_to_front'
+        ? { isError: false, images: [], text: 'ok', structured: { landed_on_target: false } }
+        : answer(tool, args)
+    )
+    await service.requestApp('chat', 'notes', signal)
+    await expect(service.scroll('chat', 'notes', 'up', 3, {}, signal, true)).rejects.toThrow(
+      'nothing was sent'
     )
     expect(call).not.toHaveBeenCalledWith(
-      'type_text',
+      'scroll',
       expect.objectContaining({ delivery_mode: 'foreground' }),
       signal
     )
@@ -188,23 +266,25 @@ describe('what the agent may reach', () => {
       path: 'C:\\TwinCAT\\TcHmi.exe',
       access: computerAppAccess('C:\\TwinCAT\\TcHmi.exe')
     }
-    const { service, call, confirmTakeover } = harness([twincat])
+    const { service, call } = harness([twincat])
     needsForeground(call, 'press_key')
     await service.requestApp('chat', 'TcHmi', signal)
-    await expect(service.key('chat', 'TcHmi', 'return', [], signal)).rejects.toThrow('equipment')
-    expect(confirmTakeover).not.toHaveBeenCalled()
+    await expect(service.key('chat', 'TcHmi', 'return', [], signal, true)).rejects.toThrow(
+      'equipment'
+    )
+    expect(call).not.toHaveBeenCalledWith('bring_to_front', expect.anything(), signal)
   })
 
-  it('waits for the user to pause, and gives up rather than type over them', async () => {
+  it('waits for the user to step away, and gives up rather than type over them', async () => {
     vi.useFakeTimers()
     try {
       const { service, call, userIdleSeconds } = harness([app('notes')])
       needsForeground(call, 'type_text')
       userIdleSeconds.mockReturnValue(0)
       await service.requestApp('chat', 'notes', signal)
-      const typing = service.type('chat', 'notes', 'x', undefined, signal)
-      const refused = expect(typing).rejects.toThrow('busy')
-      await vi.advanceTimersByTimeAsync(31_000)
+      const typing = service.type('chat', 'notes', 'x', undefined, signal, true)
+      const refused = expect(typing).rejects.toThrow('still using')
+      await vi.advanceTimersByTimeAsync(76_000)
       await refused
       expect(call).not.toHaveBeenCalledWith(
         'type_text',
@@ -267,18 +347,6 @@ describe('what the agent may reach', () => {
     expect(confirmApp).toHaveBeenCalledTimes(2)
     service.runEnded('second')
     await expect(service.requestApp('first', 'notes', signal)).resolves.toContain('already')
-  })
-
-  it('marks the app orange only once it may use the real keyboard', async () => {
-    const { service, call, showActive } = harness([app('notes')])
-    needsForeground(call, 'type_text')
-    await service.requestApp('chat', 'notes', signal)
-    await service.look('chat', 'notes', false, signal)
-    expect(showActive).toHaveBeenLastCalledWith(expect.objectContaining({ takeover: false }))
-    await service.type('chat', 'notes', 'x', undefined, signal)
-    expect(showActive).toHaveBeenLastCalledWith(
-      expect.objectContaining({ appName: 'notes', takeover: true })
-    )
   })
 
   it('takes a denial as final and approves nothing', async () => {
@@ -368,8 +436,7 @@ describe('the driver’s limits', () => {
       'clipboard_write',
       'get_desktop_state',
       'kill_app',
-      'set_config',
-      'bring_to_front'
+      'set_config'
     ]) {
       expect(COMPUTER_DRIVER_TOOLS as readonly string[]).not.toContain(tool)
       expect(manifest).not.toContain(tool)
@@ -395,6 +462,42 @@ describe('the driver’s limits', () => {
       CUA_DRIVER_RS_UPDATE_CHECK: 'false',
       CUA_DRIVER_PERMISSION_MODE: 'bounded'
     })
+  })
+
+  it('works in an app’s real windows, largest first, not the desktop or taskbar', () => {
+    const window = (window_id: number, title: string, width: number, minimized = false) => ({
+      window_id,
+      title,
+      minimized,
+      bounds: { x: 0, y: 0, width, height: 10 }
+    })
+    expect(
+      computerOpenWindows({
+        windows: [
+          window(1, '', 900),
+          window(2, 'Program Manager', 800),
+          window(3, 'Small', 5),
+          window(4, 'Big', 50),
+          window(5, 'Hidden', 500, true)
+        ]
+      })
+    ).toEqual([4, 3])
+    expect(computerOpenWindows('nonsense')).toBeNull()
+  })
+
+  it('finds where an action landed in what the driver reports', () => {
+    expect(computerActionPoint('✅ Performed UIA Invoke on [1] (screen (1093,1240)).')).toEqual({
+      x: 1093,
+      y: 1240
+    })
+    expect(
+      computerActionPoint('✅ Posted click to Chromium pid 3 at (879,864) (background)')
+    ).toEqual({ x: 879, y: 864 })
+    expect(computerActionPoint('Sent drag on pid 3 from screen (1,2) → (30,40) in 500ms')).toEqual({
+      x: 30,
+      y: 40
+    })
+    expect(computerActionPoint('Typed 1 char(s) on pid 3')).toBeNull()
   })
 
   it('outlines only a window it knows, and not a minimized one', () => {
