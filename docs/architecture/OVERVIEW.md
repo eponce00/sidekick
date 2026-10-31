@@ -356,6 +356,15 @@ event.
 tablet, and mobile criteria can be checked explicitly. `view_image` applies the same native
 multimodal result path to raster files inside the active project.
 
+The `computer` tool operates other apps on Windows through a child process of
+[cua-driver](https://github.com/trycua/cua), which SideKick starts in its `bounded` mode with a
+manifest written per chat (`computerUseDriver.ts`). The manifest lists only the executables the user
+approved, in a trusted dialog, and only the driver tools SideKick uses, which leave out starting
+apps: the user opens an app, and the agent asks to use it. `computerUseService.ts` resolves an app from its real executable path
+on every call, keeps one chat in control at a time, and clears a chat's approvals when the user
+presses Esc. The driver's telemetry and update checks are turned off, and its files stay in SideKick's
+folder. Only the pinned build starts: both executables are checked against fixed SHA-256 hashes.
+
 `read` gives a PDF the treatment the providers' own PDF input does, the same for every provider:
 each page's text from the bundled PDF.js (`pdfReader.ts`), plus page images on that path for the
 pages whose text misses something. A page counts as scanned when it has almost no text and

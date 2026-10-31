@@ -16,6 +16,7 @@ import {
   KeyRound,
   LifeBuoy,
   MapPin,
+  MousePointerClick,
   Palette,
   RefreshCw,
   Repeat,
@@ -304,6 +305,40 @@ function SettingsModal({
               onChange={(webSearchEnabled) => setSettings({ ...settings, webSearchEnabled })}
             />
           </SettingsSection>
+          {window.api.app.platform === 'windows' && (
+            <SettingsSection
+              icon={MousePointerClick}
+              title="Computer use"
+              description="Lets the agent operate other apps on this computer. Each app needs your approval, per chat."
+            >
+              <ToggleField
+                label="Let the agent ask to use apps"
+                hint="Terminals, browsers, password managers and system tools are never available. Press Esc to stop it. What an app shows goes to your selected model."
+                checked={settings.computerUseEnabled ?? false}
+                onChange={(computerUseEnabled) => setSettings({ ...settings, computerUseEnabled })}
+              />
+              <SettingsRow
+                icon={FileCode2}
+                label="Path to cua-driver.exe"
+                description="cua-driver 0.38.0 for Windows x64. SideKick refuses any other build."
+                stacked
+                control={
+                  <input
+                    className="settings-path-input"
+                    aria-label="Path to cua-driver.exe"
+                    value={settings.computerUseDriverPath ?? ''}
+                    placeholder="Not set"
+                    onChange={(event) =>
+                      setSettings({
+                        ...settings,
+                        computerUseDriverPath: event.target.value.trim() || undefined
+                      })
+                    }
+                  />
+                }
+              />
+            </SettingsSection>
+          )}
           <SettingsSection
             icon={MapPin}
             title="Location"

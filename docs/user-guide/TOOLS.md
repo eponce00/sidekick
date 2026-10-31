@@ -39,6 +39,28 @@ recognition, so they stay in the conversation: the recognizer built into Windows
 Tesseract on Linux when it is installed. It runs on your computer, and the pages never leave it for
 that.
 
+## Computer use
+
+On Windows, the agent can operate other apps on this computer when you turn this on in
+**Settings › Computer use**. It is off by default and needs
+[cua-driver](https://github.com/trycua/cua) 0.38.0 for Windows x64, which you download yourself and
+point Settings at. SideKick checks the file and refuses any other build.
+
+- **You approve each app, per chat.** The agent asks, and SideKick shows you the app and its path.
+  A denial is final for that request. The app must already be open; the agent cannot start apps.
+- **Some apps are never available:** terminals and code editors, system tools and File Explorer,
+  password managers, and browsers, which SideKick's own browser replaces.
+- **Software that may control real equipment,** such as TwinCAT, gets an extra warning. A wrong click
+  or value could move a machine.
+- **Press Esc to stop it.** Everything the chat was allowed ends, and it has to ask you again. Esc is
+  held for about a minute after each action, so other apps don't receive it during that time.
+- **One chat at a time,** and never in a scheduled chat.
+- **What the app shows goes to your selected model,** including any personal details on screen. A
+  model that can't see images works from the app's list of controls alone.
+
+The agent normally works in the background without moving your mouse or taking focus. Some apps
+ignore background input; it then tells you it can't do that step.
+
 The native browser catalog includes `browser_open`, `browser_observe`, `browser_screenshot`,
 `browser_click`, `browser_type`, `browser_sign_in`, `browser_select`, `browser_fill_form`, `browser_scroll`, `browser_hover`,
 `browser_wait`, `browser_navigate`, `browser_tabs`, `browser_console`, `browser_network`,

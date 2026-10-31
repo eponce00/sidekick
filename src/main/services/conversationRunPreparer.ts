@@ -899,6 +899,17 @@ export class ConversationRunPreparer {
       surface === 'conversation' && input.model.supportsTools !== false
         ? (this.sessionTools?.(input.conversationId, input.id) ?? null)
         : null
+    // Never in a scheduled chat: nobody may be there to approve an app or press Esc.
+    const computerUse =
+      process.platform === 'win32' &&
+      surface === 'conversation' &&
+      currentSettings.computerUseEnabled === true &&
+      currentSettings.computerUseDriverPath &&
+      !conversation.permission_ceiling
+        ? (await import('./computerUseHost')).computerUseService(
+            () => this.settings().computerUseDriverPath
+          )
+        : null
     const toolSession = await this.tools.createSession({
       permissionMode,
       runId: input.id,
@@ -909,6 +920,9 @@ export class ConversationRunPreparer {
       workspaceRoot: workspaceRoot ?? undefined,
       webSearchEnabled: currentSettings.webSearchEnabled !== false,
       browserEnabled: input.model.supportsVision !== false,
+      ...(computerUse
+        ? { computer: { service: computerUse, vision: input.model.supportsVision !== false } }
+        : {}),
       pageImages:
         input.model.supportsVision !== false
           ? providerImageProfile(executionTarget.providerKind).maxImages
