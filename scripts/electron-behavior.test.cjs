@@ -433,7 +433,7 @@ test(
       // list later than the test created it.
       await page.reload()
       await page.waitForFunction(() => Boolean(window.api?.sessions))
-      await page.getByText('COMPACTION-FIXTURE', { exact: true }).first().click()
+      await require('./_diag.cjs').diagnosedClick(page, application, 'COMPACTION-FIXTURE')
       const card = await until(
         () =>
           page.evaluate(() => {
