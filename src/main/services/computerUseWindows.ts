@@ -41,13 +41,14 @@ public static class SideKickWindows {
     GetClassName(h, s, 128);
     return s.ToString();
   }
-  // The largest one that shows: a browser keeps a page window for each of its other tabs too.
+  // The largest one: a browser keeps a page window for each of its other tabs too, so those must
+  // also show. WhatsApp's input window counts as hidden and still takes the wheel.
   static IntPtr Child(IntPtr top, string name) {
     IntPtr found = IntPtr.Zero;
     long largest = -1;
     EnumChildWindows(top, delegate(IntPtr c, IntPtr l) {
       Rect r;
-      if (ClassOf(c) == name && IsWindowVisible(c) && GetWindowRect(c, out r)) {
+      if (ClassOf(c) == name && (IsWindowVisible(c) || name != "Chrome_RenderWidgetHostHWND") && GetWindowRect(c, out r)) {
         long area = (long)(r.R - r.L) * (r.B - r.T);
         if (area > largest) { largest = area; found = c; }
       }
@@ -100,6 +101,7 @@ public static class SideKickWindows {
       && Child(top, "Chrome_RenderWidgetHostHWND") == IntPtr.Zero
       && Child(top, "InputSiteWindowClass") == IntPtr.Zero;
   }
+  public static bool IsChromium(long window) { return ClassOf(new IntPtr(window)).StartsWith("Chrome_WidgetWin"); }
   public static long Front() { return GetForegroundWindow().ToInt64(); }
   public static bool Restore(long window) {
     IntPtr h = new IntPtr(window);
@@ -148,6 +150,7 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
         $answer = $true
       }
       'ignoresClicks' { $answer = [SideKickWindows]::IgnoresPostedClicks([long]$c.window) }
+      'chromium' { $answer = [SideKickWindows]::IsChromium([long]$c.window) }
       'at' {
         $found = [System.Windows.Automation.AutomationElement]::FromPoint((New-Object System.Windows.Point ([double]$c.x), ([double]$c.y)))
         $info = $found.Current
@@ -286,6 +289,11 @@ export class ComputerUseWindows {
    */
   launch(path: string): Promise<boolean> {
     return this.confirm({ op: 'start', path })
+  }
+
+  /** Chromium and Electron windows, where a drag sent in the background moves nothing. */
+  ignoresBackgroundDrags(window: number): Promise<boolean> {
+    return this.confirm({ op: 'chromium', window })
   }
 
   ignoresPostedClicks(window: number): Promise<boolean> {

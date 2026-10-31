@@ -47,7 +47,15 @@ export interface ComputerUseDependencies {
   /** What the driver can't do: input with no focus, and handing the front back. */
   appWindows: Pick<
     ComputerUseWindows,
-    'text' | 'key' | 'wheel' | 'restore' | 'visible' | 'front' | 'controlAt' | 'ignoresPostedClicks'
+    | 'text'
+    | 'key'
+    | 'wheel'
+    | 'restore'
+    | 'visible'
+    | 'front'
+    | 'controlAt'
+    | 'ignoresPostedClicks'
+    | 'ignoresBackgroundDrags'
   >
   /** Starts an approved executable, with no arguments. */
   startApp: (path: string) => void
@@ -658,6 +666,15 @@ export class ComputerUseService {
     if (!realInput && isClick && (await this.deps.appWindows.ignoresPostedClicks(windowId))) {
       throw new ComputerUseRefusal(
         `${app.name} ignores clicks sent in the background, so nothing was sent. You decide: repeat it with real_input true, which waits until the user has stepped away and then briefly uses their real mouse, or tell the user what you need done.`
+      )
+    }
+    if (
+      !realInput &&
+      tool === 'drag' &&
+      (await this.deps.appWindows.ignoresBackgroundDrags(windowId))
+    ) {
+      throw new ComputerUseRefusal(
+        `${app.name} doesn't move for drags sent in the background, so nothing was sent. You decide: repeat it with real_input true, which waits until the user has stepped away and then briefly uses their real mouse, or tell the user what you need done.`
       )
     }
     if (realInput) await this.waitToUseRealInput(app, signal)

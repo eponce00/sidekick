@@ -60,7 +60,8 @@ function harness(apps: ComputerApp[], confirm = true) {
     visible: vi.fn(async (_window: number) => true),
     front: vi.fn(async () => 0),
     controlAt: vi.fn(async (_pid: number, _point: { x: number; y: number }) => ''),
-    ignoresPostedClicks: vi.fn(async (_window: number) => false)
+    ignoresPostedClicks: vi.fn(async (_window: number) => false),
+    ignoresBackgroundDrags: vi.fn(async (_window: number) => false)
   }
   const hideActive = vi.fn()
   const moveCursor = vi.fn()
@@ -434,6 +435,23 @@ describe('what the agent may reach', () => {
     expect(call).toHaveBeenLastCalledWith(
       'get_window_state',
       expect.objectContaining({ window_id: 9 }),
+      signal
+    )
+  })
+
+  it('sends no background drag to an app that ignores them', async () => {
+    const { service, call, appWindows } = harness([app('notes')])
+    needsForeground(call, 'never refused')
+    appWindows.ignoresBackgroundDrags.mockResolvedValue(true)
+    await service.requestApp('chat', 'notes', signal)
+    const from = { x: 1, y: 2 }
+    const to = { x: 3, y: 4 }
+    await expect(service.drag('chat', 'notes', from, to, signal)).rejects.toThrow('drags')
+    expect(call).not.toHaveBeenCalledWith('drag', expect.anything(), signal)
+    await service.drag('chat', 'notes', from, to, signal, true)
+    expect(call).toHaveBeenLastCalledWith(
+      'drag',
+      expect.objectContaining({ delivery_mode: 'foreground' }),
       signal
     )
   })
