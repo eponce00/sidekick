@@ -17,7 +17,8 @@ requiresPythonPackages: ["pypdf", "pdfplumber", "reportlab", "pdf2image"]
 
 | Task                    | Approach                                                                                              |
 | ----------------------- | ----------------------------------------------------------------------------------------------------- |
-| Read/extract text       | pdfplumber (structured)                                                 |
+| Read a PDF              | The `read` tool, with `pages` for a range                                                             |
+| Exact table cells       | pdfplumber via temp script                                                                            |
 | Check if form-fillable  | `python "$env:SIDEKICK_SKILLS\pdf\check_fillable_fields.py" file.pdf`                                 |
 | Fill a PDF form         | `python "$env:SIDEKICK_SKILLS\pdf\fill_fillable_fields.py" file.pdf fields.json filled.pdf`           |
 | Fill with annotations   | `python "$env:SIDEKICK_SKILLS\pdf\fill_pdf_form_with_annotations.py" file.pdf fields.json filled.pdf` |
@@ -43,30 +44,29 @@ and ask before changing a browser-only task into a programmatic file workflow.
 
 ## Reading Content
 
-For accurate, structured extraction use pdfplumber (preserves layout, tables, positions). Page rendering additionally needs pdf2image and Poppler executables (`pdfinfo`, `pdftoppm`); check the `pdf-render` workflow separately.
+Read a PDF with the `read` tool. It returns each page's text; a scanned page or one with charts,
+diagrams or photos comes with an image of the page when you can see images, and a scanned page you
+cannot see is recognized with the computer's own OCR. Continue a long document with `pages`, such
+as `"21-40"`, and read one or two pages alone to look at a figure the text mentions. Do not
+convert pages to images or run OCR yourself.
 
-Write to `./UNIQUE_pdf_read.py`, run, delete:
+Use pdfplumber only when you need exact table cells or word positions. Write to
+`./UNIQUE_pdf_tables.py`, run, delete:
 
 ```python
 import pdfplumber, sys
 
 with pdfplumber.open(sys.argv[1]) as pdf:
-    print(f'Pages: {len(pdf.pages)}')
     for i, page in enumerate(pdf.pages):
-        print(f'\n--- Page {i+1} ({page.width:.0f}x{page.height:.0f}) ---')
-        text = page.extract_text()
-        if text:
-            print(text[:2000])
-        tables = page.extract_tables()
-        for t_idx, table in enumerate(tables):
-            print(f'  [TABLE {t_idx+1}]')
+        for t_idx, table in enumerate(page.extract_tables()):
+            print(f'--- Page {i+1}, table {t_idx+1} ---')
             for row in table:
-                print('  ' + ' | '.join(str(c or '') for c in row))
+                print(' | '.join(str(c or '') for c in row))
 ```
 
 ```powershell
-python "./UNIQUE_pdf_read.py" "path\to\file.pdf"
-Remove-Item "./UNIQUE_pdf_read.py" -ErrorAction SilentlyContinue
+python "./UNIQUE_pdf_tables.py" "path\to\file.pdf"
+Remove-Item "./UNIQUE_pdf_tables.py" -ErrorAction SilentlyContinue
 ```
 
 > Note: PDFs have no lossless XML edit workflow. For edits, operate directly on the original file using pypdf/pdfplumber — never rewrite from scratch.

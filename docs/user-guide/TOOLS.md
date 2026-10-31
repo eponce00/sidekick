@@ -28,6 +28,14 @@ and `edit`/`write`/`delete_file` for other models such as Qwen. A file must be r
 same chat before it is changed, though not before it is deleted, and every edit uses the same
 transactional workspace mutation service.
 
+`read` also opens PDFs, without Python or any other program installed. It returns each page's
+text, up to 20 pages at a time. A model that can see images also gets a picture of the pages whose
+text misses something: scanned pages first, then pages with charts, diagrams or photos, as many as
+its provider takes in one request (four for cloud providers, two for local ones). Reading one or
+two pages by number shows them as pictures. A scanned page the model does not see is read with the
+computer's own text recognition: the one built into Windows or macOS, or Tesseract on Linux when it
+is installed. Text recognition runs on your computer, and the pages never leave it for that.
+
 The native browser catalog includes `browser_open`, `browser_observe`, `browser_screenshot`,
 `browser_click`, `browser_type`, `browser_sign_in`, `browser_select`, `browser_fill_form`, `browser_scroll`, `browser_hover`,
 `browser_wait`, `browser_navigate`, `browser_tabs`, `browser_console`, `browser_network`,

@@ -1537,7 +1537,13 @@ The user approved this exact plan revision. Act capabilities are now available a
               }
             ]
           },
-          { role: 'tool', tool_call_id: call.id, content: result.modelContent }
+          {
+            role: 'tool',
+            tool_call_id: call.id,
+            content: result.modelContent,
+            // An attached PDF's scanned or illustrated pages arrive as images.
+            ...(result.media?.length ? { media: result.media } : {})
+          }
         )
       }
     }
