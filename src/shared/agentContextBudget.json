@@ -1,6 +1,6 @@
 {
   "conversation": {
-    "systemPromptBytes": 16827,
+    "systemPromptBytes": 16693,
     "toolCount": 60,
     "toolJsonBytes": 49845,
     "toolBytes": {

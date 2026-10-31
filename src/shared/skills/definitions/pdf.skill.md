@@ -2,7 +2,7 @@
 id: pdf
 name: PDF Files
 icon: FileText
-description: 'Use this skill any time a .pdf file is involved as input or output. This includes: reading or extracting text from PDFs; filling in PDF forms; creating PDFs; converting PDFs to images; analyzing PDF structure or metadata; splitting or combining PDF pages. Trigger whenever the user mentions PDF or .pdf file.'
+description: 'Use this skill to fill in PDF forms, create PDFs, merge or split pages, save pages as image files, or pull exact table cells. Reading a PDF needs no skill: use the read tool.'
 invocation: auto
 requiresPythonPackages: ["pypdf", "pdfplumber", "reportlab", "pdf2image"]
 ---
@@ -44,12 +44,8 @@ and ask before changing a browser-only task into a programmatic file workflow.
 
 ## Reading Content
 
-Read a PDF with the `read` tool. It returns each page's text, recognized with the computer's own
-OCR on a scanned page. When you can see images, a scanned page or one with charts, diagrams or
-photos also comes with an image of the page. Continue a long document with `pages`, such as
-`"21-40"`, and read one or two pages alone to look at a figure the text mentions. Only the newest
-images stay attached, and a result says when one has left, so write down what you need from a
-page before opening the next. Do not extract images, convert pages or run OCR yourself.
+Read a PDF with the `read` tool, not a script; it handles scanned pages, charts and long
+documents.
 
 Use pdfplumber only when you need exact table cells or word positions. Write to
 `./UNIQUE_pdf_tables.py`, run, delete:
