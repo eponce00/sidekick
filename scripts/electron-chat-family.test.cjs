@@ -143,7 +143,11 @@ test(
           })
           await window.api.workspace.selectFolder()
           const project = await window.api.projects.create(workspace, 'family-fixture')
-          const conversation = await window.api.conversations.create('Split the work', project.id)
+          const conversation = await window.api.conversations.create(
+            'Split the work',
+            project.id,
+            'user'
+          )
           await window.api.conversations.saveMessage({
             id: 'family-user',
             conversation_id: conversation.id,
@@ -245,6 +249,9 @@ test(
 
       // The user sees the family without restarting: workers nested under the manager, reports as
       // received rows rather than raw messages typed by the user.
+      // The sidebar lists chats made through the API after a reload.
+      await page.reload()
+      await page.waitForFunction(() => Boolean(window.api?.sessions))
       await page.getByText('Split the work', { exact: true }).first().click()
       await page.getByText('Both chats reported back').first().waitFor({ timeout: 15_000 })
       for (const handle of ['alpha', 'beta'])

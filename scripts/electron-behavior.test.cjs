@@ -327,7 +327,7 @@ test(
       // --- Compaction waits for the share of the window Settings names -----------------------
       const notes = await page.evaluate(
         async (projectId) =>
-          (await window.api.conversations.create('COMPACTION-FIXTURE', projectId)).id,
+          (await window.api.conversations.create('COMPACTION-FIXTURE', projectId, 'user')).id,
         projectId
       )
       // About 58% of the window: past where the old rule compacted (38%), short of the new 73%.
