@@ -49,6 +49,7 @@ import { AgentPlanService } from './agentPlanService'
 import { ensureChatFolder } from './chatFolders'
 import type { AgentKernelRuntimeTransition } from './agentRunKernel'
 import { parseMessageImages } from '../../shared/messageImages'
+import { providerImageProfile } from '../../shared/imagePreparation'
 import {
   formatMessageContextAttachments,
   formatPastedTextAttachments,
@@ -908,6 +909,10 @@ export class ConversationRunPreparer {
       workspaceRoot: workspaceRoot ?? undefined,
       webSearchEnabled: currentSettings.webSearchEnabled !== false,
       browserEnabled: input.model.supportsVision !== false,
+      pageImages:
+        input.model.supportsVision !== false
+          ? providerImageProfile(executionTarget.providerKind).maxImages
+          : 0,
       // "Add a chart to it" right after an artifact is the same work: the
       // web-artifacts guidance is already in history and need not be reloaded.
       artifactContinuation: previousReplyMadeArtifact(this.db, input.conversationId),

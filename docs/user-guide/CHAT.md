@@ -134,7 +134,8 @@ of its report.
   git ignores, and a chat without a project in the `uploads` folder of its own folder, where the
   copies go when the chat is deleted. Up to four attached files per message are read before the
   agent starts, so its first step already has their contents; the reads show in the reply like
-  any other.
+  any other. A PDF is read with its scanned and illustrated pages as pictures or recognized text;
+  see [Tools](TOOLS.md).
 - **Commands:** type `/` for the message box's own commands, such as the model, plan, research, and
   goal, and for your saved prompts.
 - **Saved prompts:** a Markdown file in `.sidekick/prompts`, in the project or in your home folder,

@@ -280,7 +280,7 @@ export function workspaceReadToolDefinitions(): AgentToolDefinition[] {
       function: {
         name: 'read',
         description:
-          'Read a project-relative UTF-8 file or list a directory. File output is line-numbered and bounded; continue with start_line. Directory output is bounded; continue with cursor. Absolute paths and paths outside the project are rejected.',
+          'Read a project-relative UTF-8 file or list a directory. File output is line-numbered and bounded; continue with start_line. Directory output is bounded; continue with cursor. A PDF returns its text by page, with images of scanned or illustrated pages when you can see them; continue with pages. Absolute paths and paths outside the project are rejected.',
         parameters: {
           type: 'object',
           required: ['path'],
@@ -307,7 +307,12 @@ export function workspaceReadToolDefinitions(): AgentToolDefinition[] {
               maximum: 1000,
               description: 'For directories, maximum returned entries.'
             },
-            glob: { type: 'string', description: 'Optional directory glob such as **/*.tsx.' }
+            glob: { type: 'string', description: 'Optional directory glob such as **/*.tsx.' },
+            pages: {
+              type: 'string',
+              description:
+                'For PDFs, pages such as 3, 2-5 or 1,4-6. A few named pages are shown as images.'
+            }
           }
         }
       }

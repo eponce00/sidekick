@@ -356,6 +356,17 @@ event.
 tablet, and mobile criteria can be checked explicitly. `view_image` applies the same native
 multimodal result path to raster files inside the active project.
 
+`read` gives a PDF the treatment the providers' own PDF input does, the same for every provider:
+each page's text from the bundled PDF.js (`pdfReader.ts`), plus page images on that path for the
+pages whose text misses something. A page counts as scanned when it has almost no text and
+pictures or drawings cover it, and as illustrated when images cover a twelfth of it or it draws
+many paths. Images go to scans first, up to the provider's per-request image budget, which the
+run preparer passes to the tool session (zero for a model without vision). Scanned pages are also
+rendered and recognized by the operating system (`systemOcr.ts`), because an image leaves the
+request once newer ones fill that budget, and the provider boundary then says so in the tool result:
+`Windows.Media.Ocr` through Windows PowerShell, Apple's Vision framework through JavaScript for
+Automation, or Tesseract on Linux when it is on the path.
+
 An artifact made with `create_artifact` is observed the same way before its result returns.
 `ArtifactInspector` loads `artifact-inspect.html` from the artifact protocol in an offscreen window
 that is never shown, cannot open windows, and cannot navigate. That page renders the artifact with

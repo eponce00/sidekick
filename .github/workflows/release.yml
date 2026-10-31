@@ -60,7 +60,7 @@ jobs:
             os: windows-latest
             shard: 2/2
           - name: macOS arm64
-            os: macos-14
+            os: macos-15
             shard: 1/1
           - name: Linux x64
             os: ubuntu-22.04
@@ -200,7 +200,7 @@ jobs:
 
   macos:
     name: Package (macOS arm64)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 40
 
     steps:

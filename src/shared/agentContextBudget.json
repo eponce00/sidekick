@@ -1,8 +1,8 @@
 {
   "conversation": {
-    "systemPromptBytes": 16827,
+    "systemPromptBytes": 16693,
     "toolCount": 60,
-    "toolJsonBytes": 49603,
+    "toolJsonBytes": 49845,
     "toolBytes": {
       "apply_patch": 1850,
       "ask_user": 1358,
@@ -45,7 +45,7 @@
       "list_sessions": 292,
       "manage_todo_list": 730,
       "provider_request_key": 489,
-      "read": 957,
+      "read": 1199,
       "read_command_output": 839,
       "search_tools": 423,
       "send_command_input": 651,
@@ -68,14 +68,14 @@
   },
   "subagent": {
     "toolCount": 14,
-    "toolJsonBytes": 12423,
+    "toolJsonBytes": 12665,
     "toolBytes": {
       "apply_patch": 1850,
       "ask_user": 1358,
       "cancel_background_task": 267,
       "code_intelligence": 867,
       "list_background_tasks": 274,
-      "read": 957,
+      "read": 1199,
       "read_command_output": 839,
       "send_command_input": 651,
       "shell": 1787,
