@@ -91,6 +91,8 @@ interface ChatAccess {
   >
   /** The window the agent last chose in each app with several, by lower-case path. */
   windows: Map<string, number>
+  /** Windows already seen in each app, to notice a dialog opening. */
+  knownWindows: Map<string, Set<number>>
   /** Steps in a row that changed nothing on screen. */
   unchangedSteps: number
   notified: boolean
@@ -230,6 +232,7 @@ export class ComputerUseService {
         approved: new Map(),
         snapshots: new Map(),
         windows: new Map(),
+        knownWindows: new Map(),
         unchangedSteps: 0,
         notified: false
       }
@@ -398,7 +401,13 @@ export class ComputerUseService {
     const access = this.access(chat)
     const key = app.path.toLowerCase()
     const last = access.windows.get(key)
-    const windowId = chosenWindow ?? (last !== undefined && ids.includes(last) ? last : ids[0])
+    // A dialog is usually smaller than the window behind it and needs answering first, so a window
+    // that has just opened is the one to work in.
+    const known = access.knownWindows.get(key)
+    const opened = known ? ids.find((id) => !known.has(id)) : undefined
+    access.knownWindows.set(key, new Set(ids))
+    const windowId =
+      chosenWindow ?? opened ?? (last !== undefined && ids.includes(last) ? last : ids[0])
     access.windows.set(key, windowId)
     this.markActive(chat, app, driver, app.pid, windowId)
     return {
@@ -911,7 +920,39 @@ export class ComputerUseService {
     realInput = false
   ): Promise<string> {
     if (text.length > MAX_TEXT) throw new ComputerUseRefusal('That is too much text at once.')
-    return this.act(chat, name, 'type_text', { text }, element, signal, realInput)
+    // Measured in Excel: sent as text, every Tab was lost, and so was the first letter after each
+    // line break. So those go as real key presses, with the text between them typed on its own.
+    const parts = text.split(/(\t|\r?\n)/).filter(Boolean)
+    if (parts.length <= 1) {
+      return this.act(chat, name, 'type_text', { text }, element, signal, realInput)
+    }
+    let first = true
+    for (const part of parts) {
+      if (part === '\t' || part === '\n' || part === '\r\n') {
+        const key = part === '\t' ? 'tab' : 'return'
+        await this.act(
+          chat,
+          name,
+          'press_key',
+          { key, modifiers: [] },
+          undefined,
+          signal,
+          realInput
+        )
+      } else {
+        await this.act(
+          chat,
+          name,
+          'type_text',
+          { text: part },
+          first ? element : undefined,
+          signal,
+          realInput
+        )
+        first = false
+      }
+    }
+    return `Typed ${parts.length} pieces, with real Tab and Enter presses between them.`
   }
 
   async setValue(
@@ -936,6 +977,13 @@ export class ComputerUseService {
     // The Windows key reaches the shell, not the app: Win+R alone opens a way to run anything.
     if (modifiers.some((modifier) => /^(win|windows|cmd|meta|super)$/i.test(modifier))) {
       throw new ComputerUseRefusal('The Windows key is not available.')
+    }
+    // Measured in Excel: posted in the background, Ctrl+S arrived as a plain "s", typed into a cell.
+    // A shortcut that loses its modifier does something else entirely, such as sending a message.
+    if (modifiers.length > 0 && !realInput) {
+      throw new ComputerUseRefusal(
+        'Key combinations lose their modifiers in the background, so nothing was sent. Repeat it with real_input true, or use the menu in the app instead.'
+      )
     }
     return this.act(chat, name, 'press_key', { key, modifiers }, undefined, signal, realInput)
   }

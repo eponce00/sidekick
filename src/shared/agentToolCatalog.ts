@@ -863,7 +863,11 @@ const computer = definition(
       to_y: { type: 'number' },
       text: { type: 'string', description: 'For type and set_value.' },
       key: { type: 'string', description: 'For key: return, tab, escape, up, f1, a letter.' },
-      modifiers: { type: 'array', items: { type: 'string' }, description: 'ctrl, shift, alt.' },
+      modifiers: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'ctrl, shift, alt. Needs real_input.'
+      },
       direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] },
       amount: { type: 'number', minimum: 1, maximum: 50 }
     }

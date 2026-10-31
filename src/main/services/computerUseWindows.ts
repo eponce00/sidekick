@@ -140,6 +140,13 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       'restore' { $answer = [SideKickWindows]::Restore([long]$c.window) }
       'visible' { $answer = [SideKickWindows]::Visible([long]$c.window) }
       'front' { $answer = [SideKickWindows]::Front() }
+      'start' {
+        $info = New-Object System.Diagnostics.ProcessStartInfo ([string]$c.path)
+        $info.UseShellExecute = $true
+        $info.WorkingDirectory = [System.IO.Path]::GetDirectoryName([string]$c.path)
+        [void][System.Diagnostics.Process]::Start($info)
+        $answer = $true
+      }
       'ignoresClicks' { $answer = [SideKickWindows]::IgnoresPostedClicks([long]$c.window) }
       'at' {
         $found = [System.Windows.Automation.AutomationElement]::FromPoint((New-Object System.Windows.Point ([double]$c.x), ([double]$c.y)))
@@ -270,6 +277,15 @@ export class ComputerUseWindows {
   async controlAt(pid: number, point: { x: number; y: number }): Promise<string> {
     const answer = await this.ask({ op: 'at', pid, ...point })
     return answer === 'no' || answer === '-' ? '' : answer
+  }
+
+  /**
+   * Starts an app through the Windows shell, with no arguments. Started directly, it would inherit
+   * SideKick's open handles: an Excel started that way kept SideKick's debugging port open after
+   * SideKick had closed, so the next start couldn't have it.
+   */
+  launch(path: string): Promise<boolean> {
+    return this.confirm({ op: 'start', path })
   }
 
   ignoresPostedClicks(window: number): Promise<boolean> {

@@ -372,6 +372,72 @@ describe('what the agent may reach', () => {
     expect(appWindows.controlAt).toHaveBeenCalledTimes(1)
   })
 
+  it('types tabs and line breaks as real keys, since they get lost as text', async () => {
+    const { service, call } = harness([app('notes')])
+    await service.requestApp('chat', 'notes', signal)
+    await service.type('chat', 'notes', 'a\tb\r\nc', undefined, signal)
+    const sent = call.mock.calls
+      .filter(([tool]) => tool === 'type_text' || tool === 'press_key')
+      .map(([, args]) => args?.text ?? args?.key)
+    expect(sent).toEqual(['a', 'tab', 'b', 'return', 'c'])
+  })
+
+  it('never sends a key combination in the background, where it loses its modifier', async () => {
+    const { service, call } = harness([app('notes')])
+    needsForeground(call, 'never refused')
+    await service.requestApp('chat', 'notes', signal)
+    await expect(service.key('chat', 'notes', 's', ['ctrl'], signal)).rejects.toThrow('modifiers')
+    expect(call).not.toHaveBeenCalledWith('press_key', expect.anything(), signal)
+    await service.key('chat', 'notes', 's', ['ctrl'], signal, true)
+    expect(call).toHaveBeenLastCalledWith(
+      'press_key',
+      expect.objectContaining({ modifiers: ['ctrl'], delivery_mode: 'foreground' }),
+      signal
+    )
+  })
+
+  it('moves to a window that has just opened, as a dialog does', async () => {
+    const { service, call } = harness([app('notes')])
+    const windows = (...ids: number[]) => ({
+      windows: ids.map((window_id) => ({
+        window_id,
+        title: 'W',
+        bounds: { x: 0, y: 0, width: 100 * window_id, height: 10 }
+      }))
+    })
+    let open = windows(9, 2)
+    const answer = call.getMockImplementation()!
+    call.mockImplementation(async (tool, args) => ({
+      ...(await answer(tool, args)),
+      structured: tool === 'list_windows' ? open : undefined,
+      text:
+        tool === 'list_windows'
+          ? open.windows.map((w) => `- app "W" [window_id: ${w.window_id}]`).join('\n')
+          : (await answer(tool, args)).text
+    }))
+    await service.requestApp('chat', 'notes', signal)
+    await service.look('chat', 'notes', false, signal)
+    expect(call).toHaveBeenLastCalledWith(
+      'get_window_state',
+      expect.objectContaining({ window_id: 9 }),
+      signal
+    )
+    open = windows(9, 2, 3)
+    await service.look('chat', 'notes', false, signal)
+    expect(call).toHaveBeenLastCalledWith(
+      'get_window_state',
+      expect.objectContaining({ window_id: 3 }),
+      signal
+    )
+    open = windows(9, 2)
+    await service.look('chat', 'notes', false, signal)
+    expect(call).toHaveBeenLastCalledWith(
+      'get_window_state',
+      expect.objectContaining({ window_id: 9 }),
+      signal
+    )
+  })
+
   it('zooms through the driver and clicks on what the zoom showed', async () => {
     const { service, call } = harness([app('notes')])
     await service.requestApp('chat', 'notes', signal)

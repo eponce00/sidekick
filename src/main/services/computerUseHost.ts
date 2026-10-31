@@ -1,7 +1,6 @@
 import { app, globalShortcut, Notification, powerMonitor } from 'electron'
-import { spawn } from 'child_process'
 import { existsSync } from 'fs'
-import { dirname, join } from 'path'
+import { join } from 'path'
 import { appState } from '../ipc/state'
 import type { ComputerApp } from './computerUseApps'
 import { ComputerUseHighlight } from './computerUseHighlight'
@@ -60,13 +59,6 @@ async function confirmApp(
   return answer === ALWAYS_ALLOW || answer === ALLOW_FOR_CHAT
 }
 
-function startApp(path: string): void {
-  const child = spawn(path, [], { cwd: dirname(path), detached: true, stdio: 'ignore' })
-  // A failed start shows up as no window appearing, which the agent is told about.
-  child.on('error', () => undefined)
-  child.unref()
-}
-
 /** Where the driver that ships with SideKick is. */
 function bundledDriverPath(): string {
   return app.isPackaged
@@ -95,7 +87,7 @@ export function computerUseService(): ComputerUseService | null {
     confirmApp,
     userIdleSeconds: () => powerMonitor.getSystemIdleTime(),
     appWindows,
-    startApp,
+    startApp: (path) => void appWindows.launch(path),
     armStop: (stop) => {
       globalShortcut.register('Escape', stop)
       return () => globalShortcut.unregister('Escape')
