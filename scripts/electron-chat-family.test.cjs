@@ -16,6 +16,7 @@ const { tmpdir } = require('node:os')
 const { basename, dirname, join, resolve, sep } = require('node:path')
 const { test } = require('node:test')
 const { _electron: electron } = require('playwright')
+const { openChatFromSidebar } = require('./open-chat-from-sidebar.cjs')
 const { startScriptedModel, text } = require('./scripted-model.cjs')
 
 const ROOT = resolve(__dirname, '..')
@@ -245,7 +246,7 @@ test(
 
       // The user sees the family without restarting: workers nested under the manager, reports as
       // received rows rather than raw messages typed by the user.
-      await require('./_diag.cjs').diagnosedClick(page, application, 'Split the work')
+      await openChatFromSidebar(page, 'Split the work')
       await page.getByText('Both chats reported back').first().waitFor({ timeout: 15_000 })
       for (const handle of ['alpha', 'beta'])
         await page.getByText(handle, { exact: true }).first().waitFor({ timeout: 15_000 })
@@ -412,7 +413,7 @@ test(
       )
       if (process.env.SIDEKICK_GROUP_UPGRADE_DEBUG)
         await page.screenshot({ path: resolve(process.env.SIDEKICK_GROUP_UPGRADE_DEBUG) })
-      await require('./_diag.cjs').diagnosedClick(page, application, 'Desktop + API launch')
+      await openChatFromSidebar(page, 'Desktop + API launch')
       await page
         .getByText('Agree on the contract for /v1/projects.')
         .first()
