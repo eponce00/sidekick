@@ -37,7 +37,8 @@ import { TurnChangeReview } from './TurnChangeReview'
 import { changedFilesFromSegments } from '../utils/turnChanges'
 import AgentInteractionCard from './AgentInteractionCard'
 import { resolveToolView } from '../services/uiContributions'
-import { MessageMarkdown } from './MessageMarkdown'
+import { MessageImageGallery, MessageMarkdown } from './MessageMarkdown'
+import { agentShownImages } from '../utils/agentShownImages'
 import { CommandLiveView } from './CommandLiveView'
 import { useFollowBottom } from '../hooks/useFollowBottom'
 import { MessageSources } from './MessageSources'
@@ -700,6 +701,8 @@ function AgentWorkDisclosure({
         )
       : -1
   const current = currentIndex >= 0 ? segments![currentIndex] : undefined
+  // Folded, what the model looked at stays in view; opened, each step shows its own.
+  const shownImages = expanded ? [] : agentShownImages(segments)
 
   return (
     <div className={`agent-work-disclosure ${isLoading ? 'is-working' : 'is-complete'}`}>
@@ -740,6 +743,11 @@ function AgentWorkDisclosure({
               <span className="thinking-step-text">{thinkingPreview(current.content ?? '')}</span>
             </span>
           )}
+        </div>
+      )}
+      {shownImages.length > 0 && (
+        <div className="tool-page-previews agent-work-images">
+          <MessageImageGallery images={shownImages} localImages />
         </div>
       )}
       {children && (

@@ -21,6 +21,8 @@ import { Reveal } from './Reveal'
 import { CommandCopyButton, CommandResultOutput } from './CommandResultOutput'
 import { commandResultFrom } from '../utils/commandResult'
 import { SurfaceImage } from './SurfaceImage'
+import { MessageImageGallery } from './MessageMarkdown'
+import { pdfPagesShownBy } from '../utils/agentShownImages'
 import './ToolExecutionCard.css'
 
 function boundedLines(
@@ -78,6 +80,8 @@ export function ToolExecutionCard({
     dataRecord.previewUrl.startsWith('sidekick-browser://artifact/')
       ? dataRecord.previewUrl
       : null
+  // The PDF pages the agent was shown as images, kept the same way.
+  const pagePreviews = pdfPagesShownBy(tool)
   const expandable = Boolean(
     command || detail || subject || output || tool.changes?.length || tool.diagnostics?.length
   )
@@ -152,6 +156,11 @@ export function ToolExecutionCard({
             fallback={<span className="tool-image-unavailable">Image no longer available</span>}
           />
         </button>
+      )}
+      {pagePreviews.length > 0 && (
+        <div className="tool-page-previews">
+          <MessageImageGallery images={pagePreviews} localImages />
+        </div>
       )}
       <Reveal open={expanded}>
         <div className="tool-execution-detail">

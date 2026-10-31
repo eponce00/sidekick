@@ -40,6 +40,7 @@ import { credentialRedactor } from './credentialRedaction'
 import { executeWorkspaceMutation } from './workspaceMutationService'
 import { WorkspaceReadService } from './workspaceReadService'
 import { pdfPagesLabel, PdfReadError, readPdf } from './pdfReader'
+import { saveViewedImagePreview } from './viewedImagePreviews'
 import { workspaceFileVersion } from '../utils/workspaceFileVersion'
 import { CommandService, type OwnedBackgroundTask } from './commandService'
 import { commandOutputForModel } from './commandOutputForModel'
@@ -1009,13 +1010,19 @@ export class AgentToolRuntime {
       `${pdf.nextPage ? ` | next_page ${pdf.nextPage}` : ''}]
 `
     const bounded = await this.outputs.apply(instructions.content + metadata + pdf.content)
+    const pagePreviews: Array<{ page: number; url: string }> = []
+    for (const { page, image } of pdf.shownPages) {
+      const url = await saveViewedImagePreview(image)
+      if (url) pagePreviews.push({ page, url })
+    }
     return toolExecutionSucceeded({
       title,
       data: {
         path,
         totalPages: pdf.totalPages,
         pagesRead: pdf.pagesRead,
-        pageImages: pdf.media.length
+        pageImages: pdf.media.length,
+        ...(pagePreviews.length ? { pagePreviews } : {})
       },
       modelContent: bounded.content,
       output: bounded.output,

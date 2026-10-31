@@ -32,8 +32,9 @@ transactional workspace mutation service.
 text, up to 20 pages at a time. A model that can see images also gets a picture of the pages whose
 text misses something: scanned pages first, then pages with charts, diagrams or photos, as many as
 its provider takes in one request (four for cloud providers, two for local ones). Reading one or
-two pages by number shows them as pictures. Newer pictures take the place of older ones, and the
-model is told when one has left. A scanned page's words come from the computer's own text
+two pages by number shows them as pictures. The chat shows the pages the model was given as
+thumbnails under its work; click one to enlarge it and move between them. Newer pictures take the
+place of older ones, and the model is told when one has left. A scanned page's words come from the computer's own text
 recognition, so they stay in the conversation: the recognizer built into Windows or macOS, or
 Tesseract on Linux when it is installed. It runs on your computer, and the pages never leave it for
 that.
