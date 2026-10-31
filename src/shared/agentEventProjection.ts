@@ -199,6 +199,8 @@ function liveArtifact(tool: ProjectedToolExecution): ProjectedContentSegment | n
   }
 }
 
+const LIVE_OUTPUT_CHARS = 16_000
+
 export function projectAgentRunEvents(events: readonly AgentRunEvent[]): ProjectedAgentRunMessage {
   // The durable run sequence is the chronology authority. Most callers already
   // provide ordered pages, but projection is also used by live repair paths that
@@ -210,6 +212,7 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       left.id.localeCompare(right.id)
   )
   const tools = new Map<string, ProjectedToolExecution>()
+  const outputTails = new Map<string, { chunks: string[]; length: number }>()
   const artifacts = new Map<string, ProjectedContentSegment>()
   const decisions = new Map<string, Extract<ProjectedContentSegment, { type: 'decision' }>>()
   const interactions = new Map<string, Extract<ProjectedContentSegment, { type: 'interaction' }>>()
@@ -402,11 +405,23 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       }
     }
     if (event.type === 'tool.output.delta') {
-      const tool = tools.get(toolCallId(event))
+      const id = toolCallId(event)
+      const tool = tools.get(id)
       if (tool) {
         const chunk = typeof event.payload.chunk === 'string' ? event.payload.chunk : ''
-        // Keep the live renderer bounded; complete output remains available by handle.
-        tool.output = `${tool.output || ''}${chunk}`.slice(-16_000)
+        // Keep the live renderer bounded; complete output remains available by handle. The tail
+        // keeps whole chunks and is joined once: a command that redraws a progress bar sends
+        // thousands of chunks, and copying the tail for each one froze the window.
+        let tail = outputTails.get(id)
+        if (!tail) {
+          tail = { chunks: tool.output ? [tool.output] : [], length: tool.output?.length ?? 0 }
+          outputTails.set(id, tail)
+        }
+        tail.chunks.push(chunk)
+        tail.length += chunk.length
+        while (tail.chunks.length > 1 && tail.length - tail.chunks[0].length >= LIVE_OUTPUT_CHARS) {
+          tail.length -= tail.chunks.shift()!.length
+        }
       }
     }
     if (event.type === 'permission.requested') {
@@ -465,6 +480,7 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
                 ? 'partial'
                 : 'error'
         tool.title = result.title || tool.title
+        outputTails.delete(id)
         tool.output = result.modelContent
         tool.error = result.error?.message
         tool.data = result.data
@@ -537,6 +553,10 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
         interaction.interaction.response = event.payload.response as Record<string, unknown>
       }
     }
+  }
+  for (const [id, tail] of outputTails) {
+    const tool = tools.get(id)
+    if (tool) tool.output = tail.chunks.join('').slice(-LIVE_OUTPUT_CHARS)
   }
 
   if (phase && ['failed', 'cancelled', 'interrupted'].includes(phase)) {
