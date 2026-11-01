@@ -42,6 +42,10 @@ export interface ProviderInstanceModel {
   supportsTools?: boolean
   supportsVision?: boolean
   supportsReasoning?: boolean
+  /** The reasoning levels the server says the model takes; empty when it offers no choice. */
+  reasoningLevels?: ReasoningLevel[]
+  /** The level the model uses when a request names none, where the server says. */
+  reasoningDefault?: ReasoningLevel
   supportsAudioInput?: boolean
   supportsAudioOutput?: boolean
   supportsPdfInput?: boolean
@@ -95,9 +99,6 @@ export interface ProviderSettings {
   officeHelperInterpreter?: string
   /** Main-owned identity invalidates pending helper requests when configuration changes. */
   officeHelperConfigurationId?: string
-  projectStartHooks?: import('./projectHooks').ProjectStartHook[]
-  projectCompletionHooks?: import('./projectHooks').ProjectStartHook[]
-  projectWorktreeHooks?: import('./projectHooks').ProjectStartHook[]
   providerInstances?: ProviderInstance[]
   openRouterApiKey: string
   ollamaEndpoint: string
@@ -112,8 +113,8 @@ export interface ProviderSettings {
   accentPalette?: string
   /** The look the accent choice was made under; an older one moves to the current default once. */
   accentPaletteVersion?: number
-  /** Semantic conversation text size. Interface zoom remains an independent window control. */
-  contentFontSize?: number
+  /** Size of the whole window in percent, one of `TEXT_SCALES`; Ctrl + and Ctrl − step it. */
+  textScale?: number
   focusChainEnabled?: boolean
   autoCompactEnabled?: boolean
   autoCompactThreshold?: number
@@ -121,6 +122,8 @@ export interface ProviderSettings {
   notificationSoundEnabled?: boolean
   /** Local dictation and read-aloud, and the background download of their models. On unless false. */
   voiceEnabled?: boolean
+  /** Lets the agent operate apps the user approves, on Windows. Off unless true. */
+  computerUseEnabled?: boolean
   /** Lets the agent search the web through public search engines. On unless false. */
   webSearchEnabled?: boolean
   /** Checks GitHub Releases for updates after startup and every six hours. On unless false. */

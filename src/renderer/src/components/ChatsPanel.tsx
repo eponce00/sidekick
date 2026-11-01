@@ -55,7 +55,7 @@ function BranchLine({
       <GitBranch size={12} aria-hidden="true" />
       <span className="chats-panel-branch-name">{worktreeBranchLabel(worktree)}</span>
       {ahead > 0 && (
-        <span className="chats-panel-ahead">
+        <span>
           +{ahead} {ahead === 1 ? 'commit' : 'commits'}
         </span>
       )}
@@ -329,10 +329,17 @@ export function ChatsPanel({
                 This chat will stop reporting to {family.manager.title} and leave its family. Its
                 history and worktree stay.
               </p>
-              <div className="chats-panel-actions">
+              <div className="chats-panel-detach-actions">
                 <button
                   type="button"
-                  className="chats-panel-stop"
+                  className="settings-secondary-action is-small"
+                  onClick={() => setConfirmDetach(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="settings-danger-action is-small"
                   onClick={() => {
                     setConfirmDetach(false)
                     void onDetach(conversationId)
@@ -340,17 +347,16 @@ export function ChatsPanel({
                 >
                   Detach
                 </button>
-                <button type="button" onClick={() => setConfirmDetach(false)}>
-                  Cancel
-                </button>
               </div>
             </>
           ) : (
-            <div className="chats-panel-actions">
-              <button type="button" onClick={() => setConfirmDetach(true)}>
-                Detach from manager
-              </button>
-            </div>
+            <button
+              type="button"
+              className="settings-secondary-action is-small"
+              onClick={() => setConfirmDetach(true)}
+            >
+              Detach from manager
+            </button>
           )}
         </div>
       )}

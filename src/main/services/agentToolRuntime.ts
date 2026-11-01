@@ -2,11 +2,16 @@ import type Database from 'better-sqlite3'
 import { createHash } from 'crypto'
 import { statSync } from 'fs'
 import { delimiter, isAbsolute, join, relative, resolve } from 'path'
-import { stat } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import {
+  locateWorkspacePath,
   OutsideProjectError,
   projectRelativePath,
-  resolveSecureWorkspacePath
+  resolveSecureWorkspacePath,
+  workspaceAbsolutePath,
+  workspaceFolderRoots,
+  workspaceFolders,
+  workspacePathKey
 } from '../utils/workspacePaths'
 import {
   normalizeAgentToolParameters,
@@ -34,6 +39,9 @@ import {
 import { credentialRedactor } from './credentialRedaction'
 import { executeWorkspaceMutation } from './workspaceMutationService'
 import { WorkspaceReadService } from './workspaceReadService'
+import { pdfPagesLabel, PdfReadError, readPdf } from './pdfReader'
+import { saveViewedImagePreview } from './viewedImagePreviews'
+import { workspaceFileVersion } from '../utils/workspaceFileVersion'
 import { CommandService, type OwnedBackgroundTask } from './commandService'
 import { commandOutputForModel } from './commandOutputForModel'
 import type { TerminalModelRead } from './terminalSessions'
@@ -80,6 +88,8 @@ import {
   registerSettingsToolHandlers,
   type AppSettingsToolAccess
 } from './agentSettingsToolHandlers'
+import { registerScheduleToolHandlers, type ScheduleToolAccess } from './agentScheduleToolHandlers'
+import { scheduleToolTitle } from '../../shared/scheduleTools'
 import {
   registerCredentialToolHandlers,
   type CredentialToolAccess
@@ -92,13 +102,17 @@ import type { ArtifactInspectorLike } from './artifactInspector'
 import type { InspectedArtifactType } from '../../shared/artifactInspection'
 import { registerMcpToolHandlers } from './agentMcpToolHandlers'
 import { registerVisionToolHandlers } from './agentVisionToolHandlers'
+import { registerComputerToolHandlers } from './agentComputerToolHandlers'
+import type { ComputerUseService } from './computerUseService'
 import { externalImageApprovalForMode } from './externalImageApproval'
 import type { PermissionMode } from '../../shared/permissions'
 import {
   AgentBrowserSessionManager,
   browserScope,
-  registerBrowserToolHandlers
+  registerBrowserToolHandlers,
+  webMcpCallAccess
 } from './agentBrowserToolHandlers'
+import { webMcpSite } from '../../shared/webMcp'
 import type { NativeBrowserSessionService } from './nativeBrowserSessionService'
 import { shellCommandHint } from './shellCommandHints'
 
@@ -166,15 +180,29 @@ export interface AgentChildRunLauncher {
 export interface AgentToolRuntimeSessionInput {
   permissionMode?: PermissionMode
   runId: string
+  /** The chat the run replies in: what the agent read in its earlier replies still counts. */
+  conversationId?: string
   surface: AgentRunSurface
   workspaceRoot?: string
   webSearchEnabled: boolean
   /** Enable SideKick's built-in visual browser for this model/run. */
   browserEnabled?: boolean
+  /** Operating other apps on this computer. Only ever set from the user's settings. */
+  computer?: { service: ComputerUseService; vision: boolean }
+  /** Page images one PDF read may attach: the provider's image budget, or 0 for a text model. */
+  pageImages?: number
   /** The previous reply made an artifact, so the web-artifacts guidance is already in history. */
   artifactContinuation?: boolean
-  /** This run is an artifact builder: its create_artifact renders directly, never through another builder. */
-  artifactBuilder?: boolean
+  /**
+   * This run is an artifact's builder, starting from this version: its create_artifact renders
+   * directly, never through another builder, and it may edit the version in place.
+   */
+  artifactBuilder?: { type: InspectedArtifactType; title: string; code: string }
+  /** The current version of each artifact earlier replies made, by title, oldest first. */
+  conversationArtifacts?: () => ReadonlyMap<
+    string,
+    { type: InspectedArtifactType; title: string; code: string }
+  >
   editingDialect?: AgentToolCatalogOptions['editingDialect']
   capabilities?: AgentToolCatalogOptions['capabilities']
   persistentSkillIds?: readonly string[]
@@ -183,7 +211,11 @@ export interface AgentToolRuntimeSessionInput {
   goal?: AgentGoalToolHandler
   plan?: AgentPlanToolHandler
   instructionScopeId?: string
-  onWorkspaceWillMutate?: () => Promise<void>
+  /**
+   * Called before a tool may change files, with the project folders it may change: History
+   * captures each one, and another run writing there refuses the change.
+   */
+  onWorkspaceWillMutate?: (folderRoots: readonly string[]) => Promise<void>
 }
 
 export interface AgentToolRuntimeSession {
@@ -207,6 +239,10 @@ function boundedNumber(value: unknown, fallback: number, minimum: number, maximu
 
 /** How long a reply to command input waits for the program to react before reading it. */
 const COMMAND_INPUT_SETTLE_MS = 1_500
+/** Chats whose read receipts are kept for their next reply. */
+const MAX_CONVERSATION_RECEIPTS = 50
+/** The whole file is parsed in memory; the model providers' own PDF limits are 32-50 MB. */
+const MAX_PDF_READ_BYTES = 100 * 1024 * 1024
 
 function backgroundNote(task: OwnedBackgroundTask): string {
   if (task.detached === 'waiting_for_input') {
@@ -298,6 +334,19 @@ export function resolveProgram(
     }
   }
   return null
+}
+
+/** The project folders a change to these paths touches; a path outside them adds none. */
+function mutationFolderRoots(workspaceRoot: string, paths: readonly string[]): string[] {
+  const roots = new Set<string>()
+  for (const path of paths) {
+    try {
+      roots.add(locateWorkspacePath(workspaceRoot, path).root)
+    } catch {
+      // The mutation service refuses it before anything is written.
+    }
+  }
+  return roots.size ? [...roots] : [resolve(workspaceRoot)]
 }
 
 function isInside(path: string, root: string): boolean {
@@ -430,6 +479,7 @@ export class AgentToolRuntime {
   private artifactInspector?: ArtifactInspectorLike
   private appSettings?: AppSettingsToolAccess
   private credentials?: CredentialToolAccess
+  private schedules?: ScheduleToolAccess
   private readonly recordedBackgroundVerification = new Set<string>()
   private readonly backgroundVerificationSnapshots = new Map<string, WorkspaceCommandSnapshot>()
   private readonly languageIntelligence: LanguageIntelligenceService
@@ -452,8 +502,16 @@ export class AgentToolRuntime {
     this.browser = browser ? new AgentBrowserSessionManager(browser) : undefined
   }
 
+  private computerUse: ComputerUseService | undefined
   /** Waits in a run that end when the user sends it a message. */
   private readonly userMessageWaiters = new Map<string, Set<() => void>>()
+  /**
+   * The file versions the agent last read or wrote, per chat and project. Kept per reply, a
+   * follow-up such as "now rename it" was refused for files the agent itself wrote one reply
+   * earlier until it read them again. A version is the file's content hash, so a file changed
+   * since is still refused as stale.
+   */
+  private readonly conversationReceipts = new Map<string, Map<string, string>>()
 
   setChildLauncher(launcher: AgentChildRunLauncher): void {
     this.childLauncher = launcher
@@ -473,30 +531,54 @@ export class AgentToolRuntime {
     this.credentials = access
   }
 
-  async beginBrowserHumanTakeover(conversationId: string, expectedSessionId: string) {
-    if (!this.browser) throw new Error('Visual browser is unavailable')
-    return this.browser.beginHumanTakeover(conversationId, expectedSessionId)
+  /** Lets the agent list the user's schedules and, with approval each time, change them. */
+  setSchedules(access: ScheduleToolAccess): void {
+    this.schedules = access
   }
 
-  async completeBrowserHumanTakeover(conversationId: string, expectedSessionId: string) {
-    if (!this.browser) throw new Error('Visual browser is unavailable')
-    return this.browser.completeHumanTakeover(conversationId, expectedSessionId)
+  private receiptsFor(input: AgentToolRuntimeSessionInput): Map<string, string> {
+    if (!input.conversationId || !input.workspaceRoot) return new Map()
+    const key = `${input.conversationId}|${input.workspaceRoot}`
+    const receipts = this.conversationReceipts.get(key) ?? new Map<string, string>()
+    // Most recently used last; only the latest chats are kept.
+    this.conversationReceipts.delete(key)
+    this.conversationReceipts.set(key, receipts)
+    while (this.conversationReceipts.size > MAX_CONVERSATION_RECEIPTS) {
+      this.conversationReceipts.delete(this.conversationReceipts.keys().next().value!)
+    }
+    return receipts
+  }
+
+  /**
+   * Drops what a chat's replies read or wrote. A rewind, retry or edit takes those replies out of
+   * the history, so the next reply must read a file again before changing it even when the file's
+   * content is unchanged.
+   */
+  forgetConversation(conversationId: string): void {
+    const prefix = `${conversationId}|`
+    for (const key of [...this.conversationReceipts.keys()]) {
+      if (key.startsWith(prefix)) this.conversationReceipts.delete(key)
+    }
   }
 
   async createSession(input: AgentToolRuntimeSessionInput): Promise<AgentToolRuntimeSession> {
     const activeSkillIds = new Set(input.persistentSkillIds ?? [])
     const officeSession = this.officeHelpers?.session(input.workspaceRoot)
-    const readReceipts = new Map<string, string>()
+    const readReceipts = this.receiptsFor(input)
     const mcpByFunction = new Map<string, McpToolInfo>()
     const enabledMcpByFunction = new Map<string, McpToolInfo>()
     const baselineRevision = this.verification.beginSession(input.workspaceRoot)
-    const intelligenceStatus = input.workspaceRoot
-      ? this.languageIntelligence.workspaceStatus(input.workspaceRoot)
-      : null
-    const codeIntelligenceAvailable = intelligenceStatus?.available === true
+    // Every project folder can start its own language servers; one the project ships itself runs
+    // its code, so any such folder makes the tool a command.
+    const intelligenceStatuses = input.workspaceRoot
+      ? workspaceFolderRoots(input.workspaceRoot).map((root) =>
+          this.languageIntelligence.workspaceStatus(root)
+        )
+      : []
+    const codeIntelligenceAvailable = intelligenceStatuses.some((status) => status.available)
     const sessionState: AgentToolRuntimeSessionState = {
-      codeIntelligenceRisk: intelligenceStatus?.availableServers.some(
-        (server) => server.origin === 'workspace'
+      codeIntelligenceRisk: intelligenceStatuses.some((status) =>
+        status.availableServers.some((server) => server.origin === 'workspace')
       )
         ? 'execute'
         : 'read',
@@ -515,6 +597,12 @@ export class AgentToolRuntime {
       credentials: () => this.credentials?.uses
     })
     registerVisionToolHandlers(handlers, externalImageApprovalForMode(input.permissionMode))
+    if (input.computer) {
+      this.computerUse = input.computer.service
+      registerComputerToolHandlers(handlers, input.computer.service, this.outputs, {
+        vision: input.computer.vision
+      })
+    }
     if (input.browserEnabled === true && this.browser) {
       registerBrowserToolHandlers(handlers, this.browser, this.outputs, {
         credentials: () => this.credentials?.uses
@@ -522,6 +610,11 @@ export class AgentToolRuntime {
     }
     registerConversationToolHandlers(handlers, this.db, { goal: input.goal, plan: input.plan })
     if (this.appSettings) registerSettingsToolHandlers(handlers, this.appSettings)
+    const scheduleTools = this.schedules
+      ? registerScheduleToolHandlers(handlers, this.schedules, {
+          permissionMode: input.permissionMode
+        })
+      : undefined
     if (this.credentials) registerCredentialToolHandlers(handlers, this.credentials)
     registerSkillToolHandlers(handlers, {
       activeSkillIds,
@@ -533,7 +626,9 @@ export class AgentToolRuntime {
       visionEnabled: input.browserEnabled === true,
       artifactContinuation: input.artifactContinuation === true,
       // A chat's artifacts are refined out of sight; a builder renders its own directly.
-      buildArtifacts: input.surface === 'conversation' && input.artifactBuilder !== true
+      buildArtifacts: input.surface === 'conversation' && !input.artifactBuilder,
+      builderArtifact: input.artifactBuilder,
+      conversationArtifacts: input.conversationArtifacts
     })
     handlers.register(
       ['office_preflight', 'office_validate'],
@@ -636,6 +731,7 @@ export class AgentToolRuntime {
       workspaceRoot: input.workspaceRoot,
       webSearchEnabled: input.webSearchEnabled,
       browserEnabled: input.browserEnabled === true && Boolean(this.browser),
+      computerEnabled: Boolean(input.computer),
       activeSkillIds: [...activeSkillIds],
       officeHelpersAvailable: officeSession?.available() ?? false,
       capabilities: input.capabilities,
@@ -688,7 +784,11 @@ export class AgentToolRuntime {
         },
         title: (name, args) => this.title(name, args),
         safeArguments: safeToolArguments,
-        approvalPreview: (name, args) => handlers.preview(name, args),
+        approvalPreview: (name, args, context) => handlers.preview(name, args, context),
+        requestedAccess: (name, args, context) =>
+          name === 'browser_call_webmcp_tool' && this.browser
+            ? webMcpCallAccess(this.browser, browserScope(context), args, context)
+            : scheduleTools?.requestedAccess(name, args, context),
         credentialApproval: (name, args, context) => {
           const uses = this.credentials?.uses
           return uses
@@ -705,13 +805,21 @@ export class AgentToolRuntime {
             this.credentials?.uses?.denied(request)
           }
         },
-        releaseRun: (runId) => this.credentials?.uses?.releaseRun(runId),
+        releaseRun: (runId) => {
+          this.credentials?.uses?.releaseRun(runId)
+          input.computer?.service.runEnded(input.conversationId ?? runId)
+        },
         ...(this.browser
           ? {
-              reserveBrowserHumanTakeover: (conversationId: string) =>
-                this.browser!.reserveHumanTakeover(conversationId),
-              releaseBrowserHumanTakeover: (conversationId: string, expectedSessionId: string) =>
-                this.browser!.releaseHumanTakeover(conversationId, expectedSessionId)
+              reserveBrowserForHumanCheck: (conversationId: string) =>
+                this.browser!.reserveForHumanCheck(conversationId),
+              waitForBrowserHumanCheck: (
+                conversationId: string,
+                expectedSessionId: string,
+                signal: AbortSignal
+              ) => this.browser!.waitForHumanCheck(conversationId, expectedSessionId, signal),
+              releaseBrowserHumanCheck: (conversationId: string, expectedSessionId: string) =>
+                this.browser!.releaseHumanCheck(conversationId, expectedSessionId)
             }
           : {})
       }
@@ -750,7 +858,12 @@ export class AgentToolRuntime {
     // installed program the user allowed or approved.
     const program = simpleCommandProgram(command)
     const found = program ? resolveProgram(program, where.cwd) : null
-    if (found && [where.workspaceRoot, where.cwd].some((root) => isInside(found, root))) {
+    if (
+      found &&
+      [...workspaceFolderRoots(where.workspaceRoot), where.cwd].some((root) =>
+        isInside(found, root)
+      )
+    ) {
       return refuse(
         `${program} would run ${relative(where.workspaceRoot, found) || found}, a file in this project rather than an installed program, so it is not given credentials.`,
         true
@@ -793,6 +906,8 @@ export class AgentToolRuntime {
       return `Change SideKick setting ${stringArg(args, 'key')}`.trim()
     }
     if (name === SETTINGS_READ_TOOL) return 'Read SideKick settings'
+    const scheduleTitle = scheduleToolTitle(name, args)
+    if (scheduleTitle) return scheduleTitle
     if (name === PROVIDER_REQUEST_KEY_TOOL) return 'Ask for a provider key in Settings'
     if (name === 'read') return `Read ${stringArg(args, 'path', '.')}`
     if (name === 'code_intelligence') {
@@ -809,7 +924,10 @@ export class AgentToolRuntime {
     if (name === 'browser_click')
       return `Click ${stringArg(args, 'text') || stringArg(args, 'selector') || stringArg(args, 'ref') || 'browser element'}`
     if (name === 'browser_hold') return 'Press and hold browser control'
-    if (name === 'browser_request_human') return 'Human browser verification'
+    if (name === 'browser_request_human') {
+      const reason = stringArg(args, 'reason')
+      return reason ? `Waiting for you in the browser: ${reason}` : 'Waiting for you in the browser'
+    }
     if (name === 'browser_type') return 'Type in browser'
     if (name === 'browser_select') return 'Select browser option'
     if (name === 'browser_fill_form') return 'Fill browser form'
@@ -832,6 +950,10 @@ export class AgentToolRuntime {
     if (name === 'browser_evaluate') return 'Inspect page state'
     if (name === 'browser_verify') return `Verify ${stringArg(args, 'criterion', 'UI visually')}`
     if (name === 'browser_close') return 'Close browser'
+    if (name === 'browser_list_webmcp_tools') return 'List page tools'
+    if (name === 'browser_call_webmcp_tool') {
+      return `Call ${stringArg(args, 'tool', 'page tool')} on ${webMcpSite(stringArg(args, 'origin'))}`
+    }
     if (name === 'use_skill') return `Load ${stringArg(args, 'skill_id')} skill`
     if (name === 'update_goal') {
       return args.status === 'complete' ? 'Complete goal' : 'Report goal blocker'
@@ -841,6 +963,86 @@ export class AgentToolRuntime {
     if (name === 'complete_plan') return 'Complete plan contract'
     if (name === 'wait') return agentWaitTitle(args)
     return name.replaceAll('_', ' ')
+  }
+
+  /** A PDF's pages as text, with images of the pages text alone misses; null for a folder. */
+  private async readPdfFile(
+    input: AgentToolRuntimeSessionInput,
+    readReceipts: Map<string, string>,
+    title: string,
+    path: string,
+    args: Record<string, unknown>,
+    context: AgentToolExecutionContext
+  ): Promise<ToolExecutionResult | null> {
+    const workspace = this.requireWorkspace(input)
+    const fullPath = await resolveSecureWorkspacePath(workspace, path)
+    const info = await stat(fullPath)
+    if (!info.isFile()) return null
+    if (info.size > MAX_PDF_READ_BYTES)
+      throw new AgentToolExecutionError(
+        'unsupported',
+        `${path} is larger than ${MAX_PDF_READ_BYTES / 1024 / 1024} MB, too large to read here.`,
+        false,
+        'Split it into smaller files with the PDF skill, or ask the user which part matters.',
+        'change_strategy'
+      )
+    const bytes = await readFile(fullPath)
+    const version = workspaceFileVersion(info)
+    readReceipts.set(workspacePathKey(projectRelativePath(workspace, path)), version)
+    let pdf: Awaited<ReturnType<typeof readPdf>>
+    try {
+      pdf = await readPdf(bytes, {
+        pages: stringArg(args, 'pages') || undefined,
+        maxTokens: DEFAULT_TOOL_OUTPUT_TOKENS - 1_024,
+        imageBudget: input.pageImages ?? 0,
+        label: path,
+        signal: context.signal
+      })
+    } catch (error) {
+      if (!(error instanceof PdfReadError)) throw error
+      throw error.code === 'pages'
+        ? new AgentToolExecutionError(
+            'invalid_arguments',
+            error.message,
+            false,
+            undefined,
+            'correct_input'
+          )
+        : new AgentToolExecutionError(
+            'unsupported',
+            error.message,
+            false,
+            error.code === 'password'
+              ? 'Ask the user for an unlocked copy; never guess or crack the password.'
+              : undefined,
+            'change_strategy'
+          )
+    }
+    const instructions = await this.scopedInstructions(input, path, false, false)
+    const metadata =
+      `[PDF: ${path} | ${pdf.totalPages} page${pdf.totalPages === 1 ? '' : 's'}` +
+      ` | read ${pdfPagesLabel(pdf.pagesRead)} | version ${version}` +
+      `${pdf.nextPage ? ` | next_page ${pdf.nextPage}` : ''}]
+`
+    const bounded = await this.outputs.apply(instructions.content + metadata + pdf.content)
+    const pagePreviews: Array<{ page: number; url: string }> = []
+    for (const { page, image } of pdf.shownPages) {
+      const url = await saveViewedImagePreview(image)
+      if (url) pagePreviews.push({ page, url })
+    }
+    return toolExecutionSucceeded({
+      title,
+      data: {
+        path,
+        totalPages: pdf.totalPages,
+        pagesRead: pdf.pagesRead,
+        pageImages: pdf.media.length,
+        ...(pagePreviews.length ? { pagePreviews } : {})
+      },
+      modelContent: bounded.content,
+      output: bounded.output,
+      media: pdf.media
+    })
   }
 
   private async success(
@@ -912,6 +1114,10 @@ export class AgentToolRuntime {
     const title = this.title(name, args)
     if (name === 'read') {
       const path = stringArg(args, 'path', '.')
+      if (/\.pdf$/i.test(path)) {
+        const pdf = await this.readPdfFile(input, readReceipts, title, path, args, context)
+        if (pdf) return pdf
+      }
       const result = await this.workspaceReads.readPath(this.requireWorkspace(input), path, {
         startLine: args.start_line as number | undefined,
         endLine: args.end_line as number | undefined,
@@ -931,14 +1137,27 @@ export class AgentToolRuntime {
       )
       if (result.kind === 'directory') {
         const metadata = `[Directory: ${path} | next_cursor ${result.nextCursor ?? 'none'}]\n`
+        // The project root lists the primary folder; the other folders are read by their names.
+        const located = locateWorkspacePath(this.requireWorkspace(input), path)
+        const others =
+          !located.folder && !located.path && !args.cursor
+            ? workspaceFolders(this.requireWorkspace(input)).map(({ name }) => `${name}/`)
+            : []
+        const otherFolders = others.length
+          ? `\n[Other project folders, read as <name>/path: ${others.join(', ')}]`
+          : ''
         return this.success(
           title,
           result,
-          instructions.content + metadata + result.files.join('\n')
+          instructions.content + metadata + result.files.join('\n') + otherFolders
         )
       }
-      // Keyed like change records, so ./a.ts, an absolute path and a.ts share one receipt.
-      readReceipts.set(projectRelativePath(this.requireWorkspace(input), path), result.version)
+      // Keyed like change records, so ./a.ts, an absolute path, src/../a.ts and (where names
+      // ignore case) A.ts share one receipt.
+      readReceipts.set(
+        workspacePathKey(projectRelativePath(this.requireWorkspace(input), path)),
+        result.version
+      )
       if (result.binary) {
         // A receipt without text: the agent may now delete or replace the file through the
         // mutation service, instead of falling back to the shell.
@@ -954,8 +1173,14 @@ export class AgentToolRuntime {
         )
       }
       if (input.workspaceRoot) this.languageIntelligence.observeFile(input.workspaceRoot, path)
+      const lines =
+        result.totalLines === 0
+          ? 'empty'
+          : result.startLine > result.totalLines
+            ? `start_line ${result.startLine} is past the end; the file has ${result.totalLines} lines`
+            : `lines ${result.startLine}-${result.endLine} of ${result.totalLines}`
       const metadata =
-        `[File: ${path} | lines ${result.startLine}-${result.endLine} of ${result.totalLines}` +
+        `[File: ${path} | ${lines}` +
         ` | version ${result.version}${result.nextLine ? ` | next_line ${result.nextLine}` : ''}]\n`
       const continuation = result.nextLine
         ? `\n[Showing lines ${result.startLine}-${result.endLine} of ${result.totalLines}. ` +
@@ -992,8 +1217,8 @@ export class AgentToolRuntime {
         )
         const checkedPaths = changedPaths.filter(
           (path) =>
-            resolve(this.requireWorkspace(input), path) ===
-            resolve(this.requireWorkspace(input), filePath)
+            workspaceAbsolutePath(this.requireWorkspace(input), path) ===
+            workspaceAbsolutePath(this.requireWorkspace(input), filePath)
         )
         if (checkedPaths.length) {
           this.verification.recordDiagnostics(
@@ -1026,7 +1251,9 @@ export class AgentToolRuntime {
             'New directory-scoped project instructions apply. Review them, re-read the target if needed, then retry the mutation.'
         )
       }
-      await input.onWorkspaceWillMutate?.()
+      await input.onWorkspaceWillMutate?.(
+        mutationFolderRoots(this.requireWorkspace(input), workspaceMutationTargetPaths(request))
+      )
       const result = await executeWorkspaceMutation(this.requireWorkspace(input), request, {
         requireReadReceipt: true,
         expectedVersions: Object.fromEntries(readReceipts)
@@ -1048,7 +1275,8 @@ export class AgentToolRuntime {
           /^Invalid (?:patch|Add File|Delete File|Update File|hunk)/i.test(result.error || '')
         return toolExecutionFailed({
           title,
-          code: patchSyntax ? 'invalid_arguments' : stale ? 'stale_read' : 'conflict',
+          code:
+            patchSyntax || correctable ? 'invalid_arguments' : stale ? 'stale_read' : 'conflict',
           message: result.error || 'Workspace mutation failed',
           retryable: true,
           recoveryAction:
@@ -1078,15 +1306,16 @@ export class AgentToolRuntime {
       }
       for (const file of result.files) {
         const previousPath = file.path.replaceAll('\\', '/')
-        if (file.action === 'delete' || file.action === 'move') readReceipts.delete(previousPath)
+        if (file.action === 'delete' || file.action === 'move')
+          readReceipts.delete(workspacePathKey(previousPath))
         const currentPath = (file.movePath || file.path).replaceAll('\\', '/')
         if (file.action !== 'delete') {
           const version = await this.workspaceReads.getFileVersion(
             this.requireWorkspace(input),
             currentPath
           )
-          if (version) readReceipts.set(currentPath, version)
-          else readReceipts.delete(currentPath)
+          if (version) readReceipts.set(workspacePathKey(currentPath), version)
+          else readReceipts.delete(workspacePathKey(currentPath))
         }
       }
       const changes: ToolWorkspaceChange[] = result.files.map((file) => ({
@@ -1151,9 +1380,10 @@ export class AgentToolRuntime {
     if (name === 'shell') {
       const command = stringArg(args, 'command')
       const workspaceRoot = this.requireWorkspace(input)
+      const cwdFolder = locateWorkspacePath(workspaceRoot, stringArg(args, 'cwd'))
       const secrets = this.commandSecrets(title, command, args.secrets, context, {
         workspaceRoot,
-        cwd: resolve(workspaceRoot, stringArg(args, 'cwd') || '.')
+        cwd: resolve(cwdFolder.root, cwdFolder.path || '.')
       })
       if ('refused' in secrets) return secrets.refused
       const instructions = await this.scopedInstructions(input, stringArg(args, 'cwd'), true, true)
@@ -1170,7 +1400,8 @@ export class AgentToolRuntime {
       // still-valid receipts; an actually changed file is rejected as stale without forcing
       // redundant reads after every diagnostic command.
       const verificationSnapshot = this.verification.captureCommandWorkspace(workspaceRoot, command)
-      await input.onWorkspaceWillMutate?.()
+      // A command may write anywhere, but History keeps the folders it starts in.
+      await input.onWorkspaceWillMutate?.([...new Set([resolve(workspaceRoot), cwdFolder.root])])
       const commandStartedAt = Date.now()
       const result = await this.commands.execute({
         runId: context.runId,
@@ -1318,6 +1549,13 @@ export class AgentToolRuntime {
         pattern
       })
       if (!read) {
+        if (this.commands.ownsCommand(taskId, commandScope)) {
+          return this.success(
+            title,
+            { id: taskId, state: 'starting' },
+            `Task ${taskId}: starting\nNo output yet.`
+          )
+        }
         return toolExecutionFailed({ title, code: 'not_found', message: 'Command output is gone' })
       }
       if (!terminalSessionIsLive(read.state)) this.commands.markSeen(taskId)
@@ -1361,7 +1599,7 @@ export class AgentToolRuntime {
     }
     if (input.sessions && (SESSION_TOOL_NAMES as readonly string[]).includes(name)) {
       if (name === 'import_attachment') {
-        await input.onWorkspaceWillMutate?.()
+        await input.onWorkspaceWillMutate?.([resolve(this.requireWorkspace(input))])
         readReceipts.clear()
       }
       return this.success(title, await input.sessions.execute(name, args, context))
@@ -1419,6 +1657,26 @@ export class AgentToolRuntime {
       taskIds.length
         ? taskIds.includes(session.id)
         : Boolean(context.conversationId) && session.conversationId === context.conversationId
+    // What happened before the call never fires again: a prompt shown, or a ready line printed,
+    // while the model wrote its call left the wait sleeping out its whole time.
+    const prompting = taskIds
+      .map((id) => terminals.get(id))
+      .find((session) => session?.state === 'waiting_for_input')
+    if (prompting)
+      return this.waitResult(title, { woke: 'waiting_for_input', task: prompting }, 0, 0)
+    if (pattern) {
+      const candidates = taskIds.length
+        ? taskIds.map((id) => terminals.get(id)).filter((session) => session !== undefined)
+        : terminals.list(context.conversationId).filter(relevant)
+      for (const session of candidates.filter((candidate) =>
+        terminalSessionIsLive(candidate.state)
+      )) {
+        const unread = (await terminals.unreadLines(session.id)).join('\n')
+        if (pattern.test(credentialRedactor.redact(unread))) {
+          return this.waitResult(title, { woke: 'pattern_matched', task: session }, 0, 0)
+        }
+      }
+    }
     const printed = new Map<string, string>()
     const result = await waitForAgentDelay<WaitWake>(args.seconds ?? (conditional ? 600 : 30), {
       signal: context.signal,
@@ -1524,6 +1782,10 @@ export class AgentToolRuntime {
   }
 
   async close(): Promise<void> {
-    await Promise.all([this.languageIntelligence.close(), this.browser?.dispose()])
+    await Promise.all([
+      this.languageIntelligence.close(),
+      this.browser?.dispose(),
+      this.computerUse?.close()
+    ])
   }
 }

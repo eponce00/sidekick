@@ -76,6 +76,20 @@ export class RunSlots {
 
   async acquire(request: RunSlotRequest): Promise<RunLease> {
     await this.take(request, false)
+    return this.lease(request)
+  }
+
+  /**
+   * Takes free slots for work that can wait, such as summarizing an idle chat ahead of time, or
+   * returns null when they are in use or anyone is waiting for one.
+   */
+  tryAcquire(request: Omit<RunSlotRequest, 'signal' | 'onQueued'>): RunLease | null {
+    if (this.queue.length || !this.fits(request.providerKey, request.providerLimit)) return null
+    this.hold(request.providerKey)
+    return this.lease({ ...request, signal: new AbortController().signal })
+  }
+
+  private lease(request: RunSlotRequest): RunLease {
     let held = true
     let ended = false
     const giveBack = (): void => {

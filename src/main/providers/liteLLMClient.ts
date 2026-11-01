@@ -12,6 +12,7 @@ import {
   isChatModelMode,
   positiveInteger
 } from './modelCatalog'
+import { liteLLMReasoning } from './reasoningCapabilities'
 
 type FetchImplementation = typeof fetch
 
@@ -93,7 +94,12 @@ export function normalizeOpenAIModelMetadata(model: OpenAICompatibleModel): Prov
     boolean(info.supports_function_calling) ??
     (params.includes('tools') || params.includes('functions') ? true : undefined)
   const supportsVision = boolean(model.supports_vision) ?? boolean(info.supports_vision)
-  const supportsReasoning = boolean(model.supports_reasoning) ?? boolean(info.supports_reasoning)
+  // A gateway's model info says which effort levels each deployment takes.
+  const reasoning = liteLLMReasoning({
+    ...info,
+    ...Object.fromEntries(Object.entries(model).filter(([, value]) => value !== undefined))
+  } as Record<string, unknown>)
+  const supportsReasoning = reasoning.supportsReasoning
   const supportsAudioInput =
     boolean(model.supports_audio_input) ?? boolean(info.supports_audio_input)
   const supportsAudioOutput =
@@ -128,6 +134,8 @@ export function normalizeOpenAIModelMetadata(model: OpenAICompatibleModel): Prov
     supportsTools,
     supportsVision,
     supportsReasoning,
+    reasoningLevels: reasoning.reasoningLevels,
+    reasoningDefault: reasoning.reasoningDefault,
     supportsAudioInput,
     supportsAudioOutput,
     supportsPdfInput,

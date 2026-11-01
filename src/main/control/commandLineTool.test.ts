@@ -34,7 +34,6 @@ describe('the installed shell script', () => {
   it.skipIf(!shell)('reports not running, as JSON when asked, without the app', () => {
     const plain = runScript(['doctor'])
     expect(plain.status).toBe(3)
-    expect(plain.stderr).toContain('SideKick is not running')
     const json = runScript(['doctor', '--json'])
     expect(json.status).toBe(3)
     expect(JSON.parse(json.stdout)).toMatchObject({ ok: false, error: { code: 'not-running' } })

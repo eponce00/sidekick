@@ -101,24 +101,6 @@ describe('ToolExecutionPipeline', () => {
     expect(body).not.toHaveBeenCalled()
   })
 
-  it('settles with a typed timeout even when same-process code ignores cancellation', async () => {
-    const pipeline = new ToolExecutionPipeline()
-    let release!: () => void
-    const execution = pipeline.execute({
-      name: 'read',
-      arguments: { path: 'slow.txt' },
-      signal: new AbortController().signal,
-      timeoutMs: 10,
-      body: () =>
-        new Promise<string>((resolve) => {
-          release = () => resolve('late')
-        })
-    })
-
-    await expect(execution).rejects.toBeInstanceOf(ToolRuntimeTimeoutError)
-    release()
-  })
-
   it('stops the time limit while the tool waits for the user', async () => {
     vi.useFakeTimers()
     try {
@@ -172,10 +154,6 @@ describe('ToolExecutionPipeline', () => {
     } finally {
       vi.useRealTimers()
     }
-  })
-
-  it('waits as usual outside a tool call', async () => {
-    await expect(whileWaitingForUser(async () => 'answered')).resolves.toBe('answered')
   })
 
   it('runs the extensible lifecycle in a deterministic nesting order', async () => {

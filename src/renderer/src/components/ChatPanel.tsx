@@ -3,19 +3,16 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { AlertTriangle, ArrowUpRight, X } from 'lucide-react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
 import { endDictation } from '../services/voice/dictationControl'
-import {
-  stopVoiceLoop,
-  voiceLoopReplyFinished,
-  voiceLoopReplyStarted,
-  voiceLoopSent
-} from '../services/voice/voiceLoop'
-import { finalAnswerText } from '../utils/segmentGrouping'
 import { useAutoFocus } from '../hooks/useAutoFocus'
 import { useOutsideClick } from '../hooks/useOutsideClick'
+import { useChatFolder } from '../hooks/useChatFolder'
+import { useProjectFolders } from '../hooks/useProjectFolders'
+import type { WorkspaceFolder } from '../../../shared/projects'
 import {
   RunAlreadyActiveError,
   useConversationRun,
   type DuringRunSubmission,
+  type PendingRunMessageItem,
   type SendConversationMessageOptions
 } from '../hooks/useConversationRun'
 import { useConversationMessages } from '../hooks/useConversationMessages'
@@ -40,12 +37,14 @@ import {
   type ReasoningSettings
 } from '../../../shared/reasoning'
 import type { ProviderKind } from '../../../shared/providerRegistry'
+import { providerImageProfile } from '../../../shared/imagePreparation'
 import { ChatInput } from './ChatInput'
 import ConfirmDialog from './ConfirmDialog'
 import { WorkspaceMemoryModal } from './WorkspaceMemoryModal'
 import type { TodoItem } from '../../../shared/types'
 import type { PermissionMode } from '../../../shared/permissions'
 import type { ConversationTitleSource } from '../../../shared/conversationTitles'
+import { modelNameFromId } from '../../../shared/conversationModels'
 import type { ConversationRunMode } from '../../../shared/agentRunApi'
 import type { Message } from '../types/chat.types'
 import type { PinnedModel } from '../types/models.types'
@@ -71,14 +70,18 @@ import {
 import { createConversationTitleMessages } from '../services/prompts'
 import { MAX_MESSAGE_IMAGES, type MessageImageAttachment } from '../../../shared/messageImages'
 import {
+  MAX_ATTACHED_FILE_BYTES,
   MAX_MESSAGE_CONTEXT_ATTACHMENTS,
   pastedTextBudget,
   createPastedTextAttachment,
   createReviewCommentAttachment,
+  isBrowserAnnotationAttachment,
   isPastedTextAttachment,
   isProjectContextAttachment,
   isReviewCommentAttachment,
+  type BrowserAnnotationAttachment,
   type MessageContextAttachment,
+  type ProjectContextAttachment,
   type ReviewCommentInput
 } from '../../../shared/messageContextAttachments'
 import { fileToMessageImage } from '../utils/messageImageAttachments'
@@ -87,7 +90,7 @@ import { composerDraftKey, useComposerDraft } from '../hooks/useComposerDraft'
 import { ReviewCommentSinkContext } from '../hooks/useReviewCommentSink'
 import { SubAgentNavigation, type SubAgentTarget } from './subAgentNavigation'
 import { SubAgentView } from './SubAgentView'
-import { WorkspaceBar, WorktreeChip } from './WorkspaceBar'
+import { ProjectChoiceChip, WorkspaceBar, WorktreeChip } from './WorkspaceBar'
 import { WorkspaceBusyDialog, type WorkspaceBusyChoice } from './WorkspaceBusyDialog'
 import { rememberWorkInChoice, storedWorkInChoice } from '../hooks/useManagedWorktrees'
 import type { ComposerDraft } from '../services/composerDrafts'
@@ -111,7 +114,11 @@ interface ChatPanelProps {
   conversationId: string | null
   conversationTitle: string | null
   welcomeSuggestions: readonly WelcomeSuggestion[]
+  /** The context meter, drawn among the composer's run controls. */
+  contextMeter?: React.ReactNode
   workspaceFolder: string | null
+  /** The project's other folders, as the sidebar lists them. */
+  projectFolders?: readonly WorkspaceFolder[]
   projectName: string | null
   projectId?: string | null
   /** Set when the chat's project is one of SideKick's worktrees. */
@@ -144,6 +151,8 @@ interface ChatPanelProps {
   focusChainEnabled?: boolean
   toolCallLimit?: number
   commandPermissionMode?: PermissionMode
+  /** Changes the permission mode every chat uses, from the composer. */
+  onPermissionModeChange?: (mode: PermissionMode) => void
   userLocation?: { city?: string; country?: string; timezone?: string }
   onResponseComplete?: (message: string) => void
   /** Changes when the user asked to see this conversation's newest reply. */
@@ -153,10 +162,6 @@ interface ChatPanelProps {
   /** Chosen reasoning levels, and the older switches that seed a model's first level. */
   reasoningSettings?: ReasoningSettings
   onReasoningLevelChange: (modelId: string, level: ReasoningLevel) => void
-  onCheckpointCreated?: (restoredHash?: string) => void
-  /** When set to a checkpoint hash, rolls back this conversation to that checkpoint */
-  chatRollbackHash?: string | null
-  onChatRollbackConsumed?: () => void
   /** Opens another chat, as when a worker's chip or its manager's breadcrumb is clicked. */
   onOpenConversation?: (conversationId: string) => void
 }
@@ -165,12 +170,23 @@ interface ChatPanelProps {
 function conversationTitlePrompt(message: Message): string {
   const pasted = message.attachments?.find(isPastedTextAttachment)
   const review = message.attachments?.find(isReviewCommentAttachment)
+  const mark = message.attachments?.find(isBrowserAnnotationAttachment)
   return (
     message.content ||
     pasted?.content.slice(0, 1_000) ||
     review?.comment ||
+    mark?.note ||
     message.images?.[0]?.name ||
     'Image conversation'
+  )
+}
+
+/** What the chat holds: the prompt sent, and the reply, estimated at about four characters a token
+ *  while it streams and its count is not known yet. */
+function contextTokens(usage: NonNullable<Message['tokenUsage']>): number {
+  return (
+    usage.promptTokens +
+    (usage.completionTokens || Math.round((usage.streaming?.characters ?? 0) / 4))
   )
 }
 
@@ -180,7 +196,9 @@ function ChatPanel({
   conversationId,
   conversationTitle,
   welcomeSuggestions,
+  contextMeter,
   workspaceFolder,
+  projectFolders,
   projectName,
   projectId = null,
   worktree = null,
@@ -200,6 +218,8 @@ function ChatPanel({
   onTokenCountUpdate,
   onConversationCostUpdate,
   onFocusChainUpdate,
+  commandPermissionMode = 'full-access',
+  onPermissionModeChange,
   userLocation,
   onResponseComplete,
   focusReplyAt,
@@ -207,18 +227,27 @@ function ChatPanel({
   fastModelName,
   reasoningSettings = {},
   onReasoningLevelChange,
-  onCheckpointCreated,
-  chatRollbackHash,
-  onChatRollbackConsumed,
   onOpenConversation
 }: ChatPanelProps): React.JSX.Element {
-  const { messages, setMessages, messagesRef, skipNextLoadRef } = useConversationMessages({
+  const {
+    messages,
+    setMessages,
+    messagesRef,
+    skipNextLoadRef,
+    loaded: messagesLoaded
+  } = useConversationMessages({
     conversationId,
-    rollbackHash: chatRollbackHash,
-    onRollbackConsumed: onChatRollbackConsumed,
     onCostUpdate: onConversationCostUpdate
   })
   const selectedPinnedModel = pinnedModels.find((model) => model.id === selectedModel)
+  // This chat's model was removed or turned off. The chat asks for another rather than quietly
+  // running on a different one.
+  const unavailableModelName =
+    selectedModel && !selectedPinnedModel ? modelNameFromId(selectedModel) : null
+  // Read as each reply starts, so a message queued under a running reply goes to the model chosen
+  // since, not the one the running reply started with.
+  const chatModelRef = useRef({ id: selectedModel, model: selectedPinnedModel })
+  chatModelRef.current = { id: selectedModel, model: selectedPinnedModel }
   const selectedContextLength = selectedPinnedModel?.contextLength ?? 32_768
   const tokenCountUpdateRef = useRef(onTokenCountUpdate)
   tokenCountUpdateRef.current = onTokenCountUpdate
@@ -273,7 +302,7 @@ function ChatPanel({
       }
     }
     tokenCountUpdateRef.current?.(
-      latestUsage ? latestUsage.promptTokens + latestUsage.completionTokens : 0,
+      latestUsage ? contextTokens(latestUsage) : 0,
       selectedContextLength
     )
   }, [messages, openSubAgent, selectedContextLength])
@@ -292,6 +321,34 @@ function ChatPanel({
     attachments: attachedContext
   })
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  // Places marked on this chat's browser pages. The main process holds them until a message
+  // takes them, so the chips follow its list.
+  const [browserMarks, setBrowserMarks] = useState<BrowserAnnotationAttachment[]>([])
+  const submitFromPageRef = useRef<() => void>(() => undefined)
+  useEffect(() => {
+    setBrowserMarks([])
+    if (!conversationId) return
+    let stopped = false
+    const load = (): void => {
+      void window.api.agentRuns
+        .browserAnnotations({ conversationId, action: 'list' })
+        .then((marks) => {
+          if (!stopped) setBrowserMarks(marks)
+        })
+        .catch(() => undefined)
+    }
+    load()
+    const stop = window.api.agentRuns.onBrowserAnnotationsChanged((change) => {
+      if (change.conversationId !== conversationId || change.error) return
+      // Send on the page sends this chat's message, with the marks, as its send button would.
+      if (change.send) submitFromPageRef.current()
+      else load()
+    })
+    return () => {
+      stopped = true
+      stop()
+    }
+  }, [conversationId])
   const [nextRunMode, setNextRunMode] = useState<ConversationRunMode>('conversation')
   const [planModelOverrideId, setPlanModelOverrideId] = useState<string | null>(null)
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set())
@@ -328,6 +385,8 @@ function ChatPanel({
     mode: ConversationRunMode
     goalArmed: boolean
   } | null>(null)
+  // A queued message being edited in the box, as a sent one is; sending saves it in the queue.
+  const [editingQueuedId, setEditingQueuedId] = useState<string | null>(null)
   const featuresMenuRef = useRef<HTMLDivElement>(null)
   const modelMenuRef = useRef<HTMLDivElement>(null)
   // Track artifact render results for tool response
@@ -338,6 +397,10 @@ function ChatPanel({
   const pendingGoalSteerRef = useRef(false)
   const workspaceFolderRef = useRef(workspaceFolder)
   workspaceFolderRef.current = workspaceFolder
+  // Where this chat's files and History are: its project's folder, or its own when it has none.
+  const filesFolder = useChatFolder(conversationId, workspaceFolder) ?? workspaceFolder
+  const chatFolders = useProjectFolders(conversationId, workspaceFolder, projectFolders)
+  const otherFolders = useMemo(() => chatFolders.map(({ path }) => path), [chatFolders])
   const {
     phase,
     activeMode,
@@ -366,10 +429,7 @@ function ChatPanel({
     onConversationCreated,
     onProjection: (projection) => {
       if (!openSubAgent)
-        onTokenCountUpdate?.(
-          projection.tokenUsage.promptTokens + projection.tokenUsage.completionTokens,
-          selectedContextLength
-        )
+        onTokenCountUpdate?.(contextTokens(projection.tokenUsage), selectedContextLength)
     }
   })
   const { goal, createGoal, pauseGoal, resumeGoal, clearGoal } = useConversationGoal(conversationId)
@@ -436,6 +496,17 @@ function ChatPanel({
     return () => onBusyStateChange?.(busyConversationIdRef.current, false)
   }, [onBusyStateChange])
 
+  /** Puts back what the box held before an edit, of a sent message or a queued one. */
+  const restoreEditStash = (): void => {
+    const stash = editStashRef.current
+    editStashRef.current = null
+    setInputValue(stash?.text ?? '')
+    setAttachedImages(stash?.images ?? [])
+    setAttachedContext(stash?.attachments ?? [])
+    setNextRunMode(stash?.mode ?? 'conversation')
+    setGoalArmed(stash?.goalArmed ?? false)
+  }
+
   const {
     editingMessageId,
     steppedBackFromId,
@@ -454,10 +525,11 @@ function ChatPanel({
     messages,
     setMessages,
     conversationId,
-    selectedModel,
+    selectedModel: selectedPinnedModel ? selectedModel : '',
+    onModelUnavailable: () => setIsModelMenuOpen(true),
     isRunActive,
-    workspaceFolder,
-    onCheckpointCreated,
+    workspaceFolder: filesFolder,
+    otherFolders,
     restoreDraft: async (message, discardsGoalStart) => {
       if (discardsGoalStart && conversationId) {
         const current = await window.api.conversationGoals.current(conversationId)
@@ -471,6 +543,7 @@ function ChatPanel({
       window.requestAnimationFrame(() => inputRef.current?.focus())
     },
     beginEdit: (message, source) => {
+      setEditingQueuedId(null)
       // What the box held comes back if the edit is cancelled.
       editStashRef.current ??= {
         text: inputValue,
@@ -498,15 +571,7 @@ function ChatPanel({
         input.setSelectionRange(input.value.length, input.value.length)
       })
     },
-    cancelEdit: () => {
-      const stash = editStashRef.current
-      editStashRef.current = null
-      setInputValue(stash?.text ?? '')
-      setAttachedImages(stash?.images ?? [])
-      setAttachedContext(stash?.attachments ?? [])
-      setNextRunMode(stash?.mode ?? 'conversation')
-      setGoalArmed(stash?.goalArmed ?? false)
-    },
+    cancelEdit: () => restoreEditStash(),
     beforeMessagesLeave: (message, kind) => {
       const container = messagesContainerRef.current
       if (!container) return
@@ -730,25 +795,56 @@ function ChatPanel({
     return () => window.clearTimeout(timer)
   }, [conversationId, isLoading, latestAnswer, revealStart])
 
-  // Voice conversation: hand each finished reply's answer over to be read
-  // aloud. Another chat ends it, so the mic never follows the user elsewhere.
-  const voiceRunRef = useRef({ conversationId, isLoading })
-  useEffect(() => {
-    const previous = voiceRunRef.current
-    voiceRunRef.current = { conversationId, isLoading }
-    if (previous.conversationId !== conversationId) {
-      stopVoiceLoop()
-      return undefined
+  /**
+   * Moves a queued message into the box to edit, as Edit moves a sent one: it glides in from its
+   * card, and sending saves the new text in the queue. What the box held waits until then.
+   */
+  const beginQueuedEdit = (message: PendingRunMessageItem, source: HTMLElement | null): void => {
+    const original = editStashRef.current
+    if (editingMessageId) handleCancelEditMessage()
+    editStashRef.current = original ?? {
+      text: inputValue,
+      images: attachedImages,
+      attachments: attachedContext,
+      mode: nextRunMode,
+      goalArmed
     }
-    if (isLoading && !previous.isLoading) voiceLoopReplyStarted()
-    if (isLoading || !previous.isLoading) return undefined
-    // The finished message replaces the streamed one a moment after the run ends.
-    const timer = window.setTimeout(() => {
-      const reply = messagesRef.current.findLast((message) => message.role === 'agent')
-      voiceLoopReplyFinished(reply ? finalAnswerText(reply) : '')
-    }, 200)
-    return () => window.clearTimeout(timer)
-  }, [conversationId, isLoading, messagesRef])
+    setEditingQueuedId(message.id)
+    // Its images and files stay with it in the queue; the box edits its words.
+    setInputValue(message.content)
+    setAttachedImages([])
+    setAttachedContext([])
+    window.requestAnimationFrame(() => {
+      const input = inputRef.current
+      if (!input) return
+      flyIntoComposer(source, input.closest<HTMLElement>('.input-container'))
+      input.focus()
+      input.setSelectionRange(input.value.length, input.value.length)
+    })
+  }
+
+  // A queued message sent while it was being edited leaves edit mode; its new words stay in the
+  // box to send. Another chat ends the edit as well.
+  const editedQueueChatRef = useRef(conversationId)
+  useEffect(() => {
+    if (!editingQueuedId) {
+      editedQueueChatRef.current = conversationId
+      return
+    }
+    const stillQueued =
+      messageQueue.some((item) => item.id === editingQueuedId) ||
+      pivotPending?.id === editingQueuedId
+    if (stillQueued && editedQueueChatRef.current === conversationId) return
+    editStashRef.current = null
+    setEditingQueuedId(null)
+  }, [editingQueuedId, messageQueue, pivotPending, conversationId])
+
+  // Another chat ends dictation, so the microphone never follows the user elsewhere.
+  const dictatedInRef = useRef(conversationId)
+  useEffect(() => {
+    if (dictatedInRef.current !== conversationId) endDictation()
+    dictatedInRef.current = conversationId
+  }, [conversationId])
 
   // Auto-focus input when conversation changes or loading completes
   useAutoFocus(inputRef, isLoading, false, conversationId)
@@ -836,7 +932,9 @@ function ChatPanel({
         id: selectedPinnedModel.id,
         providerKind: selectedPinnedModel.providerKind ?? (selectedProvider as ProviderKind),
         model: selectedPinnedModel.providerModelId || selectedPinnedModel.id,
-        supportsReasoning: selectedPinnedModel.supportsReasoning
+        supportsReasoning: selectedPinnedModel.supportsReasoning,
+        reasoningLevels: selectedPinnedModel.reasoningLevels,
+        reasoningDefault: selectedPinnedModel.reasoningDefault
       }
     : null
   const selectedReasoningOptions = reasoningModel ? reasoningOptions(reasoningModel) : null
@@ -872,12 +970,17 @@ function ChatPanel({
     runMode: ConversationRunMode,
     continuesRunId?: string
   ): Promise<void> => {
-    if (!selectedModel) {
+    const chatModel = chatModelRef.current
+    if (!chatModel.id) {
       alert('Please select a model first')
       return
     }
-    const model = pinnedModels.find((candidate) => candidate.id === selectedModel)
-    if (!model) throw new Error('The selected model is no longer available')
+    const model = chatModel.model
+    if (!model) {
+      throw new Error(
+        `${modelNameFromId(chatModel.id)} is no longer available. Choose another model for this chat.`
+      )
+    }
     // A reply already running stays as it is; starting another would be refused anyway.
     if (isRunActive()) return
 
@@ -1193,7 +1296,17 @@ function ChatPanel({
   }
 
   const handleSubmit = (): void => {
-    if (!inputValue.trim() && !attachedImages.length && !attachedContext.length) return
+    if (
+      !inputValue.trim() &&
+      !attachedImages.length &&
+      !attachedContext.length &&
+      !browserMarks.length
+    )
+      return
+    if (unavailableModelName) {
+      setIsModelMenuOpen(true)
+      return
+    }
     if (!isLoading && conversationId && projectId) {
       if (workspaceCheckRef.current) return
       workspaceCheckRef.current = true
@@ -1209,6 +1322,8 @@ function ChatPanel({
     submitMessage()
   }
 
+  submitFromPageRef.current = handleSubmit
+
   const sendArrow = (): Element | null | undefined =>
     inputRef.current?.closest('.input-container')?.querySelector('.send-button svg')
   // The next message to appear rises out of the box, even into a chat created by sending it.
@@ -1218,16 +1333,51 @@ function ChatPanel({
   }
 
   const submitMessage = (): void => {
-    // What was dictated so far is in the box and goes with the message; with
-    // voice on, the mic pauses until the reply has been read aloud.
+    // What was dictated so far is in the box and goes with the message, and the mic stops.
     endDictation()
-    voiceLoopSent()
     if (attachedImages.length && !visionAvailable) {
       setAttachmentError(visionUnavailableReason || 'Image input is unavailable')
       return
     }
+    // A queued message being edited keeps what it had; marks wait for the next message.
+    if (browserMarks.length && !editingQueuedId && conversationId) {
+      if (attachedContext.length + browserMarks.length > MAX_MESSAGE_CONTEXT_ATTACHMENTS) {
+        setAttachmentError(
+          `A message can contain up to ${MAX_MESSAGE_CONTEXT_ATTACHMENTS} attachments`
+        )
+        return
+      }
+      // The main process hands over the marks as they are now, with the latest notes.
+      void window.api.agentRuns
+        .browserAnnotations({
+          conversationId,
+          action: 'take',
+          ids: browserMarks.map((mark) => mark.id)
+        })
+        .then((marks) =>
+          // A model that cannot see images still gets each mark's note and what it points at.
+          submitMessageWith(
+            visionAvailable ? marks : marks.map((mark) => ({ ...mark, image: undefined }))
+          )
+        )
+        .catch((error) =>
+          setAttachmentError(error instanceof Error ? error.message : String(error))
+        )
+      return
+    }
+    submitMessageWith([])
+  }
+
+  const submitMessageWith = (marks: BrowserAnnotationAttachment[]): void => {
     const images = attachedImages
-    const attachments = attachedContext
+    const attachments = marks.length ? [...attachedContext, ...marks] : attachedContext
+    if (editingQueuedId) {
+      // The queued message takes the new text, and the box gets back what it held.
+      if (!updatePendingMessage(editingQueuedId, inputValue)) return
+      restoreEditStash()
+      setEditingQueuedId(null)
+      return
+    }
     if (editingMessageId) {
       // Sending an edit replaces the message and everything after it, then answers again.
       if (isLoading) return
@@ -1302,17 +1452,19 @@ function ChatPanel({
     }
   }
 
-  const addContextAttachments = async (): Promise<void> => {
-    if (!workspaceFolder) {
-      setAttachmentError('Open a project before attaching files or folders')
-      return
-    }
-    const result = await window.api.workspace.selectContextAttachments(workspaceFolder)
-    if (!result.ok) {
-      setAttachmentError(result.error || 'Could not attach project context')
-      return
-    }
-    if (result.canceled) return
+  /** Where attached files go; a chat not saved yet is saved first, as sending would, to have one. */
+  const attachmentFolder = async (): Promise<string | null> => {
+    if (filesFolder) return filesFolder
+    if (conversationId || workspaceFolder) return null
+    const title = 'New chat'
+    const created = await window.api.conversations.create(title, null, 'fallback')
+    skipNextLoadRef.current = true
+    onConversationCreated(created.id, title)
+    const context = await window.api.projects.getConversationContext(created.id)
+    return context.chatFolder ? context.workspaceRoot : null
+  }
+
+  const addAttachedFiles = (attachments: ProjectContextAttachment[]): void => {
     setAttachedContext((previous) => {
       const pastedAndComments = previous.filter(
         (attachment) => !isProjectContextAttachment(attachment)
@@ -1322,14 +1474,68 @@ function ChatPanel({
           .filter(isProjectContextAttachment)
           .map((attachment) => [attachment.relativePath, attachment])
       )
-      for (const attachment of result.attachments) byPath.set(attachment.relativePath, attachment)
+      for (const attachment of attachments) byPath.set(attachment.relativePath, attachment)
       return [...byPath.values(), ...pastedAndComments].slice(0, MAX_MESSAGE_CONTEXT_ATTACHMENTS)
     })
     setAttachmentError(
-      attachedContext.length + result.attachments.length > MAX_MESSAGE_CONTEXT_ATTACHMENTS
+      attachedContext.length + attachments.length > MAX_MESSAGE_CONTEXT_ATTACHMENTS
         ? `A message can contain up to ${MAX_MESSAGE_CONTEXT_ATTACHMENTS} attachments`
         : null
     )
+  }
+
+  const addContextAttachments = async (): Promise<void> => {
+    const folder = await attachmentFolder()
+    if (!folder) {
+      setAttachmentError('Open a project before attaching files or folders')
+      return
+    }
+    const result = await window.api.workspace.selectContextAttachments(folder)
+    if (!result.ok) {
+      setAttachmentError(result.error || 'Could not attach project context')
+      return
+    }
+    if (result.canceled) return
+    addAttachedFiles(result.attachments)
+  }
+
+  /** Dropped or pasted files: images go in the message when the model sees them, the rest as files. */
+  const addFiles = async (files: File[]): Promise<void> => {
+    const asImage = (file: File): boolean =>
+      visionAvailable &&
+      Boolean(selectedPinnedModel) &&
+      file.type.toLowerCase().startsWith('image/')
+    const images = files.filter(asImage)
+    const others = files.filter((file) => !asImage(file))
+    if (images.length) await addImageFiles(images)
+    if (!others.length) return
+    const tooLarge = others.find((file) => file.size > MAX_ATTACHED_FILE_BYTES)
+    if (tooLarge) {
+      setAttachmentError(`${tooLarge.name} is over 100 MB`)
+      return
+    }
+    const folder = await attachmentFolder()
+    if (!folder) {
+      setAttachmentError('Open a project before attaching files')
+      return
+    }
+    const dropped = await Promise.all(
+      others.slice(0, MAX_MESSAGE_CONTEXT_ATTACHMENTS).map(async (file) => ({
+        name: file.name,
+        path: window.api.workspace.pathForFile(file),
+        // A folder has no bytes to read; only one inside the project can be attached.
+        bytes: await file
+          .arrayBuffer()
+          .then((buffer) => new Uint8Array(buffer))
+          .catch(() => undefined)
+      }))
+    )
+    const result = await window.api.workspace.attachFiles(folder, dropped)
+    if (!result.ok) {
+      setAttachmentError(result.error || 'Could not attach the files')
+      return
+    }
+    addAttachedFiles(result.attachments)
   }
 
   const addFileMention = (relativePath: string): void => {
@@ -1424,7 +1630,12 @@ function ChatPanel({
 
       const queuedMessageId = getQueuedMessageIdForEmptySubmit(
         isLoading,
-        Boolean(inputValue.trim() || attachedImages.length || attachedContext.length),
+        Boolean(
+          inputValue.trim() ||
+          attachedImages.length ||
+          attachedContext.length ||
+          browserMarks.length
+        ),
         messageQueue
       )
       if (queuedMessageId) {
@@ -1524,7 +1735,7 @@ function ChatPanel({
             key={row.key}
             brief={row.message}
             managerTitle={chatFamily?.manager.title ?? 'its manager'}
-            workspaceRoot={workspaceFolder}
+            workspaceRoot={filesFolder}
           />
         )
       case 'message':
@@ -1612,6 +1823,18 @@ function ChatPanel({
   const editingIndex = steppedBackFromId
     ? visibleMessages.findIndex((candidate) => candidate.id === steppedBackFromId)
     : -1
+  // The last message whose reply changed this project's files and was not undone: rewinding to it,
+  // or to any message before it, can take those files back.
+  const lastFileChangeIndex = visibleMessages.findLastIndex(
+    (message) =>
+      !message.restored &&
+      Boolean(
+        message.checkpoints?.some(
+          ({ workspaceRoot }) =>
+            workspaceRoot === filesFolder || otherFolders.includes(workspaceRoot)
+        )
+      )
+  )
   const renderMessage = (msg: Message, index: number): React.JSX.Element => (
     <MessageItem
       key={msg.id}
@@ -1633,18 +1856,24 @@ function ChatPanel({
       }
       onForkMessage={forkMessage}
       onRewindMessage={isLoading ? undefined : rewindMessage}
+      rewindCanRestoreFiles={index <= lastFileChangeIndex}
       copiedMessageId={copiedMessageId}
       onApproveToolLimitDecision={handleApproveToolLimitDecision}
       onDenyToolLimitDecision={handleDenyToolLimitDecision}
       onResolveAgentInteraction={(id, response, cancelled) =>
         resolveInteraction(id, response, cancelled)
       }
-      workspaceFolder={workspaceFolder}
+      workspaceFolder={filesFolder}
+      otherFolders={otherFolders}
       onUndoCheckpoint={handleUndoCheckpoint}
     />
   )
 
   const isEmptyChat = messages.length === 0 && !familyRows.size
+  // Before the first message a chat can still choose where it works. A chat whose history is still
+  // loading is not empty yet.
+  const canChooseWorkspace =
+    (Boolean(conversationId) || !projectId) && messagesLoaded && messages.length === 0 && !isLoading
   const panel = (
     <div className="chat-panel">
       {familyRole === 'worker' && familySelf && chatFamily && (
@@ -1670,23 +1899,33 @@ function ChatPanel({
         {isEmptyChat ? (
           <div className="empty-state">
             <h2>{workspaceFolder ? projectName || 'Your project' : 'What’s next?'}</h2>
-            {pinnedModels.length === 0 && (
-              <p className="hint">Click the + button above to add a model</p>
-            )}
+            {pinnedModels.length === 0 && <p className="hint">Choose a model below to start</p>}
             {pinnedModels.length > 0 && (
               <div className="starter-prompts" aria-label="Suggested prompts">
-                {welcomeSuggestions.map((suggestion) => (
-                  <button
-                    key={`${suggestion.label}:${suggestion.prompt}`}
-                    type="button"
-                    className="starter-prompt"
-                    onClick={() => setInputValue(suggestion.prompt)}
-                    title={suggestion.label}
-                  >
-                    <span>{suggestion.label}</span>
-                    <ArrowUpRight size={14} aria-hidden="true" />
-                  </button>
-                ))}
+                {welcomeSuggestions.map((suggestion) => {
+                  // Only the quoted title gives way, so the verb always says what a click does.
+                  const quoted = /^(\S+) (“.*”)$/.exec(suggestion.label)
+                  return (
+                    <button
+                      key={`${suggestion.label}:${suggestion.prompt}`}
+                      type="button"
+                      className="starter-prompt"
+                      onClick={() => setInputValue(suggestion.prompt)}
+                      title={suggestion.fullLabel ?? suggestion.label}
+                    >
+                      {quoted ? (
+                        <span className="starter-prompt-label">
+                          {quoted[1]} <span className="starter-prompt-topic">{quoted[2]}</span>
+                        </span>
+                      ) : (
+                        <span className="starter-prompt-label">
+                          <span className="starter-prompt-topic">{suggestion.label}</span>
+                        </span>
+                      )}
+                      <ArrowUpRight size={14} aria-hidden="true" />
+                    </button>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -1704,7 +1943,9 @@ function ChatPanel({
                       key={msg.id}
                       ref={messageVirtualizer.measureElement}
                       data-index={virtualRow.index}
-                      className="virtual-message-row"
+                      className={`virtual-message-row${
+                        virtualRow.index === visibleMessages.length - 1 ? ' is-last' : ''
+                      }`}
                       style={{ transform: `translateY(${virtualRow.start}px)` }}
                     >
                       {virtualRow.index === 0 && renderFamilyRows(0)}
@@ -1736,8 +1977,6 @@ function ChatPanel({
                 />
               </div>
             )}
-            {/* One more gap of room below the last row. */}
-            <div aria-hidden="true" />
           </>
         )}
       </div>
@@ -1754,7 +1993,7 @@ function ChatPanel({
       <WorkspaceBar
         projectId={projectId}
         worktree={worktree}
-        canChoose={(Boolean(conversationId) || !projectId) && messages.length === 0 && !isLoading}
+        canChoose={canChooseWorkspace}
         workIn={workIn}
         baseRef={worktreeBase}
         error={workspaceError}
@@ -1765,16 +2004,6 @@ function ChatPanel({
         onBaseRefChange={setWorktreeBase}
         onManageWorktrees={() => onManageWorktrees?.()}
         onWorktreesAvailableChange={setWorktreesAvailable}
-        projectChoices={projectChoices}
-        onChooseProject={
-          onChooseProject &&
-          ((id) => {
-            setWorkspaceError(null)
-            onChooseProject(id).catch((error: unknown) =>
-              setWorkspaceError(error instanceof Error ? error.message : String(error))
-            )
-          })
-        }
       />
       <WorkspaceBusyDialog
         isOpen={Boolean(busyPrompt)}
@@ -1790,7 +2019,19 @@ function ChatPanel({
       <ChatInput
         inputValue={inputValue}
         attachedImages={attachedImages}
+        imageSendProfile={
+          reasoningModel ? providerImageProfile(reasoningModel.providerKind) : undefined
+        }
         attachedContext={attachedContext}
+        browserMarks={browserMarks}
+        onRemoveBrowserMark={(annotationId) => {
+          if (!conversationId) return
+          void window.api.agentRuns
+            .browserWorkspace({ conversationId, action: 'annotationRemove', annotationId })
+            .catch((error) =>
+              setAttachmentError(error instanceof Error ? error.message : String(error))
+            )
+        }}
         attachmentError={attachmentError}
         visionAvailable={visionAvailable}
         visionUnavailableReason={visionUnavailableReason}
@@ -1798,6 +2039,12 @@ function ChatPanel({
         isStopping={isStopping}
         editingMessageId={editingMessageId}
         onCancelEdit={handleCancelEditMessage}
+        editingQueuedId={editingQueuedId}
+        onEditQueuedMessage={beginQueuedEdit}
+        onCancelQueuedEdit={() => {
+          restoreEditStash()
+          setEditingQueuedId(null)
+        }}
         researchSelected={nextRunMode === 'research'}
         researchActive={activeMode === 'research'}
         researchPhase={phase}
@@ -1819,6 +2066,8 @@ function ChatPanel({
         isFeaturesMenuOpen={isFeaturesMenuOpen}
         isModelMenuOpen={isModelMenuOpen}
         selectedModel={selectedModel}
+        unavailableModelName={unavailableModelName}
+        onChooseModel={() => setIsModelMenuOpen(true)}
         pinnedModels={pinnedModels}
         queuedMessages={messageQueue}
         pivotMessage={pivotPending}
@@ -1827,8 +2076,10 @@ function ChatPanel({
         modelMenuRef={modelMenuRef}
         onInputChange={setInputValue}
         onAddImageFiles={(files) => void addImageFiles(files)}
+        onAddFiles={(files) => void addFiles(files)}
         onAddContextAttachments={() => void addContextAttachments()}
         onAddFileMention={addFileMention}
+        contextMeter={contextMeter}
         onAddPastedText={addPastedText}
         onInsertPastedText={insertPastedText}
         onRemoveImage={(id) => {
@@ -1876,10 +2127,23 @@ function ChatPanel({
         onToggleModelMenu={() => setIsModelMenuOpen(!isModelMenuOpen)}
         onModelChange={onModelChange}
         onOpenModelSearch={onOpenModelSearch}
+        permissionMode={commandPermissionMode}
+        onPermissionModeChange={onPermissionModeChange}
         workspaceFolder={workspaceFolder}
+        attachesToChatFolder={!workspaceFolder && (Boolean(filesFolder) || !conversationId)}
         toolbarExtra={
           worktree ? (
             <WorktreeChip worktree={worktree} onManage={() => onManageWorktrees?.()} />
+          ) : canChooseWorkspace && !projectId && onChooseProject && projectChoices?.length ? (
+            <ProjectChoiceChip
+              projectChoices={projectChoices}
+              onChooseProject={(id) => {
+                setWorkspaceError(null)
+                onChooseProject(id).catch((error: unknown) =>
+                  setWorkspaceError(error instanceof Error ? error.message : String(error))
+                )
+              }}
+            />
           ) : null
         }
         workspaceMemoryAvailable={workspaceMemoryLoadedFor === workspaceFolder}
@@ -1897,7 +2161,6 @@ function ChatPanel({
             setIsWorkspaceMemoryOpen(true)
           }
         }}
-        onUpdatePendingMessage={updatePendingMessage}
         onRemovePendingMessage={removePendingMessage}
         onMoveQueuedMessage={moveQueuedMessage}
         onSteerQueuedMessage={(id) => {

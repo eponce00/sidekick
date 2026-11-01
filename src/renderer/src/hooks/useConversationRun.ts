@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
+import { parseHistoryPoints } from '../../../shared/workspaceHistory'
 import type {
   AgentRunEventsResult,
   ConversationRunMode,
@@ -198,7 +199,11 @@ export function useConversationRun({
       const snapshot = active.model.refresh()
       const events = snapshot.events
       const projection = snapshot.projection
-      const finalized = events.some((event) => event.type === 'run.finalized')
+      const finalizedEvent = events.find((event) => event.type === 'run.finalized')
+      const finalized = Boolean(finalizedEvent)
+      const checkpoints = parseHistoryPoints(
+        (finalizedEvent?.payload as { checkpoints?: unknown } | undefined)?.checkpoints
+      )
       const projectedPhase = projection.phase ?? 'streaming'
       setPhase(!finalized && TERMINAL_PHASES.has(projectedPhase) ? 'streaming' : projectedPhase)
       setMessages((previous) =>
@@ -211,7 +216,9 @@ export function useConversationRun({
                 thinking: projection.thinking,
                 segments: projection.segments as Message['segments'],
                 tokenUsage: projection.tokenUsage,
-                runMode: active.mode
+                runMode: active.mode,
+                // What the reply changed can be undone, or rewound, as soon as it ends.
+                ...(checkpoints.length ? { checkpoints } : {})
               }
             : message
         )
@@ -325,7 +332,11 @@ export function useConversationRun({
         active.mode = 'plan'
         setActiveMode('plan')
       }
-      scheduleProject(active, event.type !== 'assistant.delta')
+      // Streamed text and command output come many times a second; they wait for the next frame.
+      scheduleProject(
+        active,
+        event.type !== 'assistant.delta' && event.type !== 'tool.output.delta'
+      )
       if (event.type === 'run.finalized' && active.attached) {
         activeRef.current = null
         setRunConversationId(null)
@@ -499,8 +510,21 @@ export function useConversationRun({
         replacePivot(result.pivot)
       })
       .catch((error) => console.error('[PromptAdmissions] Failed to load queue', error))
+    // The phone can queue, edit or send a message, and the main process can send the next one.
+    const unsubscribe = window.api.agentRuns.onAdmissionsChanged((changed) => {
+      if (changed !== conversationId) return
+      void admissionWriteRef.current
+        .then(() => window.api.agentRuns.admissionsList(conversationId))
+        .then((result) => {
+          if (cancelled) return
+          replaceQueue(result.queued)
+          replacePivot(result.pivot)
+        })
+        .catch((error) => console.error('[PromptAdmissions] Failed to load queue', error))
+    })
     return () => {
       cancelled = true
+      unsubscribe()
     }
   }, [conversationId, replacePivot, replaceQueue])
 

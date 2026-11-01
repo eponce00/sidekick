@@ -7,14 +7,15 @@ import {
   ListChecks,
   Loader2,
   MessageCircleQuestionMark,
-  MonitorUp,
   ShieldAlert,
+  Workflow,
   X
 } from 'lucide-react'
 import type { ContentSegment } from '../types/chat.types'
 import type { AgentApprovalPreview } from '../../../shared/agentRuntime'
 import { agentPermissionDecision, type AgentPermissionDecision } from '../../../shared/permissions'
 import { useWorkerChatIdentity } from './sessionChatContext'
+import { useChatSurface } from './chatSurface'
 import { StartSessionsCard } from './StartSessionsCard'
 
 type Interaction = NonNullable<ContentSegment['interaction']>
@@ -134,11 +135,18 @@ function approvalPreview(value: unknown): AgentApprovalPreview | null {
   const facts = (Array.isArray(preview.facts) ? preview.facts : [])
     .filter((fact) => fact && typeof fact.label === 'string' && typeof fact.value === 'string')
     .slice(0, 10)
-  if (!changes.length && !facts.length) return null
+  const quote =
+    preview.quote &&
+    typeof preview.quote.label === 'string' &&
+    typeof preview.quote.text === 'string'
+      ? { label: preview.quote.label.slice(0, 120), text: preview.quote.text.slice(0, 20_000) }
+      : null
+  if (!changes.length && !facts.length && !quote) return null
   return {
     ...(typeof preview.summary === 'string' ? { summary: preview.summary.slice(0, 600) } : {}),
     changes,
-    ...(facts.length ? { facts } : {})
+    ...(facts.length ? { facts } : {}),
+    ...(quote ? { quote } : {})
   }
 }
 
@@ -203,12 +211,11 @@ function AnsweredQuestions({
           {value}
         </span>
         {expandable && (
-          <span
-            className={`agent-question-answered-chevron${expanded ? ' is-expanded' : ''}`}
+          <ChevronRight
+            size={12}
             aria-hidden="true"
-          >
-            <ChevronRight size={14} />
-          </span>
+            className={`work-row-chevron${expanded ? ' is-expanded' : ''}`}
+          />
         )}
       </button>
       {expandable && expanded && (
@@ -260,19 +267,15 @@ function handleOptionKeys(event: React.KeyboardEvent<HTMLDivElement>): void {
 export default function AgentInteractionCard({
   interaction,
   onResolve
-}: AgentInteractionCardProps): React.JSX.Element {
+}: AgentInteractionCardProps): React.JSX.Element | null {
   const questions = useMemo(() => questionsFrom(interaction), [interaction])
   const [answers, setAnswers] = useState<Record<string, QuestionAnswer>>({})
   const [questionIndex, setQuestionIndex] = useState(0)
   const [planFeedback, setPlanFeedback] = useState('')
   const [showPlanFeedback, setShowPlanFeedback] = useState(false)
-  const [takeoverState, setTakeoverState] = useState<'idle' | 'opening' | 'active' | 'checking'>(
-    'idle'
-  )
-  const [takeoverError, setTakeoverError] = useState('')
-  const [takeoverUrl, setTakeoverUrl] = useState('')
   const pending = interaction.status === 'pending'
   const workerIdentity = useWorkerChatIdentity()
+  const { computerOnly } = useChatSurface()
   const questionRef = useRef<HTMLDivElement>(null)
   const questionShownRef = useRef(false)
   const promptId = useId()
@@ -371,6 +374,13 @@ export default function AgentInteractionCard({
                 </div>
               ))}
             </dl>
+            {preview.quote && (
+              // Shown whole, and set apart as the agent's words, so none of it is approved unread.
+              <figure className="agent-interaction-quote">
+                <figcaption>{preview.quote.label}</figcaption>
+                <blockquote tabIndex={0}>{preview.quote.text}</blockquote>
+              </figure>
+            )}
           </div>
         )}
         {detail && pending && !resolving && (
@@ -429,119 +439,25 @@ export default function AgentInteractionCard({
     )
   }
 
-  if (interaction.kind === 'question' && interaction.request.intent === 'start_sessions') {
-    return <StartSessionsCard interaction={interaction} onResolve={onResolve} />
-  }
-
-  if (interaction.kind === 'question' && interaction.request.intent === 'browser_takeover') {
-    const reason = String(
-      interaction.request.reason || 'This site needs a human-only browser step before continuing.'
-    )
-    const completed = interaction.response?.completed === true
-    const beginTakeover = async (): Promise<void> => {
-      setTakeoverError('')
-      setTakeoverState('opening')
-      try {
-        const snapshot = await window.api.agentRuns.beginBrowserHumanTakeover(interaction.id)
-        setTakeoverUrl(snapshot.url)
-        setTakeoverState(snapshot.active ? 'active' : 'idle')
-        if (!snapshot.active) setTakeoverError('The browser window could not be opened.')
-      } catch (error) {
-        setTakeoverState('idle')
-        setTakeoverError(error instanceof Error ? error.message : 'Could not open the browser.')
-      }
-    }
-    const completeTakeover = async (): Promise<void> => {
-      setTakeoverError('')
-      setTakeoverState('checking')
-      try {
-        const snapshot = await window.api.agentRuns.completeBrowserHumanTakeover(interaction.id)
-        setTakeoverUrl(snapshot.url)
-        if (snapshot.humanVerificationRequired) {
-          setTakeoverState('idle')
-          setTakeoverError(
-            snapshot.message ||
-              'Human verification is still visible. Take control again and finish the step.'
-          )
-          return
-        }
-        await onResolve(interaction.id, { completed: true })
-      } catch (error) {
-        setTakeoverState('idle')
-        setTakeoverError(
-          error instanceof Error ? error.message : 'Could not verify the browser state.'
-        )
-      }
-    }
-    const continueWithoutTakeover = async (): Promise<void> => {
-      if (takeoverState === 'active') {
-        await window.api.agentRuns
-          .completeBrowserHumanTakeover(interaction.id)
-          .catch(() => undefined)
-      }
-      await onResolve(interaction.id, { completed: false })
-    }
+  const intent = interaction.kind === 'question' ? interaction.request.intent : undefined
+  // A human check is now cleared in the Browser panel with no card; an older chat's card stays
+  // hidden.
+  if (intent === 'browser_takeover') return null
+  // Starting chats in the computer's folders happens on the computer.
+  if (computerOnly && pending && intent === 'start_sessions') {
     return (
-      <div
-        className={`agent-interaction agent-interaction-browser-takeover agent-interaction-${interaction.status}`}
-      >
+      <div className="agent-interaction agent-interaction-pending">
         <div className="agent-interaction-heading">
-          <MonitorUp size={14} aria-hidden="true" />
-          <span>Human browser verification required</span>
+          <Workflow size={14} aria-hidden="true" />
+          <span>SideKick wants to start other chats</span>
         </div>
-        <div className="agent-interaction-copy">{reason}</div>
-        {takeoverUrl && (
-          <div className="agent-browser-takeover-url" title={takeoverUrl}>
-            {takeoverUrl}
-          </div>
-        )}
-        {takeoverError && <div className="agent-browser-takeover-error">{takeoverError}</div>}
-        {pending ? (
-          <div className="agent-interaction-actions">
-            {takeoverState === 'active' ? (
-              <button
-                type="button"
-                className="agent-interaction-primary"
-                onClick={() => void completeTakeover()}
-              >
-                I’ve finished — resume
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="agent-interaction-primary"
-                disabled={takeoverState === 'opening' || takeoverState === 'checking'}
-                onClick={() => void beginTakeover()}
-              >
-                {takeoverState === 'opening' ? (
-                  <>
-                    <Loader2 size={12} className="icon-spin" /> Opening browser…
-                  </>
-                ) : takeoverState === 'checking' ? (
-                  <>
-                    <Loader2 size={12} className="icon-spin" /> Checking…
-                  </>
-                ) : (
-                  'Take control'
-                )}
-              </button>
-            )}
-            <button
-              type="button"
-              disabled={takeoverState === 'opening' || takeoverState === 'checking'}
-              onClick={() => void continueWithoutTakeover()}
-            >
-              Use another source
-            </button>
-          </div>
-        ) : (
-          <div className="agent-interaction-status">
-            {completed ? <Check size={12} /> : <X size={12} />}
-            {completed ? 'Verification completed' : 'Continued without verification'}
-          </div>
-        )}
+        <div className="agent-interaction-copy">{computerOnly}</div>
       </div>
     )
+  }
+
+  if (interaction.kind === 'question' && interaction.request.intent === 'start_sessions') {
+    return <StartSessionsCard interaction={interaction} onResolve={onResolve} />
   }
 
   if (interaction.kind === 'plan_approval') {
@@ -865,13 +781,18 @@ export default function AgentInteractionCard({
       ) : null}
       <div className="agent-question-footer">
         {questionIndex > 0 && (
-          <button type="button" onClick={() => setQuestionIndex((current) => current - 1)}>
+          <button
+            type="button"
+            className="settings-ghost-action is-small"
+            onClick={() => setQuestionIndex((current) => current - 1)}
+          >
             <ChevronLeft size={13} aria-hidden="true" /> Back
           </button>
         )}
         {currentQuestion && (
           <button
             type="button"
+            className={`settings-ghost-action is-small${currentQuestion.multiSelect ? '' : ' is-flush-end'}`}
             onClick={() =>
               commitAnswer(currentQuestion.id, (answer) => ({
                 ...answer,
@@ -898,7 +819,7 @@ export default function AgentInteractionCard({
         )}
         <button
           type="button"
-          className="agent-question-cancel"
+          className="settings-ghost-action is-small is-flush-start agent-question-cancel"
           title="Dismiss the question without answering"
           onClick={() => onResolve(interaction.id, {}, true)}
         >

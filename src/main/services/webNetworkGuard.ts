@@ -69,8 +69,12 @@ export interface WebAdmission {
 
 const MAX_REDIRECTS = 5
 
+/** Named for every web tool: http_request reported it as web_fetch, and said to stop. */
 function onThisComputer(origin: string): string {
-  return `${origin} is on this computer, which web_fetch does not read. Open it in the browser instead.`
+  return (
+    `${origin} is on this computer, which SideKick's web tools do not reach. To check a server ` +
+    'you started, request it from the shell (curl.exe on Windows), or open it in the browser.'
+  )
 }
 
 function intoLocalNetwork(target: string): string {
@@ -143,7 +147,7 @@ export async function resolveAdmitted(
     const kind = kindOf(address) ?? 'loopback'
     if (kind === 'loopback') {
       throw new WebNetworkRefusal(
-        `${hostname} resolves to ${address}, on this computer, which web_fetch does not read`
+        `${hostname} resolves to ${address}, on this computer, which SideKick's web tools do not reach`
       )
     }
     if (kind === 'local') {
@@ -184,9 +188,36 @@ export interface AdmittedResponse<T> {
   response: AxiosResponse<T>
 }
 
+/** What `getAdmitted` reads of one response when its caller sets no limit. */
+export const MAX_RESPONSE_BYTES = 10_000_000
+
+/** A response that outgrew its request: more bytes than it reads, or past its deadline. */
+export class WebResponseLimit extends Error {
+  constructor(
+    readonly limit: 'size' | 'time',
+    message: string
+  ) {
+    super(message)
+    this.name = 'WebResponseLimit'
+  }
+}
+
+/** The call's own signal, ended also by a deadline for the whole exchange when there is one. */
+function withDeadline(timeout: number | undefined, signal: AbortSignal | undefined) {
+  const deadline = timeout ? AbortSignal.timeout(timeout) : undefined
+  return {
+    deadline,
+    signal: deadline && signal ? AbortSignal.any([signal, deadline]) : (deadline ?? signal)
+  }
+}
+
 /**
  * GETs `url` under the network policy, checking every redirect before following it. The first
- * hop's admission may be passed in when the caller decided it already.
+ * hop's admission may be passed in when the caller decided it already. Once it is admitted,
+ * `config.timeout` bounds the whole exchange, redirects and body included, and at most
+ * `config.maxContentLength` bytes are read, `MAX_RESPONSE_BYTES` when it sets none: the HTTP
+ * client's own timeout ends only a quiet connection, so a server that kept sending held the call
+ * open and filled memory.
  */
 export async function getAdmitted<T>(
   start: URL,
@@ -194,35 +225,61 @@ export async function getAdmitted<T>(
   options: WebNetworkOptions = {},
   admitted?: WebAdmission
 ): Promise<AdmittedResponse<T>> {
+  const maxBytes =
+    config.maxContentLength && config.maxContentLength > 0
+      ? config.maxContentLength
+      : MAX_RESPONSE_BYTES
+  // The first admission may wait on the user, which is not the server being slow.
+  let admission = admitted ?? (await admitWebUrl(start, options))
+  const { deadline, signal } = withDeadline(config.timeout, options.signal)
   let url = start
   let from: WebReach | undefined
-  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    const admission =
-      hop === 0 && admitted ? admitted : await admitWebUrl(url, { ...options, from })
-    let reach = admission.reach
-    const lookup = admittedLookup(admission, options, (resolved) => (reach = resolved))
-    const response = await axios.get<T>(url.href, {
-      ...config,
-      // A fresh connection for each request, so its name is looked up, and checked, every time.
-      httpAgent: new HttpAgent({ keepAlive: false, lookup }),
-      httpsAgent: new HttpsAgent({ keepAlive: false, lookup }),
-      // A proxy would connect on SideKick's behalf, to addresses it never sees.
-      proxy: false,
-      maxRedirects: 0,
-      signal: options.signal,
-      validateStatus: (status) => status < 400
-    })
-    const location = response.headers.location
-    if (response.status < 300 || typeof location !== 'string' || !location) {
-      return { url, response }
+  try {
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      if (hop > 0) admission = await admitWebUrl(url, { ...options, from })
+      let reach = admission.reach
+      const lookup = admittedLookup(admission, options, (resolved) => (reach = resolved))
+      const response = await axios.get<T>(url.href, {
+        ...config,
+        maxContentLength: maxBytes,
+        // A fresh connection for each request, so its name is looked up, and checked, every time.
+        httpAgent: new HttpAgent({ keepAlive: false, lookup }),
+        httpsAgent: new HttpsAgent({ keepAlive: false, lookup }),
+        // A proxy would connect on SideKick's behalf, to addresses it never sees.
+        proxy: false,
+        maxRedirects: 0,
+        signal,
+        validateStatus: (status) => status < 400
+      })
+      const location = response.headers.location
+      if (response.status < 300 || typeof location !== 'string' || !location) {
+        return { url, response }
+      }
+      // A response whose address went unseen counts as from the internet.
+      from = reach ?? 'public'
+      try {
+        url = new URL(location, url)
+      } catch {
+        throw new Error('The page redirected to an invalid address')
+      }
     }
-    // A response whose address went unseen counts as from the internet.
-    from = reach ?? 'public'
-    try {
-      url = new URL(location, url)
-    } catch {
-      throw new Error('The page redirected to an invalid address')
+  } catch (error) {
+    if (webNetworkRefusal(error)) throw error
+    if (deadline?.aborted && !options.signal?.aborted) {
+      throw new WebResponseLimit(
+        'time',
+        `${url.origin} did not finish answering within ${(config.timeout ?? 0) / 1_000} seconds`
+      )
     }
+    if (axios.isAxiosError(error) && /^maxContentLength size/.test(error.message)) {
+      const size =
+        maxBytes >= 1_000_000 ? `${maxBytes / 1_000_000} MB` : `${Math.ceil(maxBytes / 1_000)} KB`
+      throw new WebResponseLimit(
+        'size',
+        `The response from ${url.origin} is larger than ${size}, more than SideKick reads at once`
+      )
+    }
+    throw error
   }
   throw new Error(`The page redirected more than ${MAX_REDIRECTS} times`)
 }
@@ -239,11 +296,7 @@ export async function requestAdmitted<T>(
 ): Promise<AxiosResponse<T>> {
   const admission = await admitWebUrl(url, options)
   const lookup = admittedLookup(admission, options)
-  const deadline = config.timeout ? AbortSignal.timeout(config.timeout) : undefined
-  const signal =
-    deadline && options.signal
-      ? AbortSignal.any([options.signal, deadline])
-      : (deadline ?? options.signal)
+  const { signal } = withDeadline(config.timeout, options.signal)
   return axios.request<T>({
     ...config,
     url: url.href,

@@ -1,4 +1,5 @@
 import {
+  Children,
   memo,
   isValidElement,
   useCallback,
@@ -12,6 +13,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
+import { MarkdownTable, MarkdownTableHeader } from './MarkdownTable'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeHighlight from 'rehype-highlight'
@@ -23,7 +25,7 @@ import {
   ChevronRight,
   Copy,
   ExternalLink,
-  FileCode2,
+  FileCode,
   FileText,
   Image as ImageIcon,
   ImageOff,
@@ -40,6 +42,8 @@ import Artifact from './artifacts/Artifact'
 import { MessageMapCard } from './MessageMapCard'
 import { SiteIcon } from './SiteIcon'
 import { copyText } from '../utils/clipboard'
+import { useImageSource } from './chatSurface'
+import { SurfaceImage } from './SurfaceImage'
 import './MessageMarkdown.css'
 
 interface MarkdownNode {
@@ -54,6 +58,8 @@ interface MarkdownNode {
 interface GalleryImage {
   src: string
   alt: string
+  /** On the tile, where `alt` is too long to fit; the enlarged view still shows `alt`. */
+  caption?: string
   title?: string
   sourceHref?: string
 }
@@ -112,6 +118,44 @@ function remarkFileReferences(): (tree: MarkdownNode) => void {
           next.push({ type: 'text', value: child.value.slice(cursor) })
       }
       node.children = next
+    }
+    visit(tree)
+  }
+}
+
+const TRAILING_PUNCTUATION = /^[.,;:!?)]/
+const OPENING_MARK = /[([{“‘"']$/
+
+function addClassName(node: MarkdownNode, className: string): void {
+  const properties = (node.properties ??= {})
+  const existing = properties.className
+  properties.className = [
+    ...(Array.isArray(existing) ? existing : existing ? [String(existing)] : []),
+    className
+  ]
+}
+
+/**
+ * Marks inline code and links that a full stop, comma or closing bracket follows, or an opening
+ * bracket or quote precedes, so their chip's padding on that side can shrink and the mark sits as
+ * close as it does beside plain text.
+ */
+function rehypeTrailingPunctuation(): (tree: MarkdownNode) => void {
+  return (tree) => {
+    const visit = (node: MarkdownNode): void => {
+      const children = node.children
+      if (!children || node.tagName === 'pre') return
+      children.forEach((child, index) => {
+        if (child.type !== 'element') return
+        visit(child)
+        if (child.tagName !== 'code' && child.tagName !== 'a') return
+        const previous = children[index - 1]
+        if (previous?.type === 'text' && OPENING_MARK.test(previous.value ?? ''))
+          addClassName(child, 'is-after-opening')
+        const next = children[index + 1]
+        if (next?.type === 'text' && TRAILING_PUNCTUATION.test(next.value ?? ''))
+          addClassName(child, 'is-before-punctuation')
+      })
     }
     visit(tree)
   }
@@ -299,7 +343,9 @@ function GalleryTile({
   onOpen: (index: number, trigger: HTMLButtonElement) => void
 }): React.JSX.Element {
   const [loaded, setLoaded] = useState(false)
-  const [failed, setFailed] = useState(false)
+  const [loadFailed, setFailed] = useState(false)
+  const source = useImageSource(image.src)
+  const failed = loadFailed || source.failed
 
   return (
     <button
@@ -315,19 +361,21 @@ function GalleryTile({
           <span>Image unavailable</span>
         </span>
       ) : (
-        <img
-          src={image.src}
-          alt={image.alt}
-          title={image.title}
-          loading="lazy"
-          decoding="async"
-          draggable={false}
-          referrerPolicy="no-referrer"
-          onLoad={() => setLoaded(true)}
-          onError={() => setFailed(true)}
-        />
+        source.src && (
+          <img
+            src={source.src}
+            alt={image.alt}
+            title={image.title}
+            loading="lazy"
+            decoding="async"
+            draggable={false}
+            referrerPolicy="no-referrer"
+            onLoad={() => setLoaded(true)}
+            onError={() => setFailed(true)}
+          />
+        )
       )}
-      <span className="message-image-caption">{image.alt}</span>
+      <span className="message-image-caption">{image.caption ?? image.alt}</span>
       <span className="message-image-expand" aria-hidden="true">
         <Maximize2 size={13} />
       </span>
@@ -340,7 +388,14 @@ function GalleryTile({
   )
 }
 
-function MessageImageGallery({ images }: { images: GalleryImage[] }): React.JSX.Element {
+/** `localImages` are the app's own copies: they have no web source to name or open. */
+export function MessageImageGallery({
+  images,
+  localImages = false
+}: {
+  images: GalleryImage[]
+  localImages?: boolean
+}): React.JSX.Element {
   const galleryId = useId()
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -431,18 +486,21 @@ function MessageImageGallery({ images }: { images: GalleryImage[] }): React.JSX.
               <div className="message-image-lightbox-copy">
                 <strong>{activeImage.alt}</strong>
                 <span>
-                  {(activeIndex || 0) + 1} of {images.length} · {sourceLabel(activeImage.src)}
+                  {(activeIndex || 0) + 1} of {images.length}
+                  {!localImages && ` · ${sourceLabel(activeImage.src)}`}
                 </span>
               </div>
-              <a
-                href={activeImage.sourceHref || activeImage.src}
-                target="_blank"
-                rel="noreferrer"
-                className="message-image-lightbox-source"
-              >
-                <span>Open original</span>
-                <ExternalLink size={13} aria-hidden="true" />
-              </a>
+              {!localImages && (
+                <a
+                  href={activeImage.sourceHref || activeImage.src}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="message-image-lightbox-source"
+                >
+                  <span>Open original</span>
+                  <ExternalLink size={13} aria-hidden="true" />
+                </a>
+              )}
               <button
                 ref={closeRef}
                 type="button"
@@ -464,7 +522,17 @@ function MessageImageGallery({ images }: { images: GalleryImage[] }): React.JSX.
                   <ChevronLeft size={21} />
                 </button>
               )}
-              <img src={activeImage.src} alt={activeImage.alt} draggable={false} />
+              <SurfaceImage
+                src={activeImage.src}
+                alt={activeImage.alt}
+                draggable={false}
+                fallback={
+                  <span className="message-image-error">
+                    <ImageOff size={17} aria-hidden="true" />
+                    <span>Image unavailable</span>
+                  </span>
+                }
+              />
               {images.length > 1 && (
                 <button
                   type="button"
@@ -498,13 +566,24 @@ function MarkdownImage({
     .join(' ')
   const isTwemoji = Boolean(props['data-twemoji'])
   return (
-    <img
+    <SurfaceImage
       {...props}
       alt={hints.alt}
       className={[className, isTwemoji ? '' : 'doc-img', hintClasses].filter(Boolean).join(' ')}
       {...(isTwemoji
         ? {}
         : { loading: 'lazy' as const, decoding: 'async' as const, referrerPolicy: 'no-referrer' })}
+      // Where the image cannot load, an emoji is its own character and a picture its name.
+      fallback={
+        props['data-twemoji'] !== undefined ? (
+          hints.alt
+        ) : (
+          <span className="markdown-image-unavailable">
+            <ImageOff size={13} aria-hidden="true" />
+            {hints.alt || 'Image'}
+          </span>
+        )
+      }
     />
   )
 }
@@ -584,13 +663,55 @@ function useWorkspaceFileOpen(
   return { resolved, error, open }
 }
 
+/**
+ * A chip's or link's icon kept on one line with the first word of its label, so a line never
+ * ends on an orphaned icon. A path's first word runs to its first slash.
+ */
+function IconWithLabel({
+  icon,
+  children,
+  labelClassName
+}: {
+  icon: React.ReactNode
+  children: React.ReactNode
+  labelClassName?: string
+}): React.JSX.Element {
+  const parts = Children.toArray(children)
+  const first = parts[0]
+  if (typeof first === 'string') {
+    const match = /^(\S*?\/|\S+)([\s\S]*)$/.exec(first)
+    const lead = match?.[1] ?? first
+    const rest = match?.[2] ?? ''
+    return (
+      <>
+        <span className="markdown-icon-lead">
+          {icon}
+          {lead}
+        </span>
+        {(rest || parts.length > 1) && (
+          <span className={labelClassName}>
+            {rest}
+            {parts.slice(1)}
+          </span>
+        )}
+      </>
+    )
+  }
+  return (
+    <>
+      {icon}
+      <span className={labelClassName}>{children}</span>
+    </>
+  )
+}
+
 function FileChipIcon({ path }: { path: string }): React.JSX.Element {
   const extension = path.split('.').pop()?.toLowerCase() ?? ''
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'].includes(extension))
     return <ImageIcon size={12} aria-hidden="true" />
   if (['md', 'markdown', 'mdx', 'txt', 'rst', 'pdf', 'doc', 'docx'].includes(extension))
     return <FileText size={12} aria-hidden="true" />
-  return <FileCode2 size={12} aria-hidden="true" />
+  return <FileCode size={12} aria-hidden="true" />
 }
 
 function InlineWorkspaceFile({
@@ -636,8 +757,7 @@ function InlineWorkspaceFile({
         }
       }}
     >
-      <FileChipIcon path={fileOpen.resolved[0]} />
-      {children}
+      <IconWithLabel icon={<FileChipIcon path={fileOpen.resolved[0]} />}>{children}</IconWithLabel>
     </code>
   )
 }
@@ -677,8 +797,9 @@ function MarkdownLink({
         }}
         title={fileOpen.error || `Open ${fileOpen.resolved[0]}`}
       >
-        <FileChipIcon path={fileOpen.resolved[0]} />
-        <span>{children}</span>
+        <IconWithLabel icon={<FileChipIcon path={fileOpen.resolved[0]} />}>
+          {children}
+        </IconWithLabel>
       </a>
     )
   }
@@ -694,10 +815,16 @@ function MarkdownLink({
         .filter(Boolean)
         .join(' ')}
     >
-      {mapLink && <MapPin size={13} aria-hidden="true" />}
-      {!mapLink && external && href && <SiteIcon url={href} size={14} />}
-      <span>{children}</span>
-      {!mapLink && <ExternalLink className="markdown-link-external" size={11} aria-hidden="true" />}
+      {mapLink ? (
+        <>
+          <MapPin size={13} aria-hidden="true" />
+          <span>{children}</span>
+        </>
+      ) : external && href ? (
+        <IconWithLabel icon={<SiteIcon url={href} size={14} />}>{children}</IconWithLabel>
+      ) : (
+        <span>{children}</span>
+      )}
     </a>
   )
 }
@@ -761,6 +888,7 @@ const MarkdownFragment = memo(function MarkdownFragment({
   content,
   allowRichMedia,
   workspaceRoot,
+  isStreaming,
   onArtifactResult
 }: MarkdownFragmentProps): React.JSX.Element {
   const renderCode = ({
@@ -780,7 +908,10 @@ const MarkdownFragment = memo(function MarkdownFragment({
         return artifactSegments.map((segment, index) => (
           <Artifact
             key={`${segment.artifact!.title}-${index}`}
-            artifact={segment.artifact!}
+            // An artifact left unclosed when the reply ended runs as it is, and says if it fails.
+            artifact={
+              isStreaming ? segment.artifact! : { ...segment.artifact!, isStreaming: false }
+            }
             onResult={(result) => onArtifactResult(segment.artifact!.title, result)}
           />
         ))
@@ -817,7 +948,7 @@ const MarkdownFragment = memo(function MarkdownFragment({
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath, remarkFileReferences]}
-      rehypePlugins={[rehypeSharedHighlight, rehypeKatex, rehypeTwemoji]}
+      rehypePlugins={[rehypeTrailingPunctuation, rehypeSharedHighlight, rehypeKatex, rehypeTwemoji]}
       components={{
         code: renderCode,
         pre: ({ children }) => {
@@ -830,6 +961,21 @@ const MarkdownFragment = memo(function MarkdownFragment({
         },
         img: MarkdownImage,
         a: (props) => <MarkdownLink {...props} workspaceRoot={workspaceRoot} />,
+        // A table sits in a rounded card that scrolls sideways when it is wider than the chat; its
+        // columns size to their content and resize from their header's edge.
+        table: ({ children }) => <MarkdownTable>{children}</MarkdownTable>,
+        th: ({ node: _node, ...props }) => <MarkdownTableHeader {...props} />,
+        // A checklist's boxes as the app draws its own, not the browser's disabled checkboxes.
+        input: ({ type, checked }) =>
+          type === 'checkbox' ? (
+            <span
+              className={`markdown-task-box${checked ? ' is-done' : ''}`}
+              role="img"
+              aria-label={checked ? 'Done' : 'Not done'}
+            >
+              {checked && <Check size={11} strokeWidth={3} aria-hidden="true" />}
+            </span>
+          ) : null,
         p: allowRichMedia ? RichMarkdownParagraph : PlainMarkdownParagraph
       }}
     >

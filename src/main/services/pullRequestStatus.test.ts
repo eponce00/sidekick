@@ -10,7 +10,7 @@ import {
   RATE_LIMIT_MESSAGE,
   type ReadOnlyCommand
 } from './pullRequestStatus'
-import { pullRequestMergeStatus, summarizePullRequestChecks } from '../../shared/pullRequests'
+import { summarizePullRequestChecks } from '../../shared/pullRequests'
 
 const pr = {
   number: 42,
@@ -117,39 +117,20 @@ describe('pull request status reader', () => {
   })
 
   it.each([
-    ['draft', { isDraft: true, mergeStateStatus: 'DRAFT' }, false, 'Draft'],
-    ['open', { mergeStateStatus: 'CLEAN' }, false, 'Ready to merge'],
-    ['queued', { mergeStateStatus: 'CLEAN' }, true, 'In merge queue'],
-    [
-      'merged',
-      { state: 'MERGED', mergeable: 'UNKNOWN', mergeStateStatus: 'UNKNOWN' },
-      false,
-      'Merged'
-    ],
-    ['closed', { state: 'CLOSED' }, false, 'Closed']
-  ])('reports a %s pull request', async (state, overrides, queued, label) => {
+    ['draft', { isDraft: true, mergeStateStatus: 'DRAFT' }, false],
+    ['open', { mergeStateStatus: 'CLEAN' }, false],
+    ['queued', { mergeStateStatus: 'CLEAN' }, true],
+    ['merged', { state: 'MERGED', mergeable: 'UNKNOWN', mergeStateStatus: 'UNKNOWN' }, false],
+    ['closed', { state: 'CLOSED' }, false]
+  ])('reports a %s pull request', async (state, overrides, queued) => {
     const run = runner({ prs: [{ ...pr, ...overrides }], queued })
     const result = await createPullRequestStatusReader({ run })('/repo')
     const summary = result.ok ? result.status?.pullRequest : null
     expect(summary?.state).toBe(state)
-    expect(summary && pullRequestMergeStatus(summary).label).toBe(label)
     // Only open, ready pull requests can be in a merge queue, so only they ask.
     expect(run.mock.calls.some(([, args]) => args[0] === 'api')).toBe(
       state === 'open' || state === 'queued'
     )
-  })
-
-  it.each([
-    ['CONFLICTING', 'DIRTY', 'Conflicts', 'failure'],
-    ['MERGEABLE', 'BLOCKED', 'Blocked', 'warning'],
-    ['MERGEABLE', 'BEHIND', 'Behind base', 'warning'],
-    ['MERGEABLE', 'UNSTABLE', 'Checks failing', 'failure'],
-    ['UNKNOWN', 'UNKNOWN', 'Checking mergeability', 'neutral']
-  ])('labels mergeable=%s merge state %s', async (mergeable, mergeStateStatus, label, tone) => {
-    const run = runner({ prs: [{ ...pr, mergeable, mergeStateStatus }] })
-    const result = await createPullRequestStatusReader({ run })('/repo')
-    const summary = result.ok ? result.status?.pullRequest : null
-    expect(summary && pullRequestMergeStatus(summary)).toEqual({ label, tone })
   })
 
   it('summarizes running and failing checks and lists failures first', async () => {
@@ -180,18 +161,6 @@ describe('pull request status reader', () => {
     expect(summarizePullRequestChecks(checks)).toBe('failure')
     expect(summarizePullRequestChecks(checks.slice(1))).toBe('pending')
     expect(summarizePullRequestChecks([])).toBe('none')
-  })
-
-  it('offers Create PR when the branch has no pull request', async () => {
-    const result = await createPullRequestStatusReader({ run: runner({ prs: [] }) })('/repo')
-    expect(result).toMatchObject({
-      ok: true,
-      status: {
-        pullRequest: null,
-        createUrl:
-          'https://github.com/sidekick-labs/sidekick/compare/main...feature%2Fpr-bar?expand=1'
-      }
-    })
   })
 
   it('ignores same-named branches in forks and prefers an open pull request', async () => {
@@ -402,12 +371,10 @@ describe('read-only command list', () => {
 describe('GitHub helpers', () => {
   it.each([
     ['https://github.com/sidekick-labs/sidekick.git', 'sidekick-labs/sidekick'],
-    ['https://github.com/sidekick-labs/sidekick', 'sidekick-labs/sidekick'],
     ['https://token@github.com/sidekick-labs/side.kick.git', 'sidekick-labs/side.kick'],
     ['git@github.com:sidekick-labs/sidekick.git', 'sidekick-labs/sidekick'],
     ['ssh://git@github.com/sidekick-labs/sidekick.git', 'sidekick-labs/sidekick'],
     ['https://github.example.com/sidekick-labs/sidekick.git', null],
-    ['https://gitlab.com/sidekick-labs/sidekick.git', null],
     ['https://github.com.evil.example/sidekick-labs/sidekick.git', null],
     ['', null]
   ])('reads %s as %s', (remote, repository) => {

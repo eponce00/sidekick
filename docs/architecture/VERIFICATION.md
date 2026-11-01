@@ -63,13 +63,14 @@ When a run changed the workspace and attempts to finish:
 1. Fresh passing evidence allows completion.
 2. Fresh failure, stale evidence, or no evidence injects one trusted verification request with the
    smallest manifest-derived checks.
-3. The initial completion text is provisional and never appears as a duplicate answer.
+3. The initial completion text is a provisional draft. It stays in sight while the pass works,
+   then folds into the verification result with the pass's steps.
 4. A second terminal response is allowed. When verification is impossible, the UI retains an
    honest unverified state rather than looping forever.
-5. If that pass left the workspace revision unchanged and the provisional text was not empty, that
-   text stays the answer and the closing reply is marked `verificationNote`. The note and the
-   pass's steps belong to the verification result. A pass that changed files, or that followed an
-   empty provisional answer, is ordinary work, and its closing reply is the answer.
+5. The pass's closing reply is the answer, so a reply always ends on it rather than on a note
+   about the check. The request asks for a complete answer written for someone who has not seen
+   the draft. Replies saved before this, whose closing reply was marked `verificationNote`, keep
+   showing the earlier answer with the note in the verification result.
 6. A persistent goal consults the same request when the model asks to complete it, before the goal
    closes. The request is made once per run whichever boundary reaches it first, so a model cannot
    complete a goal and bypass workspace evidence, and a goal it completed is not told afterwards
@@ -89,8 +90,8 @@ result as the answer. The pass follows the same answer rules as above.
 
 `browser_verify` can capture an animation: with `frames` set to 2 to 4, it takes that many viewport
 screenshots `interval_ms` apart and returns them side by side as one JPEG, oldest on the left, at
-most 1536 pixels wide. A request keeps only the latest two images, so one strip shows motion for
-about the cost of one screenshot without pushing the newest image out. When every frame is
+most 1536 pixels wide. A request to a local model keeps only the latest two images, so one strip
+shows motion for about the cost of one screenshot without pushing the newest image out. When every frame is
 identical, the result says that nothing moved.
 
 The final message shows the verification result as one status in its footer, reconstructed from

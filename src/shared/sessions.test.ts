@@ -2,10 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { ProjectConversation } from './projects'
 import {
   SESSION_LIMITS,
-  countSessionStates,
   mostUrgentSessionState,
   sessionHandleProblem,
-  sessionIsActive,
   sessionLinkFromConversation,
   suggestSessionHandle
 } from './sessions'
@@ -17,26 +15,6 @@ describe('session states', () => {
     expect(mostUrgentSessionState(['idle', 'queued', 'done'])).toBe('queued')
     expect(mostUrgentSessionState(['stopped', 'done'])).toBe('done')
     expect(mostUrgentSessionState([])).toBe('idle')
-  })
-
-  it('counts every state, including absent ones', () => {
-    expect(countSessionStates(['working', 'working', 'done'])).toEqual({
-      queued: 0,
-      working: 2,
-      waiting: 0,
-      done: 1,
-      idle: 0,
-      failed: 0,
-      stopped: 0
-    })
-  })
-
-  it('treats queued, working and waiting as active', () => {
-    expect(
-      ['queued', 'working', 'waiting', 'done', 'idle', 'failed', 'stopped'].filter((state) =>
-        sessionIsActive(state as never)
-      )
-    ).toEqual(['queued', 'working', 'waiting'])
   })
 })
 

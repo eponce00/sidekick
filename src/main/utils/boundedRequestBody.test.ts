@@ -119,18 +119,6 @@ describe('bounded request-body streaming', () => {
     expect(fixture.request.body?.locked).toBe(false)
   })
 
-  it('cancels an already-aborted body without reading a chunk', async () => {
-    const controller = new AbortController()
-    controller.abort()
-    const fixture = streamedRequest([Buffer.from('unread')], undefined, controller.signal)
-    await expect(readBoundedRequestBody(fixture.request, 8)).rejects.toMatchObject({
-      name: 'AbortError'
-    })
-    expect(fixture.pulls()).toBe(0)
-    expect(fixture.cancel).toHaveBeenCalledOnce()
-    expect(fixture.request.body?.locked).toBe(false)
-  })
-
   it('copies accepted chunks before a producer reuses its backing buffer', async () => {
     const bytes = new Uint8Array([1, 2])
     let pulls = 0

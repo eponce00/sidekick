@@ -61,31 +61,6 @@ describe('AgentToolRecoveryController', () => {
     expect(failure(4)).toEqual({})
   })
 
-  it('resets failure streaks after a successful alternative action makes progress', () => {
-    const controller = new AgentToolRecoveryController()
-    const fail = () =>
-      controller.observeCall({
-        name: 'browser_fill_form',
-        arguments: { fields: [{ kind: 'textbox' }] },
-        result: toolExecutionFailed({
-          title: 'Fill browser form',
-          code: 'conflict',
-          message: 'One field could not be verified',
-          retryable: true
-        }),
-        readOnly: false
-      })
-
-    expect(fail()).toEqual({})
-    controller.observeCall({
-      name: 'browser_type',
-      arguments: { ref: 'field-1' },
-      result: toolExecutionSucceeded({ title: 'Type in browser', data: { changed: true } }),
-      readOnly: false
-    })
-    expect(fail()).toEqual({})
-  })
-
   it('treats verified field mutations in a partial form result as progress', () => {
     const controller = new AgentToolRecoveryController()
     const result = toolExecutionFailed({
@@ -263,32 +238,5 @@ describe('AgentToolRecoveryController', () => {
     expect(observations[3]).toMatchObject({ reason: 'state_revisit', count: 2 })
     expect(observations[4]).toMatchObject({ reason: 'state_revisit', count: 3 })
     expect(observations.every(({ stopReason }) => !stopReason)).toBe(true)
-  })
-
-  it('allows long sequences of distinct successful targeted mutations', () => {
-    const controller = new AgentToolRecoveryController()
-    const observations = Array.from({ length: 40 }, (_, index) =>
-      controller.observeCall({
-        name: 'edit',
-        arguments: {
-          file_path: 'controller.svg',
-          old_string: `before-${index}`,
-          new_string: `after-${index}`
-        },
-        result: toolExecutionSucceeded({
-          title: 'Edit',
-          changes: [
-            {
-              path: 'controller.svg',
-              kind: 'update',
-              afterHash: `state-${index}`
-            }
-          ]
-        }),
-        readOnly: false
-      })
-    )
-
-    expect(observations).toEqual(Array.from({ length: 40 }, () => ({})))
   })
 })

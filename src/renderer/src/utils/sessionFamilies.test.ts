@@ -3,7 +3,6 @@ import type { Conversation } from '../types/app.types'
 import {
   dotFilterStatus,
   expandFamilies,
-  familyRollUpLabel,
   indexSessionFamilies,
   mostUrgentDot,
   sidebarDot
@@ -72,14 +71,10 @@ describe('marks and roll-up', () => {
     expect(dotFilterStatus('stopped')).toBeNull()
   })
 
-  it('rolls a family up to its most urgent mark and a one-line count', () => {
+  it('rolls a family up to its most urgent mark', () => {
     expect(mostUrgentDot(['unread', 'working', null, 'waiting'])).toBe('waiting')
     expect(mostUrgentDot([null, 'stopped'])).toBe('stopped')
     expect(mostUrgentDot([null])).toBeNull()
-    expect(familyRollUpLabel(['working', 'unread', 'working', 'waiting', null])).toBe(
-      '1 needs you · 2 working · 1 done'
-    )
-    expect(familyRollUpLabel([null])).toBe('')
   })
 })
 

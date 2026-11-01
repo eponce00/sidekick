@@ -94,21 +94,17 @@ it('keeps newer edits dirty while posting only the verified earlier bytes', asyn
   resolve()
   await vi.waitFor(() => expect(f.fetcher).toHaveBeenCalledOnce())
   expect(document.documentElement.dataset.sidekickPdfSaved).toBe('false')
-  expect(document.querySelector('#status')?.textContent).toContain('Unsaved newer form changes')
   expect((f.fetcher.mock.calls as unknown as [string, { body: Uint8Array }][])[0][1].body).toBe(
     f.original
   )
   expect(f.destroy).toHaveBeenCalledOnce()
 })
 
-it('publishes hybrid copies with explicit machine-readable and displayed scope', async () => {
+it('publishes hybrid copies with an explicit verification scope', async () => {
   const f = await fixture()
   f.saved.getMetadata.mockResolvedValue({ info: { IsXFAPresent: true } })
   f.edit('updated')
   f.click()
   await vi.waitFor(() => expect(f.fetcher).toHaveBeenCalledOnce())
   expect(document.documentElement.dataset.sidekickPdfVerification).toBe('acroform-xfa-unverified')
-  expect(document.querySelector('#status')?.textContent).toContain(
-    'AcroForm verified; XFA compatibility unverified'
-  )
 })

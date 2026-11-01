@@ -1,0 +1,270 @@
+/* ============================================
+   Files: the project tree and its viewer
+   ============================================ */
+
+/* The tree's and the file viewer's loading and empty states: quiet text on the panel. */
+.activity-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-8) var(--space-5);
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.activity-empty p {
+  margin: 0;
+}
+
+.activity-empty .hint {
+  color: var(--text-muted);
+}
+
+.file-explorer-wrap {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The panel's second row, as tall as the file viewer's header so switching between them does not
+   move the content. Its right inset is the tab strip's, so its last button sits under the strip's
+   fold button. */
+.file-explorer-header {
+  display: flex;
+  align-items: center;
+  height: var(--panel-header-height);
+  box-sizing: border-box;
+  padding: 0 6px 0 var(--space-3);
+  gap: 2px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+/* Type from .section-heading. */
+.file-explorer-root-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-2) 0;
+}
+
+.file-node-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  transition: background var(--duration-fast);
+}
+
+.file-node-row:hover,
+.file-node-row:focus-within {
+  background: var(--surface-2);
+}
+
+.file-node {
+  all: unset;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  gap: 4px;
+  /* The work steps' pitch: a file tree is denser than the sidebar's. */
+  min-height: var(--work-row-height);
+  padding-top: 2px;
+  padding-bottom: 2px;
+  padding-right: 4px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  transition:
+    background var(--duration-fast),
+    color var(--duration-fast);
+  border-radius: 0;
+}
+
+.file-node:hover {
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.file-node:focus-visible {
+  box-shadow: none;
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.file-node-delete,
+.file-node-action {
+  all: unset;
+  width: 24px;
+  height: 24px;
+  margin-right: 6px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--duration-fast),
+    color var(--duration-fast),
+    background var(--duration-fast);
+}
+
+.file-node-row:hover .file-node-delete,
+.file-node-row:hover .file-node-action,
+.file-node-row:focus-within .file-node-delete,
+.file-node-row:focus-within .file-node-action,
+.file-node-delete:focus-visible,
+.file-node-action:focus-visible {
+  opacity: 1;
+}
+
+.file-node-delete:hover {
+  color: var(--color-error);
+  background: var(--color-error-subtle);
+}
+
+.file-node-action:hover {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.file-node-delete:focus-visible,
+.file-node-action:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.file-node-delete:disabled,
+.file-node-action:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.file-node-dir {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.file-node-dir .file-node-icon {
+  color: var(--text-secondary);
+}
+
+.file-node-file .file-node-icon {
+  color: var(--text-muted);
+}
+
+.file-node-chevron {
+  width: 10px;
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.file-node-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+}
+
+.file-node-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.file-explorer-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 4px var(--space-3);
+  color: var(--color-error);
+  background: var(--color-error-subtle);
+  font-size: var(--text-xs);
+  line-height: 1.35;
+  flex-shrink: 0;
+}
+
+.file-explorer-error > svg {
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+
+.file-explorer-error span {
+  flex: 1;
+  min-width: 0;
+  padding-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.file-explorer-error button {
+  all: unset;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  place-items: center;
+  margin-right: -4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: inherit;
+}
+
+.file-explorer-error button:hover {
+  background: var(--color-error-subtle);
+}
+
+.file-explorer-error button:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+@media (hover: none) {
+  .file-node-delete,
+  .file-node-action {
+    opacity: 0.8;
+  }
+}
+
+/* No folder: a compact empty state stacked and centred in the panel's upper third. */
+.files-panel-empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--space-5);
+}
+
+.files-panel-empty::before {
+  flex: 0 1 18%;
+  content: '';
+}
+
+/* A project folder's own node, when the project has several: a folder row with a quiet mark. */
+.file-root-row .file-node-name {
+  font-weight: 500;
+}
+
+.file-root-mark {
+  margin-left: 6px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}

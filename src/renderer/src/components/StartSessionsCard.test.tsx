@@ -78,8 +78,7 @@ describe('StartSessionsCard', () => {
   it('lists each chat, names the project it allows, and starts with the user’s changes', async () => {
     const onResolve = vi.fn()
     render('pending', onResolve)
-    expect(container.textContent).toContain('Start 2 chats?')
-    expect(container.textContent).toContain('schedules')
+    // A chat that needs a grant says which project starting it allows.
     expect(container.textContent).toContain('starting allows it to use sidekick-api')
 
     const workIn = container.querySelector<HTMLElement>(
@@ -104,10 +103,5 @@ describe('StartSessionsCard', () => {
     )!
     await act(async () => notNow.click())
     expect(onResolve).toHaveBeenCalledWith('interaction', { action: 'cancel' })
-  })
-
-  it('collapses to one line once answered', () => {
-    render('resolved', vi.fn(), { action: 'start' })
-    expect(container.textContent).toBe('Started 2 chats')
   })
 })

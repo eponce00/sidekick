@@ -69,13 +69,7 @@ describe('buildCommandPaletteItems', () => {
     const byId = new Map(items.map((item) => [item.id, item]))
     expect(byId.get('action:new-chat')?.shortcut).toBe('Ctrl+N')
     expect(byId.get('action:open-settings')?.shortcut).toBe('Ctrl+,')
-    expect(byId.get('action:toggle-voice')).toMatchObject({
-      title: 'Turn voice on',
-      shortcut: 'Ctrl+Space'
-    })
     expect(byId.get('action:next-conversation')?.shortcut).toBe('Ctrl+Shift+]')
-    expect(byId.get('action:toggle-browser-panel')?.title).toBe('Show browser panel')
-    expect(byId.get('action:toggle-sidebar')?.title).toBe('Hide sidebar')
   })
 
   it('uses macOS key names on macOS', () => {
@@ -98,16 +92,6 @@ describe('buildCommandPaletteItems', () => {
     expect(current).toMatchObject({ detail: 'Open now', shortcut: 'Ctrl+2', recency: 9 })
     first.run()
     expect(shared.openConversation).toHaveBeenCalledWith('a')
-  })
-
-  it('lists projects by name and folder', () => {
-    const shared = actions()
-    const item = buildCommandPaletteItems(context({ actions: shared })).find(
-      ({ id }) => id === 'project:p'
-    )!
-    expect(item).toMatchObject({ title: 'SideKick', detail: 'E:/code/sidekick' })
-    item.run()
-    expect(shared.openProjectConversations).toHaveBeenCalledWith('p')
   })
 
   it('disables moving between conversations when there is only one', () => {

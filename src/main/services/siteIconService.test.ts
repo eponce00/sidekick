@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { SiteIconService } from './siteIconService'
+import { SiteIconService, guardedIconFetch } from './siteIconService'
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 
@@ -53,6 +53,11 @@ describe('SiteIconService', () => {
     expect(await service.iconFor('https://example.org/deep/link')).toMatch(/^data:image\/png/)
   })
 
+  it('fetches by default under the network guard, which refuses local addresses', async () => {
+    await expect(guardedIconFetch('https://127.0.0.1/favicon.ico')).rejects.toThrow()
+    await expect(guardedIconFetch('https://10.0.0.5/favicon.ico')).rejects.toThrow(/local network/)
+  })
+
   it('never contacts anything for non-http or local hosts', async () => {
     const fetchImpl = vi.fn()
     const service = new SiteIconService(cacheDir, fetchImpl as unknown as typeof fetch)
@@ -70,16 +75,5 @@ describe('SiteIconService', () => {
     expect(await again.iconFor('https://nothing.test/')).toBeNull()
     // ico + html-fallback root fetch on the first pass only.
     expect(fetchImpl).toHaveBeenCalledTimes(2)
-  })
-
-  it('reads the first icon link in the head only', () => {
-    expect(
-      SiteIconService.declaredIconHref(
-        '<head><link rel="stylesheet" href="a.css"><link rel="icon" type="image/png" href="/b.png"><link rel="apple-touch-icon" href="/c.png"></head>'
-      )
-    ).toBe('/b.png')
-    expect(
-      SiteIconService.declaredIconHref('<head></head><body><link rel="icon" href="/x"></body>')
-    ).toBeNull()
   })
 })

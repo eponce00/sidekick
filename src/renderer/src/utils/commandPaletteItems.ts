@@ -1,4 +1,19 @@
 import {
+  ArrowDown,
+  ArrowUp,
+  CalendarClock,
+  FolderGit2,
+  FolderPlus,
+  Globe,
+  Mic,
+  Moon,
+  PanelLeft,
+  RefreshCw,
+  Settings,
+  SquarePen,
+  Sun
+} from 'lucide-react'
+import {
   CONVERSATION_JUMP_COUNT,
   shortcutLabel,
   type ShortcutId
@@ -22,6 +37,8 @@ export interface CommandPaletteActions {
   openConversation: (conversationId: string) => void
   openProjectConversations: (projectId: string) => void
   manageWorktrees: () => void
+  /** Edits the current chat's project; absent when the chat has none. */
+  editProject?: () => void
 }
 
 export interface CommandPaletteContext {
@@ -47,6 +64,7 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       id: 'action:new-chat',
       group: 'actions',
       title: 'New chat',
+      icon: SquarePen,
       keywords: 'conversation start create',
       shortcut: label('new-chat'),
       run: actions.newChat
@@ -55,6 +73,7 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       id: 'action:open-schedules',
       group: 'actions',
       title: 'Schedules',
+      icon: CalendarClock,
       keywords: 'schedule routine recurring automation cron timer',
       run: actions.openSchedules
     },
@@ -62,14 +81,28 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       id: 'action:open-project',
       group: 'actions',
       title: 'Open project…',
+      icon: FolderPlus,
       keywords: 'folder workspace',
       shortcut: label('open-project'),
       run: actions.openProject
     },
+    ...(actions.editProject
+      ? [
+          {
+            id: 'action:edit-project',
+            group: 'actions' as const,
+            title: 'Edit project…',
+            icon: FolderPlus,
+            keywords: 'folders add folder primary rename repository',
+            run: actions.editProject
+          }
+        ]
+      : []),
     {
       id: 'action:manage-worktrees',
       group: 'actions',
       title: 'Manage worktrees',
+      icon: FolderGit2,
       keywords: 'git branch isolate parallel agents remove sync',
       run: actions.manageWorktrees
     },
@@ -77,6 +110,7 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       id: 'action:open-settings',
       group: 'actions',
       title: 'Open settings',
+      icon: Settings,
       keywords: 'preferences options providers models',
       shortcut: label('open-settings'),
       run: actions.openSettings
@@ -85,6 +119,7 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       id: 'action:toggle-sidebar',
       group: 'actions',
       title: context.sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar',
+      icon: PanelLeft,
       keywords: 'toggle sidebar conversations list',
       run: actions.toggleSidebar
     }
@@ -93,6 +128,7 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
     id: 'action:toggle-browser-panel',
     group: 'actions',
     title: context.browserPanelOpen ? 'Hide browser panel' : 'Show browser panel',
+    icon: Globe,
     keywords: 'toggle browser web activity panel',
     run: actions.toggleBrowserPanel
   })
@@ -100,7 +136,8 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
     items.push({
       id: 'action:toggle-voice',
       group: 'actions',
-      title: context.voiceOn ? 'Turn voice off' : 'Turn voice on',
+      title: context.voiceOn ? 'Stop dictating' : 'Dictate',
+      icon: Mic,
       keywords: 'toggle voice microphone dictation talk speak',
       shortcut: label('toggle-voice'),
       run: actions.toggleVoice
@@ -111,6 +148,7 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       id: 'action:toggle-theme',
       group: 'actions',
       title: context.theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode',
+      icon: context.theme === 'dark' ? Sun : Moon,
       keywords: 'theme appearance toggle',
       run: actions.toggleTheme
     },
@@ -118,6 +156,7 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       id: 'action:previous-conversation',
       group: 'actions',
       title: 'Previous conversation',
+      icon: ArrowUp,
       keywords: 'go back up',
       shortcut: label('previous-conversation'),
       disabled: context.sidebarOrder.length < 2,
@@ -127,6 +166,7 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       id: 'action:next-conversation',
       group: 'actions',
       title: 'Next conversation',
+      icon: ArrowDown,
       keywords: 'go forward down',
       shortcut: label('next-conversation'),
       disabled: context.sidebarOrder.length < 2,
@@ -136,6 +176,7 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       id: 'action:check-for-updates',
       group: 'actions',
       title: 'Check for updates',
+      icon: RefreshCw,
       keywords: 'update version release',
       run: actions.checkForUpdates
     }
@@ -169,8 +210,12 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       id: `project:${project.id}`,
       group: 'projects',
       title: project.name,
-      detail: project.folder_path,
-      keywords: 'project folder',
+      detail: project.folders?.length
+        ? `${project.folder_path} and ${project.folders.length} more ${project.folders.length === 1 ? 'folder' : 'folders'}`
+        : project.folder_path,
+      keywords: ['project folder', ...(project.folders ?? []).map((folder) => folder.name)].join(
+        ' '
+      ),
       recency: project.last_activity_at ?? project.updated_at,
       run: () => actions.openProjectConversations(project.id)
     })

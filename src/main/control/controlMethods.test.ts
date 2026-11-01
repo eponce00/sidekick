@@ -33,7 +33,7 @@ function storedFixture(): Record<string, unknown> {
     openRouterApiKey: LEGACY_SECRET,
     officeHelperInterpreter: '/usr/bin/python3',
     strayKey: 1,
-    contentFontSize: 99,
+    textScale: 999,
     providerInstances: [
       {
         id: 'openrouter',
@@ -85,6 +85,7 @@ beforeEach(() => {
   isEncryptionAvailable.mockReturnValue(true)
   deps = {
     store: {
+      delete: vi.fn(),
       get: vi.fn((key: string, fallback?: unknown) => (key === 'settings' ? stored : fallback)),
       set: vi.fn((key: string, value: unknown) => {
         if (key === 'settings') stored = value as Record<string, unknown>
@@ -136,9 +137,7 @@ describe('control methods never reveal secrets', () => {
 
   it.each([
     'openRouterApiKey',
-    'ollamaCloudApiKey',
     '__encryptedProviderSecrets',
-    '__encryptedSecrets',
     'providerInstances',
     'mcpServers',
     'officeHelperInterpreter',
@@ -179,9 +178,7 @@ describe('control methods never reveal secrets', () => {
       { id: 'local', name: 'Ollama', type: 'ollama', enabled: true, apiKeyConfigured: false }
     ])
     expect(report.unknownKeys).toEqual(['strayKey'])
-    expect(report.invalidSettings).toEqual([
-      { key: 'contentFontSize', reason: 'expected 12 to 17' }
-    ])
+    expect(report.invalidSettings).toEqual([{ key: 'textScale', reason: 'expected 80 to 150' }])
     expect(report.credentialStorage).toEqual({ secure: true, backend: 'gnome_libsecret' })
     expect(report.mcpServers).toEqual([
       {
@@ -225,8 +222,8 @@ describe('config.set', () => {
 
   it.each([
     ['webSearchEnabled', 'yes'],
-    ['contentFontSize', '30'],
-    ['contentFontSize', '13.5'],
+    ['textScale', '300'],
+    ['textScale', '100.5'],
     ['commandPermissionMode', 'bypass'],
     ['manualLocation', 'line\nbreak'],
     ['selectedModel', 'openai:nowhere/model']

@@ -50,7 +50,8 @@
   height: 18px;
   flex-shrink: 0;
   place-items: center;
-  color: var(--accent);
+  /* Grey like the label: a check marks the state, not a colour. */
+  color: inherit;
 }
 
 .app-menu-mark img {
@@ -85,9 +86,50 @@
   background: var(--border-subtle);
 }
 
+/* A heading already starts its group, so a hairline right above it would mark the group twice. */
+.app-menu-separator:has(+ .section-heading) {
+  display: none;
+}
+
+/* With no hairline, space alone splits a group off, so every heading after the first takes 8px. */
+.app-menu > .section-heading:not(:first-child) {
+  margin-top: 8px;
+}
+
+/* Type from .section-heading; on the icon column's left edge, the rows' own inline padding. */
 .app-menu-heading {
-  padding: 6px 10px 3px 32px;
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-  font-weight: 600;
+  padding: 6px 10px 3px 6px;
+}
+
+/* The same rows as buttons, for menus drawn in the page (the sidebar's ⋯ menus), which take
+   focus and hover themselves instead of the host's highlighted index. */
+button.app-menu-item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+}
+
+button.app-menu-item:is(:hover, :focus-visible):not(:disabled) {
+  color: var(--text-primary);
+  background: var(--surface-3);
+  box-shadow: none;
+}
+
+button.app-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Removes something: grey at rest like its neighbours, the error colour once it is pointed at. */
+.app-menu-item.is-danger:is(:hover, :focus-visible, .is-active):not(:disabled, .is-disabled) {
+  color: var(--color-error);
+  background: var(--color-error-subtle);
+}
+
+/* A radio item whose mark column holds its own icon shows its state at the end instead. */
+.app-menu-check {
+  flex-shrink: 0;
+  margin-left: 4px;
 }

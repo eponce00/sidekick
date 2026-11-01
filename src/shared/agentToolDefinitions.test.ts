@@ -48,4 +48,20 @@ describe('workspace tool definitions', () => {
       }
     })
   })
+
+  it('merges allOf object branches instead of leaving the model an empty object', () => {
+    const schema = normalizeAgentToolParameters({
+      allOf: [
+        { $ref: '#/$defs/Paging' },
+        { type: 'object', required: ['query'], properties: { query: { type: 'string' } } }
+      ],
+      $defs: { Paging: { type: 'object', properties: { page: { type: 'integer' } } } }
+    })
+
+    expect(schema).toEqual({
+      type: 'object',
+      required: ['query'],
+      properties: { page: { type: 'integer' }, query: { type: 'string' } }
+    })
+  })
 })

@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   ACTIVITY_PANEL_MIN_WIDTH,
   ACTIVITY_PANEL_NARROW_WIDTH,
-  ACTIVITY_PANEL_WIDE_WIDTH,
   activityPanelDragZone,
   activityPanelMaximumWidth,
   activityPanelSnapWidths,
   clampActivityPanelWidth,
+  defaultActivityPanelWidth,
   snapActivityPanelWidth,
   storedActivityPanelSize,
   storedActivityPanelWidth,
@@ -24,13 +24,20 @@ describe('activity panel layout', () => {
     expect(clampActivityPanelWidth(900, 760)).toBe(712)
   })
 
-  it('restores the width the user left it at', () => {
-    expect(storedActivityPanelWidth(null, 1_400)).toBe(ACTIVITY_PANEL_WIDE_WIDTH)
+  it('restores the width the user dragged it to', () => {
+    expect(storedActivityPanelWidth('640', 1_440, 'wide')).toBe(640)
     expect(storedActivityPanelWidth('512', 1_400)).toBe(512)
     expect(storedActivityPanelWidth('320', 1_400)).toBe(320)
-    expect(storedActivityPanelWidth('not-a-number', 1_400)).toBe(ACTIVITY_PANEL_WIDE_WIDTH)
     // Someone on the narrow size of earlier versions keeps that narrow width.
     expect(storedActivityPanelWidth('720', 1_400, 'narrow')).toBe(ACTIVITY_PANEL_NARROW_WIDTH)
+  })
+
+  it('follows the viewport while no width is stored', () => {
+    expect(storedActivityPanelWidth(null, 1_440)).toBeNull()
+    expect(storedActivityPanelWidth('not-a-number', 1_440)).toBeNull()
+    expect(defaultActivityPanelWidth(1_440)).toBe(403)
+    expect(defaultActivityPanelWidth(1_000)).toBe(320)
+    expect(defaultActivityPanelWidth(2_560)).toBe(440)
   })
 
   it('remembers the whole window, and otherwise sits beside the chat', () => {
@@ -89,25 +96,16 @@ describe('workspace layout beside an open inspector', () => {
   })
 
   it('leaves everything alone when it fits, the panel is closed, or the panel floats', () => {
-    expect(layout({ viewportWidth: 1_600 }).sidebarAutoCollapsed).toBe(false)
-    expect(layout({ panelWidth: 320 }).sidebarAutoCollapsed).toBe(false)
+    expect(layout({ viewportWidth: 1_700 }).sidebarAutoCollapsed).toBe(false)
+    // The sidebar, a 640 chat and a 320 panel fit in 1,240, but not in 1,200.
+    expect(layout({ viewportWidth: 1_240, panelWidth: 320 }).sidebarAutoCollapsed).toBe(false)
+    expect(layout({ viewportWidth: 1_200, panelWidth: 320 }).sidebarAutoCollapsed).toBe(true)
     expect(layout({ panelOpen: false }).sidebarAutoCollapsed).toBe(false)
+    // With the panel on its rail, 900 leaves the chat under 640 and folds; 1,000 does not.
+    expect(layout({ panelOpen: false, viewportWidth: 900 }).sidebarAutoCollapsed).toBe(true)
+    expect(layout({ panelOpen: false, viewportWidth: 1_000 }).sidebarAutoCollapsed).toBe(false)
     expect(layout({ viewportWidth: 760 }).sidebarAutoCollapsed).toBe(false)
     expect(layout({ sidebarCollapsed: true }).sidebarAutoCollapsed).toBe(false)
-  })
-})
-
-describe('a wide browser page', () => {
-  it('fits a 1440-wide page in a 1920-wide window, narrowing the chat to a phone width', () => {
-    const { panelMaxWidth } = workspaceLayout({
-      viewportWidth: 1_920,
-      sidebarCollapsed: false,
-      sidebarHeldOpen: false,
-      panelOpen: true,
-      panelWidth: 1_440
-    })
-    expect(panelMaxWidth).toBe(1_920 - 48 - 320)
-    expect(panelMaxWidth).toBeGreaterThanOrEqual(1_440)
   })
 })
 
@@ -145,7 +143,9 @@ describe('narrow windows', () => {
   })
 
   it('keeps the sidebar beside a narrow panel, and folds it for a wide one', () => {
-    expect(sized({ panelSize: 'wide', panelWidth: 320 }).sidebarAutoCollapsed).toBe(false)
+    expect(
+      sized({ panelSize: 'wide', panelWidth: 320, viewportWidth: 1_240 }).sidebarAutoCollapsed
+    ).toBe(false)
     expect(sized({ panelSize: 'wide', panelWidth: 900 }).sidebarAutoCollapsed).toBe(true)
   })
 })

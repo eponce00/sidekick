@@ -1,0 +1,52 @@
+/* A side panel app in a window of its own: the title bar, then the app filling the rest. */
+.panel-window {
+  display: flex;
+  height: 100vh;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface-0);
+}
+
+.panel-window-app {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.panel-window-app svg {
+  color: var(--text-secondary);
+}
+
+.panel-window-dock {
+  all: unset;
+  display: inline-grid;
+  width: 32px;
+  height: 30px;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    color var(--duration-fast),
+    background var(--duration-fast);
+}
+
+.panel-window-dock:hover {
+  color: var(--text-primary);
+  background: var(--surface-2);
+}
+
+.panel-window-dock:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.panel-window-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  border: 0;
+}

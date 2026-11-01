@@ -1,6 +1,9 @@
+/* Every box down to the document column may shrink below its content, so a wide table is bounded
+   by the padded column and scrolls inside its card rather than widening the panel. */
 .workspace-file-viewer {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
   flex: 1;
 }
@@ -9,7 +12,10 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 36px;
+  /* One height with the Files folder header, the panel's other second row. */
+  height: var(--panel-header-height);
+  box-sizing: border-box;
+  flex-shrink: 0;
   padding: 0 var(--space-3) 0 var(--space-2);
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-secondary);
@@ -39,9 +45,14 @@
   background: var(--surface-2);
 }
 
+.workspace-file-viewer-back:focus-visible,
+.workspace-file-viewer-action:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
 .workspace-file-viewer-icon {
   flex-shrink: 0;
-  color: var(--accent);
+  color: var(--text-muted);
 }
 
 .workspace-file-viewer-name {
@@ -62,6 +73,7 @@
 
 .workspace-file-viewer-body {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
 }
@@ -89,12 +101,15 @@
    a quiet type scale, and structure from rules and spacing rather than size. The chat's message
    styles only apply inside a message, so everything a document uses is defined here. */
 .workspace-file-viewer-markdown {
+  min-width: 0;
   max-width: 760px;
   margin: 0 auto;
-  padding: var(--space-6) clamp(20px, 5%, 40px) var(--space-8, 48px);
-  color: var(--text-secondary);
-  font-size: 14px;
-  line-height: 1.65;
+  padding: var(--space-6) clamp(20px, 5%, 40px) var(--space-8);
+  /* The chat's reading colour, so a document reads like the reply that cites it. */
+  color: var(--content-color);
+  /* The chat's reading size, so a document is never set larger than the reply that cites it. */
+  font-size: var(--content-text);
+  line-height: var(--content-leading);
   overflow-wrap: anywhere;
 }
 
@@ -110,16 +125,17 @@
   letter-spacing: -0.01em;
 }
 
+/* The chat's heading ramp (.message-content), so a document is never louder than the reply that
+   cites it, and a README's title fits the panel on one line. */
 .workspace-file-viewer-markdown h1 {
   padding-bottom: 0.35em;
   border-bottom: 1px solid var(--border-subtle);
-  font-size: 1.6em;
+  font-size: 1.32em;
 }
 
 .workspace-file-viewer-markdown h2 {
-  padding-bottom: 0.3em;
-  border-bottom: 1px solid var(--border-subtle);
-  font-size: 1.3em;
+  margin-top: min(1.8em, var(--space-6));
+  font-size: 1.18em;
 }
 
 .workspace-file-viewer-markdown h3 {
@@ -130,7 +146,8 @@
   font-size: 1em;
 }
 
-.workspace-file-viewer-markdown :is(p, ul, ol, blockquote, table, pre, .markdown-code-block) {
+.workspace-file-viewer-markdown
+  :is(p, ul, ol, blockquote, .markdown-table, pre, .markdown-code-block) {
   margin: 0 0 1em;
 }
 
@@ -179,14 +196,19 @@
 
 .workspace-file-viewer-markdown hr {
   height: 1px;
-  margin: 2em 0;
+  margin: var(--space-5) 0;
   border: 0;
   background: var(--border-subtle);
 }
 
+/* The rule already separates the sections, so the heading after it adds only a step. */
+.workspace-file-viewer-markdown hr + :is(h1, h2, h3) {
+  margin-top: var(--space-3);
+}
+
 .workspace-file-viewer-markdown blockquote {
   padding: 0.5em 1em;
-  border-left: 3px solid var(--accent);
+  border-left: 3px solid var(--border-strong);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   background: var(--surface-1);
   color: var(--text-secondary);
@@ -198,30 +220,38 @@
 
 .workspace-file-viewer-markdown :not(pre) > code {
   padding: 0.15em 0.4em;
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   background: var(--surface-2);
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: 0.88em;
 }
 
-.workspace-file-viewer-markdown pre {
-  overflow-x: auto;
-  font-size: 12.5px;
-  line-height: 1.55;
+.workspace-file-viewer-markdown :not(pre) > code.is-before-punctuation {
+  padding-inline-end: 2px;
 }
 
-.workspace-file-viewer-markdown table {
-  display: block;
-  width: max-content;
-  max-width: 100%;
+.workspace-file-viewer-markdown :not(pre) > code.is-after-opening {
+  padding-inline-start: 2px;
+}
+
+.workspace-file-viewer-markdown pre {
   overflow-x: auto;
+  font-size: var(--code-text);
+  line-height: var(--code-leading);
+}
+
+/* The table's card (.markdown-table) scrolls it; the table keeps its natural width, and its outer
+   cell edges give way to the card's border. Specific enough to replace the chat's table rules,
+   which separate the borders. */
+.workspace-file-viewer-markdown.message-content .markdown-table table {
   border-collapse: collapse;
-  font-size: 13px;
+  border-style: hidden;
+  font-size: var(--text-md);
 }
 
 .workspace-file-viewer-markdown :is(th, td) {
-  padding: 0.45em 0.8em;
+  padding: 0.45em var(--space-2);
   border: 1px solid var(--border-subtle);
   text-align: left;
   vertical-align: top;
@@ -232,6 +262,17 @@
 
 .workspace-file-viewer-markdown td code {
   overflow-wrap: anywhere;
+}
+
+/* In the narrow document column, short-label columns ('#', 'B1') shrink to their content and a
+   cell of only code keeps it on one line, so the wrapping falls to the prose column. */
+.workspace-file-viewer-markdown :is(th, td).is-compact {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.workspace-file-viewer-markdown td.is-code {
+  white-space: nowrap;
 }
 
 .workspace-file-viewer-markdown th {

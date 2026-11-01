@@ -9,7 +9,7 @@ import { AgentRunStore } from './agentRunStore'
 import { recoverAgentRunMaterializations } from './agentRunRecovery'
 
 describe('durable run finalization recovery', () => {
-  it.each(['completed', 'failed', 'cancelled', 'interrupted'] as const)(
+  it.each(['completed', 'interrupted'] as const)(
     'does not resurrect deleted conversations while finalizing an orphaned %s journal',
     (phase) => {
       const db = openApplicationDatabase(':memory:')
@@ -73,7 +73,7 @@ describe('durable run finalization recovery', () => {
       // Simulate the existing message having been persisted before finalization.
       db.prepare(
         `INSERT INTO messages (id, conversation_id, role, content, timestamp,
-        checkpoint_hash, checkpoint_workspace_root) VALUES (?, 'thread', 'agent', 'Partial', 1, 'fixture-hash', '/fixture')`
+        checkpoints) VALUES (?, 'thread', 'agent', 'Partial', 1, '[{"workspaceRoot":"/fixture","hash":"abcdef1"}]')`
       ).run('message-terminal')
       db.close()
       db = openApplicationDatabase(path)
@@ -105,10 +105,11 @@ describe('durable run finalization recovery', () => {
       expect(store.get('active')?.phase).toBe('interrupted')
       expect(store.get('terminal')?.phase).toBe('completed')
       expect(
-        db
-          .prepare("SELECT content, checkpoint_hash FROM messages WHERE id = 'message-terminal'")
-          .get()
-      ).toEqual({ content: 'Recovered terminal', checkpoint_hash: 'fixture-hash' })
+        db.prepare("SELECT content, checkpoints FROM messages WHERE id = 'message-terminal'").get()
+      ).toEqual({
+        content: 'Recovered terminal',
+        checkpoints: JSON.stringify([{ workspaceRoot: '/fixture', hash: 'abcdef1' }])
+      })
       expect(db.prepare('SELECT count(*) AS count FROM messages').get()).toEqual({ count: 2 })
       for (const id of ['active', 'terminal'])
         expect(

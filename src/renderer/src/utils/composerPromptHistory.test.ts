@@ -61,9 +61,12 @@ describe('stepPromptHistory', () => {
     expect(done).toEqual({ prompt: 'half typed', position: null })
   })
 
-  it('does nothing forward unless browsing', () => {
+  it('does nothing forward unless browsing, or without history', () => {
     expect(
       stepPromptHistory({ direction: 'forward', entries, position: null, currentPrompt: '' })
+    ).toBeNull()
+    expect(
+      stepPromptHistory({ direction: 'backward', entries: [], position: null, currentPrompt: '' })
     ).toBeNull()
   })
 
@@ -87,12 +90,6 @@ describe('stepPromptHistory', () => {
         currentPrompt: edited
       })?.position
     ).toMatchObject({ entryId: 'm3', draft: edited })
-  })
-
-  it('returns nothing without history', () => {
-    expect(
-      stepPromptHistory({ direction: 'backward', entries: [], position: null, currentPrompt: '' })
-    ).toBeNull()
   })
 })
 

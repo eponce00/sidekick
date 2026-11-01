@@ -1,7 +1,6 @@
 import { Children, useState, useRef, memo, useMemo } from 'react'
 import {
   AlignLeft,
-  Brain,
   Check,
   ChevronDown,
   ChevronRight,
@@ -13,6 +12,7 @@ import {
   FolderOpen,
   GitFork,
   Info,
+  Lightbulb,
   ListChecks,
   Loader2,
   MessageSquareText,
@@ -30,13 +30,15 @@ import {
   isWorkSegmentGroup
 } from '../utils/segmentGrouping'
 import Artifact from './artifacts/Artifact'
-import ToolCallRow from './ToolCallRow'
+import { artifactSlots } from '../utils/artifactSlots'
+import ToolCallRow, { FailureMark } from './ToolCallRow'
 import { ToolExecutionCard } from './ToolExecutionCard'
 import { TurnChangeReview } from './TurnChangeReview'
 import { changedFilesFromSegments } from '../utils/turnChanges'
 import AgentInteractionCard from './AgentInteractionCard'
 import { resolveToolView } from '../services/uiContributions'
-import { MessageMarkdown } from './MessageMarkdown'
+import { MessageImageGallery, MessageMarkdown } from './MessageMarkdown'
+import { agentShownImages } from '../utils/agentShownImages'
 import { CommandLiveView } from './CommandLiveView'
 import { useFollowBottom } from '../hooks/useFollowBottom'
 import { MessageSources } from './MessageSources'
@@ -44,11 +46,13 @@ import { ImageAttachmentPreview } from './ImageAttachmentPreview'
 import { ReadAloudButton } from './ReadAloudButton'
 import { PastedTextAttachmentCard } from './PastedTextAttachment'
 import {
+  isBrowserAnnotationAttachment,
   isPastedTextAttachment,
   isProjectContextAttachment,
   isReviewCommentAttachment,
   reviewCommentLineLabel
 } from '../../../shared/messageContextAttachments'
+import { BrowserMarkChip } from './BrowserMarkChip'
 import type { Message } from '../types/chat.types'
 import type { GroupedSegment } from '../types/chat.types'
 import {
@@ -71,6 +75,8 @@ const RETRY_LABELS: Record<string, string> = {
   truncated_tool_batch: 'Reply limit reached while writing tool calls; asking for smaller ones',
   runaway_tool_calls: 'Stopped a reply that repeated its tool calls; asking for one at a time',
   stream_dropped: 'Lost the connection to the model server; asking again',
+  provider_unavailable: 'The model server is busy or limiting requests; asking again shortly',
+  empty_reply: 'The model replied with nothing to show; asking again',
   research_source_required: 'Source verification required; continuing research',
   workspace_verification_required: 'Workspace changed; running a fresh verification',
   goal_continuation: 'Continuing the active goal',
@@ -231,9 +237,8 @@ function SteerSegment({
   }
   return (
     <div className="steer-segment" role="group" aria-label="Your message, sent while working">
+      {/* Right-aligned like the bubble under it, so the actions lead into the label. */}
       <div className="steer-segment-label">
-        <CornerDownRight size={11} aria-hidden="true" />
-        <span>You, while it worked</span>
         {steer.content && (
           <span className="steer-segment-actions">
             <button
@@ -248,6 +253,8 @@ function SteerSegment({
             <ReadAloudButton messageId={`steer-${steer.id}`} text={steer.content} />
           </span>
         )}
+        <CornerDownRight size={11} aria-hidden="true" />
+        <span>You, while it worked</span>
       </div>
       {steer.content && <div className="steer-segment-content">{steer.content}</div>}
       {Boolean(steer.images?.length) && (
@@ -305,8 +312,10 @@ function CompactionSummarySegment({
       <summary>
         <AlignLeft className="summary-icon" size={12} aria-hidden="true" />
         <span className="summary-text">
-          Context compacted · {summary.messagesCompacted.toLocaleString()} messages · {savedPercent}
-          % saved
+          {summary.resultsCut !== undefined
+            ? `Context fitted · ${summary.resultsCut.toLocaleString()} tool ${summary.resultsCut === 1 ? 'result' : 'results'} shortened`
+            : `Context compacted · ${summary.messagesCompacted.toLocaleString()} messages`}{' '}
+          · {savedPercent}% saved
           {windowLabel && (
             <span
               className={`summary-window${assumedWindow ? ' is-assumed' : ''}`}
@@ -598,18 +607,18 @@ function ThinkingText({
 }
 
 function thinkingPreview(content: string): string {
-  // Only the opening is shown; normalizing whole reasoning blocks on every
-  // render was measurable across the hundreds in a long run.
+  // Only the opening is shown; normalizing whole reasoning blocks on every render was measurable
+  // across the hundreds in a long run. The row clamps it (--work-thought-max) with its own
+  // ellipsis, so the tooltip, which takes the same text, runs past the visible line.
   const normalized = content.slice(0, 400).replace(/\s+/g, ' ').trim()
-  if (!normalized) return 'Thinking'
-  return normalized.length > 96 ? `${normalized.slice(0, 95).trimEnd()}…` : normalized
+  return normalized || 'Thinking'
 }
 
-/** The composer's reasoning toggle uses the same brain, so the two read as one feature. */
+/** A lightbulb: at 14px the brain's outline read as the web-fetch globe beside it. */
 function ThinkingIcon(): React.JSX.Element {
   return (
     <span className="thinking-step-icon">
-      <Brain size={14} role="img" aria-label="Thinking" />
+      <Lightbulb size={14} role="img" aria-label="Thinking" />
     </span>
   )
 }
@@ -666,6 +675,12 @@ function AgentWorkDisclosure({
   const [showEarlier, setShowEarlier] = useState(false)
 
   const toolCount = segments?.filter((segment) => segment.type === 'tool').length ?? 0
+  // Folded, the header says a step inside failed; opened, the step's own mark says it.
+  const anyFailed =
+    !isLoading &&
+    !expanded &&
+    (segments?.some((segment) => segment.type === 'tool' && segment.tool?.status === 'error') ??
+      false)
   const reasoningCount = segments?.filter((segment) => segment.type === 'thinking').length ?? 0
   const activityLabel = [
     toolCount ? `${toolCount} tool${toolCount === 1 ? '' : 's'}` : '',
@@ -686,6 +701,8 @@ function AgentWorkDisclosure({
         )
       : -1
   const current = currentIndex >= 0 ? segments![currentIndex] : undefined
+  // Folded, what the model looked at stays in view; opened, each step shows its own.
+  const shownImages = expanded ? [] : agentShownImages(segments)
 
   return (
     <div className={`agent-work-disclosure ${isLoading ? 'is-working' : 'is-complete'}`}>
@@ -695,9 +712,13 @@ function AgentWorkDisclosure({
         onClick={() => setExpanded((current) => !current)}
         aria-expanded={expanded}
         aria-controls={contentId}
+        aria-label={anyFailed ? `${label}, a step failed` : undefined}
       >
         <span>{label}</span>
-        <ChevronRight size={12} className={expanded ? 'expanded' : ''} aria-hidden="true" />
+        <span className="work-row-marks" aria-hidden="true">
+          {anyFailed && <FailureMark />}
+          <ChevronRight size={12} className={`work-row-chevron${expanded ? ' is-expanded' : ''}`} />
+        </span>
       </button>
       {current && (
         <div
@@ -722,6 +743,11 @@ function AgentWorkDisclosure({
               <span className="thinking-step-text">{thinkingPreview(current.content ?? '')}</span>
             </span>
           )}
+        </div>
+      )}
+      {shownImages.length > 0 && (
+        <div className="tool-page-previews agent-work-images">
+          <MessageImageGallery images={shownImages} localImages />
         </div>
       )}
       {children && (
@@ -775,6 +801,8 @@ interface MessageItemProps {
   onForkMessage?: (messageId: string) => void
   /** Goes back to before this message and returns it to the message box; absent while running. */
   onRewindMessage?: (message: Message, restoreFiles: boolean) => void
+  /** The project's files changed at or after this message, so a rewind can take them back too. */
+  rewindCanRestoreFiles?: boolean
   onApproveToolLimitDecision: (decisionId: string) => void
   onDenyToolLimitDecision: (decisionId: string) => void
   onResolveAgentInteraction?: (
@@ -783,7 +811,10 @@ interface MessageItemProps {
     cancelled?: boolean
   ) => void | Promise<void>
   workspaceFolder?: string | null
-  onUndoCheckpoint?: (hash: string) => void
+  /** The project's other folders: a reply's changes there can be undone too. */
+  otherFolders?: readonly string[]
+  /** Undoes a reply's file changes, by the reply's message ID. */
+  onUndoCheckpoint?: (messageId: string) => void
   editActionTitle?: string
   retryActionTitle?: string
   readOnly?: boolean
@@ -805,10 +836,12 @@ function MessageItemInner({
   onContinueRun,
   onForkMessage,
   onRewindMessage,
+  rewindCanRestoreFiles = false,
   onApproveToolLimitDecision,
   onDenyToolLimitDecision,
   onResolveAgentInteraction,
   workspaceFolder,
+  otherFolders,
   onUndoCheckpoint,
   editActionTitle = 'Edit message',
   retryActionTitle = 'Rewind and retry from here',
@@ -822,8 +855,10 @@ function MessageItemInner({
   const workCompletedAt = msg.tokenUsage?.runCompletedAt
   const canUndoChanges = Boolean(
     !readOnly &&
-    msg.checkpointHash &&
-    msg.checkpointWorkspaceRoot === workspaceFolder &&
+    msg.checkpoints?.some(
+      ({ workspaceRoot }) =>
+        workspaceRoot === workspaceFolder || otherFolders?.includes(workspaceRoot)
+    ) &&
     onUndoCheckpoint
   )
   // The changed-files card carries Undo itself; the footer keeps it only for replies without one.
@@ -911,15 +946,44 @@ function MessageItemInner({
             ))}
           </div>
         )}
-        {Boolean(msg.images?.length) && (
+        {Boolean(msg.attachments?.some(isBrowserAnnotationAttachment)) && (
+          <div className="message-context-attachments" aria-label="Places marked on pages">
+            {msg.attachments!.filter(isBrowserAnnotationAttachment).map((attachment) => (
+              <BrowserMarkChip
+                key={attachment.id}
+                mark={attachment}
+                className="message-browser-mark"
+              />
+            ))}
+          </div>
+        )}
+        {Boolean(
+          msg.images?.length ||
+          msg.attachments?.some((a) => isBrowserAnnotationAttachment(a) && a.image)
+        ) && (
           <div className="message-image-attachments" aria-label="Attached images">
-            {msg.images!.map((image) => (
+            {msg.images?.map((image) => (
               <ImageAttachmentPreview
                 key={image.id}
                 image={image}
                 className="message-image-preview"
               />
             ))}
+            {/* The pictures of the marks, in the order the model sees them, after the images. */}
+            {msg.attachments?.filter(isBrowserAnnotationAttachment).map((mark) =>
+              mark.image ? (
+                <ImageAttachmentPreview
+                  key={mark.id}
+                  image={{
+                    id: mark.id,
+                    name: `Mark ${mark.number}: ${mark.name}`,
+                    mimeType: mark.image.mimeType,
+                    dataUrl: mark.image.dataUrl
+                  }}
+                  className="message-image-preview"
+                />
+              ) : null
+            )}
           </div>
         )}
         {msg.role === 'system' ? (
@@ -947,16 +1011,10 @@ function MessageItemInner({
           <div className="message-segments">
             {(() => {
               const groupedSegments = groupSegments(msg.segments)
-              // A model that fixes or revises an artifact makes it again under the
-              // same title. Only the latest one is the result; the attempts it
-              // replaced are work, and showing each one stacked the chat with
-              // broken and outdated copies.
-              const latestArtifactByTitle = new Map<string, unknown>()
-              for (const segment of msg.segments) {
-                if (segment.type === 'artifact' && segment.artifact) {
-                  latestArtifactByTitle.set(segment.artifact.title, segment)
-                }
-              }
+              // An artifact the model makes again or edits shows once, where it first
+              // appeared, as its latest version: stacking each attempt filled the chat
+              // with broken and outdated copies.
+              const artifactsShown = artifactSlots(msg.segments)
               const lastWorkIndex = groupedSegments.findLastIndex(isWorkSegmentGroup)
               const finalAnswerIndex = groupedSegments.findIndex(
                 (group, groupIndex) =>
@@ -1008,16 +1066,19 @@ function MessageItemInner({
                               className="actions-toggle thinking-step-toggle"
                               onClick={() => onToggleThinking(thinkingId)}
                               aria-expanded={expandedThinking.has(thinkingId)}
-                              title="Show or hide thinking"
                             >
                               <ThinkingIcon />
-                              <span className="actions-summary">
+                              {/* Clamped to --work-thought-max; the tooltip gives the whole line. */}
+                              <span
+                                className="actions-summary"
+                                title={thinkingPreview(segment.content)}
+                              >
                                 {thinkingPreview(segment.content)}
                               </span>
                               <ChevronRight
-                                size={11}
+                                size={12}
                                 aria-hidden="true"
-                                className={`toggle-icon ${expandedThinking.has(thinkingId) ? 'expanded' : ''}`}
+                                className={`work-row-chevron${expandedThinking.has(thinkingId) ? ' is-expanded' : ''}`}
                               />
                             </button>
                             <Reveal open={expandedThinking.has(thinkingId)}>
@@ -1119,12 +1180,11 @@ function MessageItemInner({
                   ) : group.type === 'content' &&
                     group.segment.type === 'artifact' &&
                     group.segment.artifact ? (
-                    latestArtifactByTitle.get(group.segment.artifact.title) !==
-                    group.segment ? null : (
+                    !artifactsShown.get(group.segment) ? null : (
                       // Standalone artifact (not grouped with thinking)
                       <div className="artifact-segment">
                         <Artifact
-                          artifact={group.segment.artifact}
+                          artifact={artifactsShown.get(group.segment)!}
                           onResult={(result) =>
                             onHandleArtifactResult(group.segment.artifact!.title, result)
                           }
@@ -1216,8 +1276,8 @@ function MessageItemInner({
                     undo={
                       canUndoChanges
                         ? {
-                            onUndo: () => onUndoCheckpoint!(msg.checkpointHash!),
-                            undone: msg.restoredFrom === msg.checkpointHash,
+                            onUndo: () => onUndoCheckpoint!(msg.id),
+                            undone: msg.restored === true,
                             disabled: isLoading
                           }
                         : undefined
@@ -1480,16 +1540,37 @@ function MessageItemInner({
                       >
                         <strong>Rewind to before this message</strong>
                         <p>
-                          This message and everything after it leave the chat, and the message goes
-                          back into the box to change or send.
+                          It and everything after it leave the chat; the message returns to the box.
+                          {rewindCanRestoreFiles &&
+                            ' Files the agent changed since can go back too.'}
                         </p>
                         <div className="message-rewind-actions">
-                          <button type="button" onClick={() => onRewindMessage(msg, true)}>
-                            Rewind chat and files
-                          </button>
-                          <button type="button" onClick={() => onRewindMessage(msg, false)}>
-                            Chat only
-                          </button>
+                          {rewindCanRestoreFiles ? (
+                            <>
+                              <button
+                                type="button"
+                                className="settings-secondary-action is-small"
+                                onClick={() => onRewindMessage(msg, false)}
+                              >
+                                Chat only
+                              </button>
+                              <button
+                                type="button"
+                                className="settings-primary-action is-small"
+                                onClick={() => onRewindMessage(msg, true)}
+                              >
+                                Rewind chat and files
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              className="settings-primary-action is-small"
+                              onClick={() => onRewindMessage(msg, false)}
+                            >
+                              Rewind
+                            </button>
+                          )}
                         </div>
                       </MessageFooterPopover>
                     )}
@@ -1526,18 +1607,12 @@ function MessageItemInner({
                 <button
                   type="button"
                   className="message-action icon"
-                  onClick={() => onUndoCheckpoint?.(msg.checkpointHash!)}
+                  onClick={() => onUndoCheckpoint?.(msg.id)}
                   title={
-                    msg.restoredFrom === msg.checkpointHash
-                      ? 'Changes already undone'
-                      : 'Undo file changes from this response'
+                    msg.restored ? 'Changes already undone' : 'Undo file changes from this response'
                   }
-                  aria-label={
-                    msg.restoredFrom === msg.checkpointHash
-                      ? 'Changes already undone'
-                      : 'Undo file changes'
-                  }
-                  disabled={isLoading || msg.restoredFrom === msg.checkpointHash}
+                  aria-label={msg.restored ? 'Changes already undone' : 'Undo file changes'}
+                  disabled={isLoading || msg.restored === true}
                 >
                   <RotateCcw size={13} />
                 </button>
@@ -1561,6 +1636,7 @@ export const MessageItem = memo(MessageItemInner, (prev, next) => {
   if (prev.readOnly !== next.readOnly) return false
   if (prev.onForkMessage !== next.onForkMessage) return false
   if (prev.onRewindMessage !== next.onRewindMessage) return false
+  if (prev.rewindCanRestoreFiles !== next.rewindCanRestoreFiles) return false
   if (prev.onContinueRun !== next.onContinueRun) return false
   // Re-render if this message is being edited or stopped being edited
   if (

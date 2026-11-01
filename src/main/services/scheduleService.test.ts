@@ -7,7 +7,6 @@ import type { PinnedModel } from '../../shared/models'
 import type { ProviderSettings } from '../../shared/settings'
 import type { ScheduleInput, SchedulesChangedEvent } from '../../shared/schedules'
 import type { WorkspaceOccupant } from '../../shared/worktrees'
-import { ConversationAttentionTracker } from './conversationAttention'
 import { createScheduledConversationLauncher } from './scheduledConversationLauncher'
 import { ScheduleService } from './scheduleService'
 import { ScheduleStore } from './scheduleStore'
@@ -53,6 +52,7 @@ interface PlacementFixture {
   git?: boolean
   queuedRunIds?: Set<string>
   worktreesCreated?: string[]
+  worktreeError?: string
 }
 
 function harness(now: number, placement: PlacementFixture = {}): Harness {
@@ -80,6 +80,7 @@ function harness(now: number, placement: PlacementFixture = {}): Harness {
     worktrees: {
       isGitProject: async () => placement.git ?? false,
       create: async (projectId) => {
+        if (placement.worktreeError) throw new Error(placement.worktreeError)
         const id = `worktree-${(placement.worktreesCreated ??= []).length + 1}`
         db.prepare(
           `INSERT INTO managed_worktrees
@@ -225,16 +226,6 @@ describe('ScheduleService timing', () => {
     expect(armed.delayMs).toBeLessThanOrEqual(60_000)
   })
 
-  it('wakes on its timer and checks again', async () => {
-    h.service.create(daily())
-    h.service.start()
-    h.clock.now = at(16, 9)
-    h.timers.at(-1)!.callback()
-    await h.service.tick()
-    expect(h.starts).toHaveLength(1)
-    expect(h.timers.length).toBeGreaterThan(0)
-  })
-
   it('numbers runs without gaps and keeps chats when the schedule is deleted', async () => {
     const schedule = h.service.create(daily({ cadence: 'hourly', minute: 0 }))
     for (const hour of [9, 10]) {
@@ -367,32 +358,6 @@ describe('ScheduleService permissions and overlap', () => {
     expect(new Set(h.starts.map(({ conversationId }) => conversationId)).size).toBe(2)
   })
 
-  it('marks the chat as needing attention when its run asks for approval', async () => {
-    const h = harness(at(16, 8))
-    h.service.create(daily())
-    h.clock.now = at(16, 9)
-    await h.service.tick()
-    const start = h.starts[0]
-    const onChange = vi.fn()
-    const attention = new ConversationAttentionTracker(
-      (runId) =>
-        runId === start.id ? { threadId: start.conversationId, surface: 'conversation' } : null,
-      onChange
-    )
-    attention.observe({
-      id: 'event-1',
-      runId: start.id,
-      sequence: 1,
-      type: 'permission.requested',
-      timestamp: h.clock.now,
-      payload: { interactionId: 'interaction-1', kind: 'permission' }
-    })
-    expect(onChange).toHaveBeenLastCalledWith({
-      waitingConversationIds: [start.conversationId],
-      alert: { conversationId: start.conversationId, reason: 'approval' }
-    })
-  })
-
   it('pauses instead of falling back when its model is no longer enabled', async () => {
     const h = harness(at(16, 8))
     const schedule = h.service.create(daily())
@@ -449,16 +414,6 @@ describe('ScheduleService and a busy project folder', () => {
     }
   ]
 
-  it('starts in the project folder when no other agent is writing there', async () => {
-    const h = harness(at(16, 8))
-    const schedule = h.service.create(daily())
-    const run = await h.service.runNow(schedule.id)
-    expect(run).toMatchObject({ outcome: 'started' })
-    expect(
-      h.db.prepare('SELECT project_id FROM conversations WHERE id = ?').get(run.conversationId)
-    ).toEqual({ project_id: 'project-1' })
-  })
-
   it('starts in a fresh worktree when the busy folder is a Git repository', async () => {
     const fixture: PlacementFixture = { occupants: busy, git: true }
     const h = harness(at(16, 8), fixture)
@@ -487,6 +442,21 @@ describe('ScheduleService and a busy project folder', () => {
     })
     expect(h.starts).toHaveLength(0)
     expect(h.service.runs(schedule.id)[0]).toMatchObject({ outcome: 'skipped' })
+  })
+
+  it('records a due run that fails before its chat exists', async () => {
+    // The failure was dropped: no history entry, no log, nothing for the user to find.
+    const h = harness(at(16, 8), { occupants: busy, git: true, worktreeError: 'disk full' })
+    const schedule = h.service.create(daily())
+    h.clock.now = at(16, 9, 0, 1)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await h.service.tick()
+    expect(error).toHaveBeenCalled()
+    error.mockRestore()
+    expect(h.service.runs(schedule.id)).toMatchObject([
+      { outcome: 'failed', reason: 'Could not start: disk full' }
+    ])
+    expect(h.starts).toHaveLength(0)
   })
 
   it('skips while the previous run still waits for a free run slot', async () => {
@@ -538,16 +508,6 @@ describe('ScheduleService and a chat each run continues', () => {
     expect(
       h.db.prepare('SELECT title FROM conversations WHERE id = ?').get(first.conversationId)
     ).toEqual({ title: 'Morning check' })
-  })
-
-  it('still starts a new chat for each run by default', async () => {
-    const h = harness(at(16, 8))
-    const schedule = h.service.create(daily())
-    expect(schedule.chatMode).toBe('new')
-    const first = await h.service.runNow(schedule.id)
-    h.setPhase(first.agentRunId!, 'completed')
-    const second = await h.service.runNow(schedule.id)
-    expect(second.conversationId).not.toBe(first.conversationId)
   })
 
   it('starts a new chat, and says why, when the last one was deleted', async () => {

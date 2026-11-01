@@ -1,0 +1,5 @@
+{"id":"compaction-answers-latest-request","pattern":"Answering an older question after compaction","expect":{"forbidArguments":["git\\s+clone"],"forbidContent":["\\bclon(e|ing) (the|your) (private )?repo"]}}
+{"role":"user","fixture":"compaction_summary","summary":"## Objective\n- Clone the private repository.\n\n## Work so far\n- The user could not give access to the private repository, so they cloned it themselves into the project folder.\n- Read docs/setup.md, docs/deploy.md and the ten status notes in notes/.\n- Notes 0 to 7 are marked done. Note 8 (publish the docs site) is waiting for a domain. Note 9 (rotate the signing key) has not started.\n\n## Next\n- Continue with the user's request."}
+{"role":"user","content":"So what is done and what is pending?"}
+{"role":"assistant","content":"","tool_calls":[{"id":"call_read_9","name":"read","arguments":{"path":"notes/notes-9.txt"}}]}
+{"role":"tool","tool_call_id":"call_read_9","content":"1: # Rotate the signing key\n2: Status: not started\n3: Owner: release\n4: Blocked on: nothing\n"}

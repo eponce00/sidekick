@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Check, Copy, ExternalLink, SquareTerminal } from 'lucide-react'
+import { ExternalLink, SquareTerminal } from 'lucide-react'
 import type { ToolExecution } from '../types/chat.types'
 import { resolveToolView } from '../services/uiContributions'
 import ToolCallRow from './ToolCallRow'
@@ -16,10 +16,13 @@ import {
 import { parseNumberedLines } from '../utils/codeHighlight'
 import { CommandLiveView } from './CommandLiveView'
 import { requestTerminalView, useTerminalSessionForTool } from '../utils/terminalSessionStore'
+import { terminalSessionIsLive } from '../../../shared/terminalSessions'
 import { Reveal } from './Reveal'
-import { CommandResultOutput } from './CommandResultOutput'
+import { CommandCopyButton, CommandResultOutput } from './CommandResultOutput'
 import { commandResultFrom } from '../utils/commandResult'
-import { copyText } from '../utils/clipboard'
+import { SurfaceImage } from './SurfaceImage'
+import { MessageImageGallery } from './MessageMarkdown'
+import { pdfPagesShownBy } from '../utils/agentShownImages'
 import './ToolExecutionCard.css'
 
 function boundedLines(
@@ -47,8 +50,9 @@ export function ToolExecutionCard({
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const [showAll, setShowAll] = useState(false)
-  const [copied, setCopied] = useState(false)
   const [imageEnlarged, setImageEnlarged] = useState(false)
+  // A running command's live view is its open detail; the row folds it away like any other.
+  const [liveHidden, setLiveHidden] = useState(false)
   const view = resolveToolView(tool)
   const terminalSession = useTerminalSessionForTool(view === 'terminal' ? tool.id : undefined)
   const output = tool.error || tool.output || ''
@@ -76,19 +80,67 @@ export function ToolExecutionCard({
     dataRecord.previewUrl.startsWith('sidekick-browser://artifact/')
       ? dataRecord.previewUrl
       : null
+  // The PDF pages the agent was shown as images, kept the same way.
+  const pagePreviews = pdfPagesShownBy(tool)
   const expandable = Boolean(
     command || detail || subject || output || tool.changes?.length || tool.diagnostics?.length
   )
+  // A command shows itself once, as the header of its result box; a caption repeating it said
+  // the same thing twice.
+  const shownSubject = view === 'terminal' && command ? undefined : subject
+  // The command line heads its result box, with the box's own actions (Copy, Open in Terminal) at
+  // its end, so the rows under it carry only how the command ended and what it printed.
+  const renderCommandHeader = (copy?: React.ReactNode): React.ReactNode =>
+    view === 'terminal' && command ? (
+      <div className="rich-tool-command">
+        <span aria-hidden="true">$</span>
+        <code>{command}</code>
+        {(copy || terminalSession) && (
+          <span className="rich-tool-command-actions">
+            {copy}
+            {terminalSession ? (
+              <button
+                type="button"
+                className="settings-ghost-action is-small is-icon rich-tool-open-terminal"
+                onClick={() => requestTerminalView(terminalSession.id)}
+                aria-label="Open in Terminal"
+                title="Open in Terminal"
+              >
+                <SquareTerminal size={13} />
+              </button>
+            ) : (
+              // Its slot stays, so Copy sits at one offset on every command box.
+              <span className="rich-tool-action-slot" aria-hidden="true" />
+            )}
+          </span>
+        )}
+      </div>
+    ) : null
+  const commandHeader = renderCommandHeader()
+  // While the command runs, its live view under the row already carries the command line.
+  const commandLive = Boolean(terminalSession && terminalSessionIsLive(terminalSession.state))
+  // The chevron says whether the step's detail is on screen: the live view while it runs, the
+  // result once it has finished.
+  const detailShown = commandLive ? !liveHidden : expanded
 
   return (
     <div className={`tool-execution-card tool-execution-card-${tool.status} is-${view}`}>
       <ToolCallRow
         tool={tool}
-        onSelect={expandable ? () => setExpanded((current) => !current) : undefined}
+        onSelect={
+          expandable
+            ? () =>
+                commandLive
+                  ? setLiveHidden((current) => !current)
+                  : setExpanded((current) => !current)
+            : undefined
+        }
         expandable={expandable}
-        expanded={expanded}
+        expanded={detailShown}
       />
-      {view === 'terminal' && <CommandLiveView toolCallId={tool.id} />}
+      {view === 'terminal' && !(commandLive && liveHidden) && (
+        <CommandLiveView toolCallId={tool.id} />
+      )}
       {previewUrl && (
         <button
           type="button"
@@ -97,31 +149,37 @@ export function ToolExecutionCard({
           aria-label={imageEnlarged ? 'Show the image smaller' : 'Show the image larger'}
           title={subject || readPath}
         >
-          <img
+          <SurfaceImage
             src={previewUrl}
             alt={`Image the agent viewed: ${subject || readPath || ''}`}
             loading="lazy"
+            fallback={<span className="tool-image-unavailable">Image no longer available</span>}
           />
         </button>
       )}
+      {pagePreviews.length > 0 && (
+        <div className="tool-page-previews">
+          <MessageImageGallery images={pagePreviews} localImages />
+        </div>
+      )}
       <Reveal open={expanded}>
         <div className="tool-execution-detail">
-          {subject && (
+          {shownSubject && (
             <div
               className={`rich-tool-subject ${workspaceRoot && ['read', 'diff', 'files'].includes(view) ? 'is-openable' : ''}`}
               onClick={() => {
                 if (workspaceRoot && ['read', 'diff', 'files'].includes(view)) {
-                  void window.api.workspace.openFile(subject, workspaceRoot)
+                  void window.api.workspace.openFile(shownSubject, workspaceRoot)
                 }
               }}
               onContextMenu={(event) => {
                 if (!workspaceRoot || !['read', 'diff', 'files'].includes(view)) return
                 event.preventDefault()
-                void window.api.workspace.showPathMenu(subject, workspaceRoot)
+                void window.api.workspace.showPathMenu(shownSubject, workspaceRoot)
               }}
             >
               <ExternalLink size={11} />
-              {subject}
+              {shownSubject}
             </div>
           )}
           {detail && view !== 'terminal' && <div className="rich-tool-detail">{detail}</div>}
@@ -137,63 +195,32 @@ export function ToolExecutionCard({
             <FileListOutput data={tool.data} workspaceRoot={workspaceRoot} />
           ) : (
             <>
-              {view === 'terminal' && command && (
-                <div className="rich-tool-command">
-                  <span>$</span>
-                  <code>{command}</code>
-                  {terminalSession && (
-                    <button
-                      type="button"
-                      className="rich-tool-open-terminal"
-                      onClick={() => requestTerminalView(terminalSession.id)}
-                    >
-                      <SquareTerminal size={11} />
-                      Open in Terminal
-                    </button>
-                  )}
-                </div>
-              )}
-              {commandResult && (
+              {commandResult ? (
                 <CommandResultOutput
                   result={commandResult}
                   outputReference={tool.outputReference}
+                  header={renderCommandHeader}
                 />
-              )}
-              {output && view === 'terminal' && !commandResult && (
-                <div className={`rich-tool-output is-${view}`}>
-                  <button
-                    type="button"
-                    className="rich-tool-copy"
-                    onClick={() => {
-                      void copyText(output).then((written) => {
-                        if (!written) return
-                        setCopied(true)
-                        window.setTimeout(() => setCopied(false), 1_000)
-                      })
-                    }}
-                  >
-                    {copied ? <Check size={11} /> : <Copy size={11} />}
-                    {copied ? 'Copied' : 'Copy'}
-                  </button>
+              ) : output && view === 'terminal' ? (
+                <div className="rich-tool-output is-terminal command-result">
+                  {commandHeader ? (
+                    renderCommandHeader(<CommandCopyButton text={output} />)
+                  ) : (
+                    <div className="command-result-bar">
+                      <CommandCopyButton text={output} />
+                    </div>
+                  )}
                   <AnsiTerminalOutput value={bounded.text} />
                 </div>
+              ) : (
+                commandHeader &&
+                !commandLive && (
+                  <div className="rich-tool-output is-terminal command-result">{commandHeader}</div>
+                )
               )}
               {output && view !== 'terminal' && !previewUrl && (
                 <div className={`rich-tool-output is-${view}`}>
-                  <button
-                    type="button"
-                    className="rich-tool-copy"
-                    onClick={() => {
-                      void copyText(output).then((written) => {
-                        if (!written) return
-                        setCopied(true)
-                        window.setTimeout(() => setCopied(false), 1_000)
-                      })
-                    }}
-                  >
-                    {copied ? <Check size={11} /> : <Copy size={11} />}
-                    {copied ? 'Copied' : 'Copy'}
-                  </button>
+                  <CommandCopyButton text={output} />
                   {numberedOutput ? (
                     <CodeExcerpt lines={numberedOutput} />
                   ) : (

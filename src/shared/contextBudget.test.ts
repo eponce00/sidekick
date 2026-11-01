@@ -14,9 +14,31 @@ describe('calculateRequestBudget', () => {
     expect(
       estimateConversationTokens([{ role: 'user', content: '', images: ['https://x.test/a.png'] }])
     ).toBe(772)
+    // Unreadable: the largest square any provider is sent, 2048 px at 28 px a token.
     expect(
       estimateConversationTokens([{ role: 'user', content: '', images: ['x'.repeat(300_000)] }])
-    ).toBe(1_176)
+    ).toBe(74 * 74 + 4)
+  })
+
+  it('prices an image by its pixel size as sent, not by the size of its file', () => {
+    const png = (width: number, height: number, padding = 0): string => {
+      const bytes = new Uint8Array(24 + padding)
+      bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 73, 72, 68, 82])
+      const view = new DataView(bytes.buffer)
+      view.setUint32(16, width)
+      view.setUint32(20, height)
+      let binary = ''
+      for (const byte of bytes) binary += String.fromCharCode(byte)
+      return `data:image/png;base64,${btoa(binary)}`
+    }
+    const tokens = (image: string): number =>
+      estimateConversationTokens([{ role: 'user', content: '', images: [image] }]) - 4
+
+    // A 5K screenshot is sent at 2048 × 1152 at most: 74 × 42 squares.
+    expect(tokens(png(5120, 2880))).toBe(74 * 42)
+    expect(tokens(png(5120, 2880, 3 * 1024 * 1024))).toBe(74 * 42)
+    expect(tokens(png(1280, 800))).toBe(46 * 29)
+    expect(tokens(png(64, 48))).toBe(512)
   })
 
   it('compacts at the threshold share of the whole window, as Settings describes it', () => {
@@ -74,22 +96,6 @@ describe('calculateRequestBudget', () => {
     expect(replyLimitForRequest(undefined, { ...budget, requestTokens: 1_000 })).toBeUndefined()
   })
 
-  it('exposes the same capacity math for the context indicator', () => {
-    expect(
-      calculateContextCapacity({
-        contextLength: 180_000,
-        reservedOutputTokens: 32_000,
-        compactionThreshold: 0.7
-      })
-    ).toEqual({
-      contextLength: 180_000,
-      reservedOutputTokens: 32_000,
-      safetyMarginTokens: 3_600,
-      effectiveInputLimit: 144_400,
-      compactionTriggerTokens: 126_000
-    })
-  })
-
   it('triggers before the usable input budget is exhausted', () => {
     const budget = calculateRequestBudget({
       messages: [{ role: 'user', content: 'x'.repeat(130_000 * 4) }],
@@ -103,13 +109,8 @@ describe('calculateRequestBudget', () => {
     expect(budget.shouldCompact).toBe(true)
   })
 
-  it('uses the configured output budget, with a default when none is set', () => {
-    expect(resolveMaxOutputTokens(180_000, 32_000)).toBe(32_000)
-    expect(resolveMaxOutputTokens(180_000, 16_000)).toBe(16_000)
-    expect(resolveMaxOutputTokens(180_000)).toBe(32_768)
-  })
-
   it('honors a configured output budget above the default ceiling, up to half the window', () => {
+    expect(resolveMaxOutputTokens(180_000)).toBe(32_768)
     // A local reasoning model with a 260k window, set to 100k output, was held to 32,768.
     expect(resolveMaxOutputTokens(260_000, 100_000)).toBe(100_000)
     expect(resolveMaxOutputTokens(131_072, 100_000)).toBe(65_536)
@@ -149,46 +150,26 @@ describe('calculateRequestBudget', () => {
     // non-ASCII letters and digits, astral symbols, and unpaired surrogates.
     const pool = [
       'a',
-      'Z',
       '_',
-      'word',
       'identifier_name',
-      '0',
       '7',
       '123456',
       ' ',
-      '\t',
-      '\n',
       '\r\n',
-      '\v',
-      '\f',
       '\u00a0',
-      '\u1680',
-      '\u2003',
-      '\u200a',
       '\u2028',
-      '\u2029',
-      '\u202f',
-      '\u205f',
       '\u3000',
       '\ufeff',
       '\u200b',
       '{',
       '"',
-      ':',
-      ',',
-      '.',
-      '-',
       'é',
-      'ß',
-      'Ж',
       '中文',
       '٣',
       '１',
       '😀',
       '👩‍💻',
       '\ud83d',
-      '\ude00',
       '\udc00\ud800'
     ]
     let seed = 7

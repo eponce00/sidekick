@@ -51,6 +51,16 @@ export function validateProviderBaseUrl(value: string): string | null {
   return null
 }
 
+/**
+ * Whether two base URLs are the same address, so a key saved with one may be sent to the other.
+ * Only a trailing slash and surrounding spaces are ignored; any other difference counts.
+ */
+export function sameProviderBaseUrl(left: unknown, right: unknown): boolean {
+  const normalized = (value: unknown): string =>
+    typeof value === 'string' ? value.trim().replace(/\/+$/, '') : ''
+  return normalized(left) === normalized(right)
+}
+
 /** Whether requests to this URL leave the computer unencrypted. */
 export function providerUrlIsUnencryptedRemote(value: string): boolean {
   try {
@@ -135,6 +145,8 @@ function legacyModelsForProvider(
       supportsTools: model.supportsTools,
       supportsVision: model.supportsVision,
       supportsReasoning: model.supportsReasoning,
+      reasoningLevels: model.reasoningLevels,
+      reasoningDefault: model.reasoningDefault,
       supportsAudioInput: model.supportsAudioInput,
       supportsAudioOutput: model.supportsAudioOutput,
       supportsPdfInput: model.supportsPdfInput,
@@ -245,6 +257,8 @@ export function pinnedModelsFromProviderInstances(instances: ProviderInstance[])
         supportsTools: model.supportsTools,
         supportsVision: model.supportsVision,
         supportsReasoning: model.supportsReasoning,
+        reasoningLevels: model.reasoningLevels,
+        reasoningDefault: model.reasoningDefault,
         supportsAudioInput: model.supportsAudioInput,
         supportsAudioOutput: model.supportsAudioOutput,
         supportsPdfInput: model.supportsPdfInput,

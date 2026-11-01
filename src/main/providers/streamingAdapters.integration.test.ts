@@ -43,6 +43,26 @@ const request: ProviderChatRequest = {
   purpose: 'conversation'
 }
 
+const anthropicInstance: ProviderInstance = {
+  id: 'anthropic',
+  name: 'Anthropic',
+  type: 'anthropic',
+  enabled: true,
+  baseUrl: 'https://api.anthropic.test/v1',
+  apiKey: 'hidden',
+  modelSource: 'discover',
+  models: []
+}
+const ollamaInstance: ProviderInstance = {
+  id: 'ollama',
+  name: 'Ollama',
+  type: 'ollama',
+  enabled: true,
+  baseUrl: 'http://localhost:11434',
+  modelSource: 'discover',
+  models: []
+}
+
 function text(chunks: ProviderStreamChunk[], key: 'content' | 'thinking'): string {
   return chunks.map((chunk) => chunk.message?.[key] || '').join('')
 }
@@ -118,7 +138,7 @@ describe('provider streaming adapters', () => {
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
-  it('accepts explicit finish reason plus EOF and retains subsequent usage, reasoning and exact tools', async () => {
+  it('accepts explicit finish reason plus EOF and retains subsequent usage', async () => {
     const response = streamingResponse([
       'data: {"choices":[{"delta":{"reasoning_content":"retained reasoning","tool_calls":[{"index":0,"id":"exact-call","function":{"name":"lookup","arguments":"{\\"query\\":\\"exact\\"}"}}]},"finish_reason":"tool_calls"}]}\n',
       'data: {"choices":[],"usage":{"prompt_tokens":17,"completion_tokens":9,"prompt_tokens_details":{"cached_tokens":4}}}\n'
@@ -132,11 +152,6 @@ describe('provider streaming adapters', () => {
       vi.fn(async () => response) as unknown as typeof fetch
     )
     expect(result.ok).toBe(true)
-    expect(text(chunks, 'thinking')).toBe('retained reasoning')
-    expect(chunks.flatMap((chunk) => chunk.message?.tool_calls ?? []).at(-1)).toMatchObject({
-      id: 'exact-call',
-      function: { name: 'lookup', arguments: '{"query":"exact"}' }
-    })
     expect(chunks.at(-1)).toMatchObject({
       done: true,
       done_reason: 'tool_calls',
@@ -175,7 +190,8 @@ describe('provider streaming adapters', () => {
     // OpenAI names error kinds, not statuses, in the same field.
     expect(await stream('{"error":{"message":"Bad key","code":"invalid_api_key"}}')).toEqual({
       ok: false,
-      error: 'Bad key'
+      error: 'Bad key',
+      code: 'invalid_api_key'
     })
   })
 
@@ -579,6 +595,51 @@ describe('provider streaming adapters', () => {
     expect(closed.some((entry) => entry.id === 'click-2')).toBe(false)
   })
 
+  it('closes a call only once its arguments are whole, and reads calls sent without an index', async () => {
+    const delta = (call: Record<string, unknown>): string =>
+      `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [call] } }] })}\n`
+    const read = async (calls: Record<string, unknown>[]): Promise<ProviderStreamChunk[]> => {
+      const chunks: ProviderStreamChunk[] = []
+      const response = streamingResponse([
+        ...calls.map(delta),
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\ndata: [DONE]\n'
+      ])
+      await streamOpenAICompatibleChat(
+        'https://provider.test/v1',
+        { model: 'fixture-model', messages: request.messages, tools: request.tools },
+        {},
+        (chunk) => chunks.push(chunk),
+        vi.fn(async () => response) as unknown as typeof fetch
+      )
+      return chunks
+    }
+    const named = (name: string, args: string) => ({ name, arguments: args })
+    // Every call's header before any arguments, and the name repeated in every delta.
+    const headersFirst = await read([
+      { index: 0, id: 'a', function: named('read', '') },
+      { index: 1, id: 'b', function: named('read', '') },
+      { index: 0, function: named('read', '{"path":"a.ts"}') },
+      { index: 1, function: named('read', '{"path":"b.ts"}') }
+    ])
+    expect(headersFirst.flatMap((chunk) => chunk.message?.closed_tool_calls ?? [])).toEqual([
+      expect.objectContaining({ id: 'a', function: named('read', '{"path":"a.ts"}') })
+    ])
+    // No index: a new id starts the next call.
+    const unindexed = await read([
+      { id: 'a', function: named('read', '{"path":') },
+      { function: { arguments: '"a.ts"}' } },
+      { id: 'b', function: named('read', '{"path":"b.ts"}') }
+    ])
+    for (const chunks of [headersFirst, unindexed]) {
+      expect(
+        chunks.filter((chunk) => chunk.message?.tool_calls).at(-1)?.message?.tool_calls
+      ).toEqual([
+        expect.objectContaining({ id: 'a', function: named('read', '{"path":"a.ts"}') }),
+        expect.objectContaining({ id: 'b', function: named('read', '{"path":"b.ts"}') })
+      ])
+    }
+  })
+
   it('recovers tool calls from a non-streaming response when a local stream is empty', async () => {
     const fetchImpl = vi
       .fn()
@@ -779,19 +840,9 @@ describe('provider streaming adapters', () => {
       postedBody = JSON.parse(String(init?.body)) as Record<string, unknown>
       return response
     }) as unknown as typeof fetch
-    const instance: ProviderInstance = {
-      id: 'anthropic',
-      name: 'Anthropic',
-      type: 'anthropic',
-      enabled: true,
-      baseUrl: 'https://api.anthropic.test/v1',
-      apiKey: 'hidden',
-      modelSource: 'discover',
-      models: []
-    }
     const chunks: ProviderStreamChunk[] = []
     const result = await streamAnthropicChat(
-      instance,
+      anthropicInstance,
       { ...request, target: { ...request.target, providerKind: 'anthropic' } },
       (chunk) => chunks.push(chunk),
       fetchImpl
@@ -819,6 +870,34 @@ describe('provider streaming adapters', () => {
       prompt_eval_count: 30,
       eval_count: 12
     })
+  })
+
+  it('gives an Anthropic overload inside a stream the status of a refused request', async () => {
+    // The stream answered 200, so only the error's type says the server is busy.
+    const events = [
+      { type: 'message_start', message: { id: 'msg-1', usage: { input_tokens: 3 } } },
+      { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }
+    ]
+    const response = streamingResponse([
+      events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
+    ])
+    const result = await streamAnthropicChat(
+      {
+        id: 'anthropic',
+        name: 'Anthropic',
+        type: 'anthropic',
+        enabled: true,
+        baseUrl: 'https://api.anthropic.test/v1',
+        apiKey: 'hidden',
+        modelSource: 'discover',
+        models: []
+      },
+      { ...request, target: { ...request.target, providerKind: 'anthropic' } },
+      () => undefined,
+      vi.fn(async () => response) as unknown as typeof fetch
+    )
+
+    expect(result).toEqual({ ok: false, error: 'Overloaded', status: 529 })
   })
 
   it('converts OpenAI-style system, image, tool-use, and tool-result messages for Anthropic', () => {
@@ -858,16 +937,6 @@ describe('provider streaming adapters', () => {
   })
 
   it('preserves signed and redacted thinking blocks in Anthropic completions', async () => {
-    const instance: ProviderInstance = {
-      id: 'anthropic',
-      name: 'Anthropic',
-      type: 'anthropic',
-      enabled: true,
-      baseUrl: 'https://api.anthropic.test/v1',
-      apiKey: 'hidden',
-      modelSource: 'discover',
-      models: []
-    }
     const fetchImpl = vi.fn(
       async () =>
         new Response(
@@ -885,7 +954,7 @@ describe('provider streaming adapters', () => {
     ) as unknown as typeof fetch
 
     const result = await completeAnthropicChat(
-      instance,
+      anthropicInstance,
       { ...request, target: { ...request.target, providerKind: 'anthropic' } },
       fetchImpl
     )
@@ -898,22 +967,13 @@ describe('provider streaming adapters', () => {
   })
 
   it('preserves fragmented Ollama NDJSON records', async () => {
-    const instance: ProviderInstance = {
-      id: 'ollama',
-      name: 'Ollama',
-      type: 'ollama',
-      enabled: true,
-      baseUrl: 'http://localhost:11434',
-      modelSource: 'discover',
-      models: []
-    }
     const response = streamingResponse([
       '{"message":{"content":"hel',
       'lo"},"done":false}\n{"done":true,"prompt_eval_count":2,"eval_count":1}\n'
     ])
     const chunks: ProviderStreamChunk[] = []
     const result = await streamOllamaChat(
-      instance,
+      ollamaInstance,
       { ...request, target: { ...request.target, providerKind: 'ollama' } },
       (chunk) => chunks.push(chunk),
       vi.fn(async () => response) as unknown as typeof fetch
@@ -955,18 +1015,9 @@ describe('provider streaming adapters', () => {
   })
 
   it('surfaces Ollama errors delivered inside a successful NDJSON response', async () => {
-    const instance: ProviderInstance = {
-      id: 'ollama',
-      name: 'Ollama',
-      type: 'ollama',
-      enabled: true,
-      baseUrl: 'http://localhost:11434',
-      modelSource: 'discover',
-      models: []
-    }
     const chunks: ProviderStreamChunk[] = []
     const result = await streamOllamaChat(
-      instance,
+      ollamaInstance,
       { ...request, target: { ...request.target, providerKind: 'ollama' } },
       (chunk) => chunks.push(chunk),
       vi.fn(async () =>

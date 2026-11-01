@@ -31,7 +31,9 @@ export const AGENT_CAPABILITIES = [
   'settings',
   'sessions',
   'credentials',
-  'web.request'
+  'web.request',
+  'schedules',
+  'computer'
 ] as const
 
 export type AgentCapability = (typeof AGENT_CAPABILITIES)[number]
@@ -101,6 +103,11 @@ export interface AgentApprovalPreview {
   changes: Array<{ label: string; before: string; after: string }>
   /** Plain facts about the request, such as which credential it uses and where it goes. */
   facts?: Array<{ label: string; value: string }>
+  /**
+   * Text the agent wrote that the approval would save word for word, such as a schedule's
+   * prompt, shown whole so nothing in it is approved unseen.
+   */
+  quote?: { label: string; text: string }
 }
 
 export interface AgentRunProfile {
@@ -234,6 +241,11 @@ export interface ToolResultMediaAttachment {
   source: ToolResultMediaSource
   name?: string
   description?: string
+  /**
+   * The model points at this image by pixel coordinates (a browser viewport screenshot), so the
+   * copy a provider receives keeps its size and is only re-encoded to fit.
+   */
+  keepDimensions?: boolean
 }
 
 export interface ToolExecutionResult<TData = unknown> {
@@ -271,6 +283,9 @@ export const AGENT_RUN_EVENT_TYPES = [
   'question.requested',
   'question.resolved',
   'usage.updated',
+  // Before each model request: the calibrated size of the prompt about to be sent, so the context
+  // meter is current before a provider that reports usage only at the end has answered.
+  'context.estimated',
   'compaction.started',
   'compaction.completed',
   'verification.updated',
@@ -455,7 +470,8 @@ export function normalizeToolResultMedia(
       mimeType: mimeType as ToolResultImageMimeType,
       source,
       ...(name ? { name } : {}),
-      ...(description ? { description } : {})
+      ...(description ? { description } : {}),
+      ...(candidate.keepDimensions === true ? { keepDimensions: true } : {})
     }
   })
 }
@@ -518,6 +534,24 @@ export function toolExecutionSucceeded<TData>(input: {
   }
 }
 
+/**
+ * What the model reads of a failure that carries data. It read only the data, so the message and
+ * the recovery never reached it: a failed search showed bare diagnostics, and a malformed
+ * apply_patch never got the corrected example.
+ */
+function failureModelContent(data: unknown, message: string, recovery?: string): string {
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    const record = data as Record<string, unknown>
+    return stringifyModelContent({
+      ...record,
+      ...(record.error ? {} : { error: message }),
+      ...(recovery && !record.recovery ? { recovery } : {})
+    })
+  }
+  const text = stringifyModelContent(data)
+  return [`Error: ${message}`, ...(recovery ? [recovery] : []), ...(text ? [text] : [])].join('\n')
+}
+
 export function toolExecutionFailed(input: {
   title: string
   code: ToolErrorCode
@@ -557,7 +591,7 @@ export function toolExecutionFailed(input: {
   return {
     status: input.status ?? 'error',
     title: input.title,
-    modelContent: input.modelContent ?? stringifyModelContent(data),
+    modelContent: input.modelContent ?? failureModelContent(data, input.message, input.recovery),
     data,
     error,
     ...(input.output ? { output: input.output } : {}),

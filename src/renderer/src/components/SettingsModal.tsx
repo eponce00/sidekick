@@ -16,16 +16,18 @@ import {
   KeyRound,
   LifeBuoy,
   MapPin,
+  MousePointerClick,
   Palette,
   RefreshCw,
   Repeat,
   Route,
-  Search,
   Server,
   Settings2,
   ShieldCheck,
   Layers,
   Type,
+  Minus,
+  Plus,
   Workflow
 } from 'lucide-react'
 import type { ProviderSettings } from '../types/app.types'
@@ -42,14 +44,15 @@ import {
 import { normalizeToolCallLimit } from '../../../shared/agentLimits'
 import { validateMcpServerConfig } from '../../../shared/mcp'
 import { ACCENT_PALETTES, DEFAULT_ACCENT_PALETTE } from '../../../shared/accentPalettes'
+import { DEFAULT_TEXT_SCALE, nearestTextScale, steppedTextScale } from '../../../shared/textScale'
 import { applyAccentPalette } from '../constants/accentPalettes'
 import { CommandLineToolSettings } from './CommandLineToolSettings'
+import { ComputerUseAllowedApps } from './ComputerUseAllowedApps'
 import { CredentialSettings } from './CredentialSettings'
 import { McpServerSettings } from './McpServerSettings'
-import { PermissionAuditPanel } from './PermissionAuditPanel'
 import { ProviderSettingsPanel } from './ProviderSettingsPanel'
-import { ProjectHooksPanel } from './ProjectHooksPanel'
 import { BrowserNetworkSettings } from './BrowserNetworkSettings'
+import { BrowserLibrarySettings } from './BrowserLibrarySettings'
 import { AppUpdateSettings, AppVersionButton } from './AppUpdateControls'
 import { VoiceSettings } from './VoiceSettings'
 import { SettingsPageHeader, SettingsRow, SettingsSection, ToggleField } from './SettingsLayout'
@@ -57,6 +60,7 @@ import { useModalDialog } from '../hooks/useModalDialog'
 import { settingsSectionContributions, type SettingsSectionId } from '../services/uiContributions'
 import './SettingsModal.css'
 import { Select } from './Select'
+import { SearchField } from './SearchField'
 import { globalRunSlots, MAX_GLOBAL_RUN_SLOTS } from '../../../shared/runSlots'
 import { PERMISSION_MODE_LABELS } from '../../../shared/permissions'
 
@@ -73,6 +77,8 @@ interface SettingsModalProps {
     settings: ProviderSettings,
     openedWith: ProviderSettings
   ) => Promise<{ success: boolean; error?: string }>
+  /** Saves a text size at once; the window resizes as soon as it is stored. */
+  onTextScaleChange: (textScale: number) => void
   onClose: () => void
   initialSection?: SettingsSection
   /** Shows a provider's key field, when SideKick's agent asked the user for a key. */
@@ -101,6 +107,7 @@ const NAV_ITEMS = settingsSectionContributions.list().map(({ value }) => ({
 function SettingsModal({
   settings: initialSettings,
   onSave,
+  onTextScaleChange,
   onClose,
   initialSection = 'providers',
   providerKeyRequest = null,
@@ -113,6 +120,10 @@ function SettingsModal({
   // Set by the version button; the Updates card only exists once General renders.
   const [revealUpdates, setRevealUpdates] = useState(false)
   const [mcpValidationError, setMcpValidationError] = useState<string | null>(null)
+  // Text size is saved as it changes, here or by the zoom shortcuts, so the draft follows it.
+  useEffect(() => {
+    setSettings((current) => ({ ...current, textScale: initialSettings.textScale }))
+  }, [initialSettings.textScale])
   useEffect(() => {
     if (providerKeyRequest) setActiveSection('providers')
   }, [providerKeyRequest])
@@ -126,7 +137,8 @@ function SettingsModal({
     kind: 'success' | 'error'
     message: string
   } | null>(null)
-  const dialogRef = useModalDialog<HTMLDivElement>(true, onClose)
+  // The title bar's theme and settings buttons stay usable beside Settings, so Tab reaches them.
+  const dialogRef = useModalDialog<HTMLDivElement>(true, onClose, '.title-bar-actions')
   const controlId = useId()
   const unsaved = useMemo(
     () => JSON.stringify(settings) !== JSON.stringify(initialSettings),
@@ -294,6 +306,21 @@ function SettingsModal({
               onChange={(webSearchEnabled) => setSettings({ ...settings, webSearchEnabled })}
             />
           </SettingsSection>
+          {window.api.app.platform === 'windows' && (
+            <SettingsSection
+              icon={MousePointerClick}
+              title="Computer use"
+              description="Lets the agent operate other apps on this computer. Each app needs your approval, for a chat or for good."
+            >
+              <ToggleField
+                label="Let the agent ask to use apps"
+                hint="Password managers, Windows security prompts and SideKick itself are never available. Press Esc to stop it. What an app shows goes to your selected model."
+                checked={settings.computerUseEnabled ?? false}
+                onChange={(computerUseEnabled) => setSettings({ ...settings, computerUseEnabled })}
+              />
+              <ComputerUseAllowedApps />
+            </SettingsSection>
+          )}
           <SettingsSection
             icon={MapPin}
             title="Location"
@@ -453,7 +480,7 @@ function SettingsModal({
           <SettingsSection
             icon={ShieldCheck}
             title="Permissions"
-            description="What the agent may do without asking you. It applies to commands, files, connectors, and the browser."
+            description="What the agent may do without asking you. It applies to commands, files, connectors, the browser, and stored credentials, and you can also change it beside the model in the composer."
           >
             <SettingsRow
               icon={Hand}
@@ -547,8 +574,8 @@ function SettingsModal({
             />
             <SettingsRow
               icon={FileCode2}
-              label="Python for Office documents"
-              description="Optional. Lets the Word, Excel, and PowerPoint skills check documents with this Python. It only reads, never installs anything, and is off when commands run in Docker."
+              label="Python for checking Office files"
+              description="Optional. After the agent makes a Word, Excel, or PowerPoint file, SideKick can open it with this Python to make sure it isn't broken. Pick a Python that already has lxml; SideKick installs nothing. Not used when commands run in Docker."
               stacked
               control={
                 <span className="settings-inline-field">
@@ -602,39 +629,23 @@ function SettingsModal({
                 </span>
               }
             />
-            <PermissionAuditPanel />
           </SettingsSection>
           <BrowserNetworkSettings />
-          <ProjectHooksPanel
-            hooks={{
-              start: settings.projectStartHooks ?? [],
-              completion: settings.projectCompletionHooks ?? [],
-              worktree: settings.projectWorktreeHooks ?? []
-            }}
-            onChange={(stage, hooks) =>
-              setSettings({
-                ...settings,
-                ...(stage === 'start'
-                  ? { projectStartHooks: hooks }
-                  : stage === 'completion'
-                    ? { projectCompletionHooks: hooks }
-                    : { projectWorktreeHooks: hooks })
-              })
-            }
-          />
+          <BrowserLibrarySettings />
         </div>
       )
     }
 
     if (activeSection === 'appearance') {
-      const textSize = settings.contentFontSize ?? 13
+      const textScale = nearestTextScale(settings.textScale)
+      const chooseTextScale = (next: number): void => {
+        setSettings({ ...settings, textScale: next })
+        onTextScaleChange(next)
+      }
       const activePalette = settings.accentPalette || DEFAULT_ACCENT_PALETTE
       return (
         <div className="settings-page">
-          <SettingsPageHeader
-            title="Appearance"
-            description="Accent color and conversation text size."
-          />
+          <SettingsPageHeader title="Appearance" description="Accent color and text size." />
           <SettingsSection
             icon={Palette}
             title="Accent color"
@@ -665,38 +676,40 @@ function SettingsModal({
           </SettingsSection>
           <SettingsSection
             icon={Type}
-            title="Conversation text"
-            description="Sizes messages and the message box only. Ctrl + and Ctrl − zoom the whole window."
+            title="Text size"
+            description="Sizes everything in the window together. The zoom shortcuts, Ctrl + and Ctrl −, step through the same sizes."
           >
             <SettingsRow
-              label="Text size"
-              controlId={`${controlId}-text-size`}
+              label="Size"
               control={
-                <>
-                  <input
-                    id={`${controlId}-text-size`}
-                    type="range"
-                    min={12}
-                    max={17}
-                    step={1}
-                    value={textSize}
-                    onChange={(event) => {
-                      const contentFontSize = Number(event.target.value)
-                      setSettings({ ...settings, contentFontSize })
-                      document.documentElement.style.setProperty(
-                        '--content-text',
-                        `${contentFontSize}px`
-                      )
-                      document.documentElement.style.setProperty(
-                        '--content-text-secondary',
-                        `${Math.max(11, contentFontSize - (contentFontSize > 14 ? 2 : 1))}px`
-                      )
-                    }}
-                  />
-                  <output className="settings-range-value" htmlFor={`${controlId}-text-size`}>
-                    {textSize}px
-                  </output>
-                </>
+                <div className="settings-stepper" role="group" aria-label="Text size">
+                  <button
+                    type="button"
+                    aria-label="Smaller text"
+                    disabled={steppedTextScale(textScale, 'out') === textScale}
+                    onClick={() => chooseTextScale(steppedTextScale(textScale, 'out'))}
+                  >
+                    <Minus size={14} aria-hidden="true" />
+                  </button>
+                  <output aria-live="polite">{textScale}%</output>
+                  <button
+                    type="button"
+                    aria-label="Larger text"
+                    disabled={steppedTextScale(textScale, 'in') === textScale}
+                    onClick={() => chooseTextScale(steppedTextScale(textScale, 'in'))}
+                  >
+                    <Plus size={14} aria-hidden="true" />
+                  </button>
+                  {textScale !== DEFAULT_TEXT_SCALE && (
+                    <button
+                      type="button"
+                      className="settings-stepper-reset"
+                      onClick={() => chooseTextScale(DEFAULT_TEXT_SCALE)}
+                    >
+                      Reset
+                    </button>
+                  )}
+                </div>
               }
             >
               <p className="settings-text-preview">
@@ -730,7 +743,7 @@ function SettingsModal({
         <div className="settings-page">
           <SettingsPageHeader
             title="Credentials"
-            description="API keys and sign-ins the agent can use by name without ever seeing them. Each one saves on its own, apart from Save changes."
+            description="Sign-ins and keys the agent uses without ever seeing them."
           />
           <CredentialSettings request={credentialRequest} />
         </div>
@@ -750,23 +763,23 @@ function SettingsModal({
         aria-labelledby="settings-modal-title"
         tabIndex={-1}
       >
+        {/* The title bar says Settings on screen; this names the dialog and heads its outline. */}
+        <h1 id="settings-modal-title" className="settings-modal-title">
+          Settings
+        </h1>
         <aside className="settings-sidebar">
           <button type="button" className="settings-back-button" onClick={onClose}>
             <ArrowLeft size={16} aria-hidden="true" />
             <span>Back to app</span>
           </button>
-          <label className="settings-search field-shell">
-            <Search size={14} aria-hidden="true" />
-            <input
-              value={navigationQuery}
-              onChange={(event) => setNavigationQuery(event.target.value)}
-              placeholder="Search settings…"
-              aria-label="Find settings sections"
-            />
-          </label>
-          <h1 id="settings-modal-title" className="settings-navigation-title">
-            Settings
-          </h1>
+          <SearchField
+            className="settings-search"
+            value={navigationQuery}
+            onChange={setNavigationQuery}
+            placeholder="Search settings"
+            aria-label="Find settings sections"
+          />
+          {/* One group needs no heading: the title bar already says Settings. */}
           <nav>
             {visibleNavigationItems.map((item) => {
               const Icon = item.icon
@@ -779,7 +792,8 @@ function SettingsModal({
                   aria-current={activeSection === item.id ? 'page' : undefined}
                   title={`${item.label} — ${item.description}`}
                 >
-                  <Icon size={16} aria-hidden="true" />
+                  {/* The sidebar tree's icon size, in its icon column. */}
+                  <Icon size={14} aria-hidden="true" />
                   <strong>{item.label}</strong>
                 </button>
               )
@@ -788,15 +802,6 @@ function SettingsModal({
               <div className="settings-search-empty">No matching section</div>
             )}
           </nav>
-          <div className="settings-sidebar-footer">
-            <AppVersionButton
-              onSelect={() => {
-                setNavigationQuery('')
-                setActiveSection('general')
-                setRevealUpdates(true)
-              }}
-            />
-          </div>
         </aside>
         <div className="settings-main">
           <main
@@ -806,30 +811,50 @@ function SettingsModal({
           >
             {renderSection()}
           </main>
-          <footer className="settings-footer">
-            {saveError ? (
-              <span className="settings-footer-status error" role="alert">
-                <CircleAlert size={14} aria-hidden="true" />
-                {saveError}
-              </span>
-            ) : (
-              <span className={`settings-footer-status${unsaved ? ' dirty' : ''}`}>
-                {unsaved ? 'Unsaved changes' : 'Changes apply after you save.'}
-              </span>
-            )}
-            <button type="button" className="settings-secondary-action" onClick={onClose}>
-              Cancel
-            </button>
-            <button
-              className="settings-primary-action"
-              type="button"
-              onClick={() => void handleSave()}
-              disabled={saving}
-            >
-              {saving ? 'Saving…' : 'Save changes'}
-            </button>
-          </footer>
         </div>
+        <footer className="settings-footer">
+          <div className="settings-footer-version">
+            <AppVersionButton
+              onSelect={() => {
+                setNavigationQuery('')
+                setActiveSection('general')
+                setRevealUpdates(true)
+              }}
+            />
+          </div>
+          <div className="settings-footer-page">
+            <div className="settings-footer-inner">
+              {saveError ? (
+                <span className="settings-footer-status error" role="alert">
+                  <CircleAlert size={14} aria-hidden="true" />
+                  {saveError}
+                </span>
+              ) : (
+                // Said only while there is something to save; the empty line keeps its place.
+                <span
+                  className={`settings-footer-status${unsaved ? ' dirty' : ''}`}
+                  aria-live="polite"
+                >
+                  {unsaved ? 'Unsaved changes' : ''}
+                </span>
+              )}
+              <button type="button" className="settings-ghost-action" onClick={onClose}>
+                Cancel
+              </button>
+              {/* The view's one accent fill appears only when there is something to save. */}
+              <button
+                className={
+                  unsaved || saving ? 'settings-primary-action' : 'settings-secondary-action'
+                }
+                type="button"
+                onClick={() => void handleSave()}
+                disabled={saving}
+              >
+                {saving ? 'Saving…' : 'Save changes'}
+              </button>
+            </div>
+          </div>
+        </footer>
       </div>
     </div>
   )

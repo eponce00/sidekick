@@ -1,3 +1,5 @@
+import type { LucideIcon } from 'lucide-react'
+
 export type CommandPaletteGroupId = 'actions' | 'conversations' | 'projects'
 
 export interface CommandPaletteItem {
@@ -11,6 +13,9 @@ export interface CommandPaletteItem {
   /** The shortcut label, from the shared shortcut table. */
   shortcut?: string
   disabled?: boolean
+  /** The icon the action has elsewhere in the app. Actions without one show none; chats and
+   * projects show their group's. */
+  icon?: LucideIcon
   /** Newer first when two matches rank the same, and in the empty-query list. */
   recency?: number
   run: () => void

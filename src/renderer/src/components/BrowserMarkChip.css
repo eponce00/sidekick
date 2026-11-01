@@ -1,0 +1,77 @@
+/* A mark's number matches the badge drawn on the page while annotating: a circle, wider only
+   for two digits. */
+.browser-mark-number {
+  min-width: 20px;
+  height: 20px;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: var(--radius-full);
+  color: var(--on-accent);
+  background: var(--accent);
+  font: 700 var(--text-xs) / 1 var(--font-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+.browser-mark-chip {
+  max-width: 300px;
+  gap: 8px;
+}
+
+.composer-context-attachment.browser-mark-chip {
+  padding-left: 6px;
+}
+
+/* An attachment chip's text rule must not squeeze the number. */
+.browser-mark-chip > .browser-mark-number {
+  min-width: 20px;
+  overflow: visible;
+  font-size: var(--text-xs);
+}
+
+.browser-mark-chip > span:not(.browser-mark-number) {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-mark-chip strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.browser-mark-chip .browser-mark-note {
+  color: var(--text-secondary);
+}
+
+.message-browser-mark {
+  min-width: 0;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 6px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: var(--surface-2);
+}
+
+/* Once sent, a mark is a record rather than something on the page now, so its number is grey. */
+.message-browser-mark > .browser-mark-number {
+  color: var(--text-primary);
+  background: var(--surface-4);
+}
+
+.browser-mark-chip .visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

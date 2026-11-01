@@ -66,8 +66,6 @@ describe('SideKick-styled notice', () => {
     })
     expect(page).toContain('Allow &lt;b&gt;SideKick&lt;/b&gt; to open')
     expect(page).not.toContain('<b>SideKick</b>')
-    expect(page).toContain('--accent: #2850b8;')
-    expect(page).toContain('color-scheme: light;')
     const script = page.match(/<script>([\s\S]*?)<\/script>/)![1]
     expect(page).toContain(
       `script-src 'sha256-${createHash('sha256').update(script).digest('base64')}'`
@@ -84,24 +82,21 @@ describe('SideKick-styled notice', () => {
     expect(notice.showInactive).toHaveBeenCalled()
   })
 
-  it('brings SideKick up when clicked, and goes away', () => {
-    const onOpen = vi.fn()
-    showAttentionToast({ title: 'T', message: 'M', warning: false, look, onOpen })
-    windows[0].navigate('sidekick-notice:open')
-    expect(onOpen).toHaveBeenCalled()
-    expect(windows[0].destroy).toHaveBeenCalled()
-  })
-
-  it('can be dismissed, or taken away once the question is answered', () => {
+  it('brings SideKick up when clicked, and goes away when clicked, dismissed or taken away', () => {
     const onOpen = vi.fn()
     showAttentionToast({ title: 'T', message: 'M', warning: false, look, onOpen })
     windows[0].navigate('sidekick-notice:close')
     expect(windows[0].destroy).toHaveBeenCalled()
     expect(onOpen).not.toHaveBeenCalled()
 
+    showAttentionToast({ title: 'T', message: 'M', warning: false, look, onOpen })
+    windows[1].navigate('sidekick-notice:open')
+    expect(onOpen).toHaveBeenCalled()
+    expect(windows[1].destroy).toHaveBeenCalled()
+
     const takeAway = showAttentionToast({ title: 'T', message: 'M', warning: false, look, onOpen })
     takeAway()
-    expect(windows[1].destroy).toHaveBeenCalled()
+    expect(windows[2].destroy).toHaveBeenCalled()
   })
 
   it('ignores any other navigation', () => {

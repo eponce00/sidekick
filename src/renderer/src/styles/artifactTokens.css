@@ -1,0 +1,65 @@
+/* The tokens an artifact sees before the chat sends its theme, which replaces the colors, fonts and
+   radii on <html>. The page stays transparent: the conversation shows through it. */
+:root {
+  --app-bg: #0c0c0c;
+  --panel-bg: #1a1a1a;
+  --surface: #202020;
+  --surface-0: #151515;
+  --surface-1: #1a1a1a;
+  --surface-2: #202020;
+  --surface-3: #262626;
+  --surface-4: #2f2f2f;
+  --surface-hover: #262626;
+  --input-bg: #202020;
+  --panel-border: rgba(255, 255, 255, 0.11);
+  --border: var(--panel-border);
+  --border-color: var(--panel-border);
+  --border-subtle: rgba(255, 255, 255, 0.055);
+  --border-strong: rgba(255, 255, 255, 0.15);
+  --text-primary: #ececec;
+  --text-secondary: #a9a9a9;
+  --text-muted: #8d8d8d;
+  --accent: #86aee8;
+  --accent-strong: #a1c0ee;
+  --accent-pressed: #6c97d6;
+  --accent-subtle: rgba(134, 174, 232, 0.08);
+  --accent-muted: rgba(134, 174, 232, 0.14);
+  --on-accent: #111111;
+  --color-success: #5fcf9f;
+  --color-error: #f0717f;
+  --color-warning: #e9a05f;
+  --chart-1: var(--accent);
+  --chart-2: #5fc7b8;
+  --chart-3: #e3b16a;
+  --chart-4: #b19be9;
+  --chart-5: #ea8ca6;
+
+  --font-sans:
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell,
+    sans-serif;
+  --font-mono: 'SF Mono', 'Consolas', 'Monaco', 'Fira Code', monospace;
+  --content-text: 14px;
+  --content-leading: 1.6;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 48px;
+  --duration-fast: 0.12s;
+  --duration-normal: 0.2s;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: transparent;
+}

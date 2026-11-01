@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CalendarClock,
+  Check,
   ChevronDown,
   ChevronRight,
   ChevronsDownUp,
@@ -21,12 +22,14 @@ import {
   Pin,
   PinOff,
   Plus,
-  Search,
+  Smartphone,
   SquarePen,
   Trash2,
   X
 } from 'lucide-react'
 import type { Conversation, Project } from '../types/app.types'
+import { AppVersionLabel } from './AppUpdateControls'
+import { SearchField } from './SearchField'
 import type { MoveConversationInput } from '../../../shared/projects'
 import { sidebarConversationOrder } from '../utils/sidebarConversationOrder'
 import { LAYOUT_MOTION_MS } from '../utils/activityPanelLayout'
@@ -57,11 +60,51 @@ import { shortcutLabel } from '../../../shared/keyboardShortcuts'
 import type { DesktopPlatform } from '../../../shared/platform'
 import type { SessionStatus } from '../../../shared/sessions'
 import ConfirmDialog from './ConfirmDialog'
+import PhoneCompanionPanel from './PhoneCompanionPanel'
+import { usePhoneCompanionStatus } from '../hooks/usePhoneCompanionStatus'
 import ScheduledRunGroupRow from './ScheduledRunGroupRow'
 import { groupScheduledConversations } from '../utils/scheduledRunGroups'
 import { Reveal } from './Reveal'
 import { WrittenTitle } from './WrittenTitle'
+import './AppMenuHost.css'
 import './Sidebar.css'
+
+interface MenuItemProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  icon?: React.ReactNode
+  label: string
+  /** A shortcut or count, right-aligned. */
+  hint?: string | number
+  /** A radio item's state, shown as a check at the end of the row. */
+  checked?: boolean
+  danger?: boolean
+}
+
+/** One row of the sidebar's menus, drawn as the app's other menus are (`.app-menu`). */
+function MenuItem({
+  icon,
+  label,
+  hint,
+  checked,
+  danger,
+  role = 'menuitem',
+  ...button
+}: MenuItemProps): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      role={role}
+      className={`app-menu-item${danger ? ' is-danger' : ''}`}
+      {...button}
+    >
+      <span className="app-menu-mark" aria-hidden="true">
+        {icon}
+      </span>
+      <span className="app-menu-label">{label}</span>
+      {hint !== undefined && <span className="app-menu-shortcut">{hint}</span>}
+      {checked && <Check size={14} className="app-menu-check" aria-hidden="true" />}
+    </button>
+  )
+}
 
 interface SidebarProps {
   conversations: Conversation[]
@@ -88,6 +131,8 @@ interface SidebarProps {
   onToggleConversationPin: (id: string, pinned: boolean) => void
   onToggleProjectPin: (id: string, pinned: boolean) => void
   onRemoveProject: (id: string) => void
+  /** Opens the project's Edit project dialog: its name and folders. */
+  onEditProject?: (id: string) => void
   /** The conversations as listed, top to bottom, for keyboard navigation. */
   onVisibleConversationOrderChange?: (conversationIds: string[]) => void
   /** Schedule names by id, for the rows that group each schedule's runs. */
@@ -144,6 +189,7 @@ function Sidebar({
   onToggleConversationPin,
   onToggleProjectPin,
   onRemoveProject,
+  onEditProject,
   onVisibleConversationOrderChange,
   scheduleNames,
   onOpenSchedules,
@@ -168,6 +214,11 @@ function Sidebar({
   const [removeProjectConfirm, setRemoveProjectConfirm] = useState<string | null>(null)
   const [deleteAllConfirm, setDeleteAllConfirm] = useState(false)
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const [isPhoneOpen, setIsPhoneOpen] = useState(false)
+  const phoneButtonRef = useRef<HTMLButtonElement>(null)
+  const closePhone = useCallback(() => setIsPhoneOpen(false), [])
+  const phone = usePhoneCompanionStatus()
+  const phoneConnected = phone?.status?.devices.some(({ connected }) => connected) ?? false
   const [openActionsMenu, setOpenActionsMenu] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const [query, setQuery] = useState('')
@@ -676,57 +727,74 @@ function Sidebar({
               {familyCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
             </button>
           )}
-          {renamingConversationId === conversation.id ? (
-            <div className="conversation-content">
-              <input
-                className="conversation-rename-input"
-                value={renameValue}
-                autoFocus
-                onClick={(event) => event.stopPropagation()}
-                onChange={(event) => setRenameValue(event.target.value)}
-                onBlur={finishRename}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') event.currentTarget.blur()
-                  if (event.key === 'Escape') setRenamingConversationId(null)
-                }}
-              />
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="conversation-select-button conversation-content"
-              onClick={() => onSelectConversation(conversation.id)}
-              onDoubleClick={() => beginConversationRename(conversation)}
-              title={`${conversation.title} — double-click to rename`}
-            >
-              <span className="conversation-title">
-                {conversation.worktree_id && (
-                  <FolderGit2
-                    size={12}
-                    className="conversation-worktree-icon"
-                    aria-label="Works in its own worktree"
-                  />
+          <span className="conversation-main">
+            {renamingConversationId === conversation.id ? (
+              <div className="conversation-content">
+                <input
+                  className="conversation-rename-input"
+                  value={renameValue}
+                  autoFocus
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => setRenameValue(event.target.value)}
+                  onBlur={finishRename}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') event.currentTarget.blur()
+                    if (event.key === 'Escape') setRenamingConversationId(null)
+                  }}
+                />
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="conversation-select-button conversation-content"
+                onClick={() => onSelectConversation(conversation.id)}
+                onDoubleClick={() => beginConversationRename(conversation)}
+                title={`${conversation.title}${projectTag ? ` · in ${projectTag}` : ''} — double-click to rename`}
+              >
+                <span className="conversation-title">
+                  {conversation.worktree_id && (
+                    <FolderGit2
+                      size={12}
+                      className="conversation-worktree-icon"
+                      aria-label="Works in its own worktree"
+                    />
+                  )}
+                  <WrittenTitle text={label || conversation.title} identity={conversation.id} />
+                </span>
+                {rollUp && (
+                  // Whole items drop off the end when the row is narrow, rather than a cut word.
+                  <span className="conversation-metadata session-roll-up">
+                    {rollUp.split(' · ').map((item, index) => (
+                      <Fragment key={item}>
+                        {index > 0 && ' '}
+                        <span className="session-roll-up-item">
+                          {index > 0 && '· '}
+                          {item}
+                        </span>
+                      </Fragment>
+                    ))}
+                  </span>
                 )}
-                <WrittenTitle text={label || conversation.title} identity={conversation.id} />
+                {options.showProject && conversation.project_id && (
+                  <span className="conversation-metadata">
+                    {projectNameById.get(conversation.project_id)}
+                  </span>
+                )}
+                {!conversation.project_id && conversation.home_project_name && (
+                  <span className="conversation-metadata">
+                    Detached from {conversation.home_project_name}
+                  </span>
+                )}
+              </button>
+            )}
+            {/* Wraps onto the hidden second line, and so disappears, when too little of it fits.
+                Renaming hides it, since the row's clipped height would cut the field. */}
+            {projectTag && renamingConversationId !== conversation.id && (
+              <span className="session-project-tag" title={`In ${projectTag}`}>
+                {projectTag}
               </span>
-              {rollUp && <span className="conversation-metadata session-roll-up">{rollUp}</span>}
-              {options.showProject && conversation.project_id && (
-                <span className="conversation-metadata">
-                  {projectNameById.get(conversation.project_id)}
-                </span>
-              )}
-              {!conversation.project_id && conversation.home_project_name && (
-                <span className="conversation-metadata">
-                  Detached from {conversation.home_project_name}
-                </span>
-              )}
-            </button>
-          )}
-          {projectTag && (
-            <span className="session-project-tag" title={`In ${projectTag}`}>
-              {projectTag}
-            </span>
-          )}
+            )}
+          </span>
           {dot && (
             <span
               className={`conversation-run-indicator ${dot}`}
@@ -767,63 +835,60 @@ function Sidebar({
                 <MoreHorizontal size={15} />
               </button>
               {openActionsMenu === actionsMenuKey && (
-                <div className="sidebar-overflow-menu" role="menu">
-                  <button
-                    type="button"
-                    role="menuitem"
+                <div className="app-menu sidebar-overflow-menu" role="menu">
+                  <MenuItem
+                    icon={<Pencil size={14} />}
+                    label="Rename"
                     onClick={() => {
                       setOpenActionsMenu(null)
                       beginConversationRename(conversation)
                     }}
-                  >
-                    <Pencil size={13} /> Rename
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
+                  />
+                  <MenuItem
+                    icon={conversation.is_pinned ? <PinOff size={14} /> : <Pin size={14} />}
+                    label={conversation.is_pinned ? 'Unpin chat' : 'Pin chat'}
                     onClick={() => {
                       setOpenActionsMenu(null)
                       onToggleConversationPin(conversation.id, !conversation.is_pinned)
                     }}
-                  >
-                    {conversation.is_pinned ? <PinOff size={13} /> : <Pin size={13} />}
-                    {conversation.is_pinned ? 'Unpin chat' : 'Pin chat'}
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
+                  />
+                  <MenuItem
+                    icon={<FolderInput size={14} />}
+                    label="Move to"
                     disabled={isConversationBusy}
                     onClick={() => {
                       setOpenActionsMenu(null)
                       setMovingConversationId(conversation.id)
                     }}
-                  >
-                    <FolderInput size={13} /> Move to
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
+                  />
+                  <MenuItem
+                    icon={<GitFork size={14} />}
+                    label="Fork chat"
                     disabled={isConversationBusy}
                     onClick={() => {
                       setOpenActionsMenu(null)
                       onForkConversation(conversation.id)
                     }}
-                  >
-                    <GitFork size={13} strokeWidth={1.8} /> Fork chat
-                  </button>
+                  />
                 </div>
               )}
             </span>
           </span>
           {movingConversationId === conversation.id && (
             <div
-              className="conversation-move-menu"
+              className="app-menu conversation-move-menu"
+              role="menu"
+              aria-label="Move to"
               onMouseLeave={() => setMovingConversationId(null)}
             >
-              <span className="conversation-move-heading">Move to</span>
-              <button
-                type="button"
-                className={!conversation.project_id ? 'selected' : ''}
+              <div className="app-menu-heading section-heading" role="presentation">
+                Move to
+              </div>
+              <MenuItem
+                role="menuitemradio"
+                aria-checked={!conversation.project_id}
+                icon={!conversation.project_id && <Check size={14} />}
+                label="Standalone chat"
                 disabled={!conversation.project_id}
                 onClick={() => {
                   onMoveConversation({
@@ -834,15 +899,16 @@ function Sidebar({
                   })
                   setMovingConversationId(null)
                 }}
-              >
-                Standalone chat
-              </button>
+              />
               {projects
                 .filter((project) => canMoveToProject(conversation, project.id))
                 .map((project) => (
-                  <button
-                    type="button"
-                    className={conversation.project_id === project.id ? 'selected' : ''}
+                  <MenuItem
+                    role="menuitemradio"
+                    aria-checked={conversation.project_id === project.id}
+                    icon={conversation.project_id === project.id && <Check size={14} />}
+                    label={project.name}
+                    title={project.name}
                     key={project.id}
                     onClick={() => {
                       onMoveConversation({
@@ -853,9 +919,7 @@ function Sidebar({
                       })
                       setMovingConversationId(null)
                     }}
-                  >
-                    {project.name}
-                  </button>
+                  />
                 ))}
             </div>
           )}
@@ -964,85 +1028,110 @@ function Sidebar({
         <MoreHorizontal size={16} />
       </button>
       {isMenuOpen && (
-        <div className="sidebar-menu" role="menu">
-          <button
-            type="button"
-            role="menuitem"
+        <div className="app-menu sidebar-menu" role="menu">
+          <MenuItem
+            icon={<SquarePen size={14} />}
+            label="New chat"
+            hint={shortcutLabel('new-chat', platform)}
             onClick={() => {
               setIsMenuOpen(false)
               onNewConversation(null)
             }}
-          >
-            <SquarePen size={15} />
-            <span>New chat</span>
-            <kbd>{shortcutLabel('new-chat', platform)}</kbd>
-          </button>
-          <button
-            type="button"
-            role="menuitem"
+          />
+          <MenuItem
+            icon={<Command size={14} />}
+            label="Command palette"
+            hint={shortcutLabel('command-palette', platform)}
             onClick={() => {
               setIsMenuOpen(false)
               onOpenCommandPalette()
             }}
-          >
-            <Command size={15} />
-            <span>Command palette</span>
-            <kbd>{shortcutLabel('command-palette', platform)}</kbd>
-          </button>
+          />
           {/* Expanded, these live on their section's heading, and Recent has no Projects heading. */}
           {(isCollapsed || view === 'recent') && (
-            <button
-              type="button"
-              role="menuitem"
+            <MenuItem
+              icon={<FolderPlus size={14} />}
+              label="Open project"
+              hint={shortcutLabel('open-project', platform)}
               onClick={() => {
                 setIsMenuOpen(false)
                 onOpenProject()
               }}
-            >
-              <FolderPlus size={15} />
-              <span>Open project</span>
-              <kbd>{shortcutLabel('open-project', platform)}</kbd>
-            </button>
+            />
           )}
           {projects.length > 1 && !isCollapsed && view === 'folders' && (
-            <button
-              type="button"
-              role="menuitem"
+            <MenuItem
+              icon={
+                allProjectsCollapsed ? <ChevronsUpDown size={14} /> : <ChevronsDownUp size={14} />
+              }
+              label={allProjectsCollapsed ? 'Expand all projects' : 'Collapse all projects'}
               onClick={() => {
                 setIsMenuOpen(false)
                 setCollapsedProjectIds(
                   allProjectsCollapsed ? new Set() : new Set(projects.map(({ id }) => id))
                 )
               }}
-            >
-              {allProjectsCollapsed ? <ChevronsUpDown size={15} /> : <ChevronsDownUp size={15} />}
-              <span>{allProjectsCollapsed ? 'Expand all projects' : 'Collapse all projects'}</span>
-            </button>
+            />
           )}
           {conversations.length > 0 && !isCollapsed && (
-            <button
-              type="button"
-              role="menuitem"
-              className="danger"
-              disabled={busyConversationIds.size > 0}
-              title={
-                busyConversationIds.size > 0
-                  ? 'Stop active conversations before clearing chat history'
-                  : 'Delete all conversation history'
-              }
-              onClick={() => {
-                setIsMenuOpen(false)
-                setDeleteAllConfirm(true)
-              }}
-            >
-              <Trash2 size={15} />
-              <span>Clear all chats</span>
-            </button>
+            <>
+              <div className="app-menu-separator" role="separator" />
+              <MenuItem
+                danger
+                icon={<Trash2 size={14} />}
+                label="Clear all chats"
+                disabled={busyConversationIds.size > 0}
+                title={
+                  busyConversationIds.size > 0
+                    ? 'Stop active conversations before clearing chat history'
+                    : 'Delete all conversation history'
+                }
+                onClick={() => {
+                  setIsMenuOpen(false)
+                  setDeleteAllConfirm(true)
+                }}
+              />
+            </>
           )}
         </div>
       )}
     </div>
   )
+
+  // Expanded, a labelled row on the tree's grid with the connection dot in its status slot; on
+  // the rail, an icon button with the dot cut out of the glyph's corner. The dot is the shared
+  // 6px one in the accent, shown only while a phone is connected.
+  const phoneButton = phone && (
+    <button
+      ref={phoneButtonRef}
+      type="button"
+      className={`${isCollapsed ? 'sidebar-icon-btn sidebar-phone-btn' : 'sidebar-phone-row'}${isPhoneOpen ? ' active' : ''}`}
+      onClick={() => setIsPhoneOpen((current) => !current)}
+      title={phoneConnected ? 'Phone connected' : 'Phone'}
+      aria-label={phoneConnected ? 'Phone connected' : 'Phone'}
+      aria-haspopup="dialog"
+      aria-expanded={isPhoneOpen}
+    >
+      <span className="sidebar-phone-glyph">
+        <Smartphone size={16} />
+        {isCollapsed && phoneConnected && (
+          <span className="conversation-run-indicator sidebar-phone-dot" aria-hidden="true" />
+        )}
+      </span>
+      {!isCollapsed && <span className="sidebar-phone-label">Phone</span>}
+      {!isCollapsed && phoneConnected && (
+        <span className="conversation-run-indicator" aria-hidden="true" />
+      )}
+    </button>
+  )
+
+  // Surfaces waiting chats even inside closed projects, and on the rail, where the filter that
+  // carries this count is folded away: expanding the sidebar leads back to it.
+  // Folded, the toggle carries the waiting count whatever the filter, since the filter's own badge
+  // is hidden with the header; expanded, the filter button shows it unless it already filters by it.
+  const hasWaiting = statusCounts.waiting > 0
+  const showWaitingCount = hasWaiting && statusFilter !== 'waiting'
+  const waitingLabel = `${statusCounts.waiting} need attention`
 
   return (
     <>
@@ -1054,8 +1143,18 @@ function Sidebar({
             className="sidebar-icon-btn sidebar-toggle-btn"
             onClick={onToggleCollapsed}
             title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={
+              isCollapsed
+                ? `Expand sidebar${hasWaiting ? `, ${waitingLabel}` : ''}`
+                : 'Collapse sidebar'
+            }
           >
             <PanelLeft size={16} />
+            {isCollapsed && hasWaiting && (
+              <span className="count-badge is-attention" aria-hidden="true">
+                {statusCounts.waiting}
+              </span>
+            )}
           </button>
           {!isCollapsed && <span className="sidebar-heading">SideKick</span>}
           <div className="sidebar-header-actions">
@@ -1107,41 +1206,37 @@ function Sidebar({
                     aria-expanded={isFilterMenuOpen}
                   >
                     <ListFilter size={15} />
-                    {/* Surfaces waiting chats even inside closed projects. */}
-                    {statusCounts.waiting > 0 && statusFilter !== 'waiting' && (
+                    {showWaitingCount && (
                       <span
-                        className="sidebar-filter-badge"
-                        aria-label={`${statusCounts.waiting} need attention`}
+                        className="sidebar-filter-badge count-badge is-attention"
+                        aria-label={waitingLabel}
                       >
                         {statusCounts.waiting}
                       </span>
                     )}
                   </button>
                   {isFilterMenuOpen && (
-                    <div className="sidebar-menu sidebar-filter-menu" role="menu">
+                    <div className="app-menu sidebar-menu sidebar-filter-menu" role="menu">
                       {SIDEBAR_STATUS_FILTERS.map((filter) => (
-                        <button
-                          type="button"
+                        <MenuItem
                           role="menuitemradio"
                           aria-checked={statusFilter === filter}
-                          className={statusFilter === filter ? 'selected' : ''}
+                          checked={statusFilter === filter}
                           key={filter}
+                          icon={
+                            filter === 'all' ? (
+                              <MessageSquare size={14} />
+                            ) : (
+                              <span className={`conversation-run-indicator ${filter}`} />
+                            )
+                          }
+                          label={SIDEBAR_STATUS_FILTER_LABELS[filter]}
+                          hint={filter === 'all' ? undefined : statusCounts[filter]}
                           onClick={() => {
                             setIsFilterMenuOpen(false)
                             setStatusFilter(filter)
                           }}
-                        >
-                          {filter === 'all' ? (
-                            <MessageSquare size={14} />
-                          ) : (
-                            <span
-                              className={`conversation-run-indicator ${filter}`}
-                              aria-hidden="true"
-                            />
-                          )}
-                          <span>{SIDEBAR_STATUS_FILTER_LABELS[filter]}</span>
-                          {filter !== 'all' && <kbd>{statusCounts[filter]}</kbd>}
-                        </button>
+                        />
                       ))}
                     </div>
                   )}
@@ -1153,15 +1248,13 @@ function Sidebar({
         </div>
 
         {!isCollapsed && (conversations.length > 0 || projects.length > 0) && (
-          <label className="sidebar-search field-shell">
-            <Search size={13} />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search chats"
-              aria-label="Search conversations"
-            />
-          </label>
+          <SearchField
+            className="sidebar-search"
+            value={query}
+            onChange={setQuery}
+            placeholder="Search chats"
+            aria-label="Search conversations"
+          />
         )}
 
         {!isCollapsed && filtering && (
@@ -1179,6 +1272,20 @@ function Sidebar({
           </div>
         )}
 
+        {!isCollapsed && (
+          <div className="sidebar-new-chat">
+            <button
+              type="button"
+              className="sidebar-new-chat-row"
+              onClick={() => onNewConversation(null)}
+              title={`New chat (${shortcutLabel('new-chat', platform)})`}
+            >
+              <SquarePen size={16} aria-hidden="true" />
+              <span>New chat</span>
+            </button>
+          </div>
+        )}
+
         <div className="conversation-list">
           {isCollapsed ? (
             <nav className="collapsed-sidebar-nav" aria-label="Sidebar destinations">
@@ -1187,11 +1294,13 @@ function Sidebar({
                   type="button"
                   className={compactDestination === 'projects' ? 'active' : ''}
                   onClick={onToggleCollapsed}
-                  title={`Projects (${listedProjects.length})`}
+                  title={`Projects · ${listedProjects.length}`}
                   aria-label={`Expand projects, ${listedProjects.length} total`}
                 >
                   <FolderOpen size={16} />
-                  <span>{listedProjects.length}</span>
+                  <span className="count-badge" aria-hidden="true">
+                    {listedProjects.length}
+                  </span>
                 </button>
               )}
               {standaloneConversations.length > 0 && (
@@ -1199,11 +1308,13 @@ function Sidebar({
                   type="button"
                   className={compactDestination === 'chats' ? 'active' : ''}
                   onClick={onToggleCollapsed}
-                  title={`Standalone chats (${standaloneConversations.length})`}
+                  title={`Chats · ${standaloneConversations.length}`}
                   aria-label={`Expand standalone chats, ${standaloneConversations.length} total`}
                 >
                   <MessageSquare size={16} />
-                  <span>{standaloneConversations.length}</span>
+                  <span className="count-badge" aria-hidden="true">
+                    {standaloneConversations.length}
+                  </span>
                 </button>
               )}
               {onOpenSchedules && (
@@ -1223,7 +1334,7 @@ function Sidebar({
             </nav>
           ) : query.trim() ? (
             <section className="sidebar-section">
-              <div className="sidebar-section-label">Search results</div>
+              <div className="section-heading sidebar-section-label">Search results</div>
               {visibleSearchResults.length > 0 ? (
                 visibleSearchResults.map((conversation) =>
                   renderConversation(conversation, { showProject: true })
@@ -1237,7 +1348,7 @@ function Sidebar({
               {view === 'recent' ? (
                 recentGroups.map((group) => (
                   <section className="sidebar-section recent-section" key={group.bucket}>
-                    <div className="sidebar-section-label">{group.label}</div>
+                    <div className="section-heading sidebar-section-label">{group.label}</div>
                     {renderConversationList(group.conversations, { showProject: true })}
                   </section>
                 ))
@@ -1245,7 +1356,7 @@ function Sidebar({
                 <>
                   {(!filtering || projectsWithMatches.length > 0) && (
                     <section className="sidebar-section project-section">
-                      <div className="sidebar-section-label sidebar-section-label-with-action">
+                      <div className="section-heading sidebar-section-label sidebar-section-label-with-action">
                         {sectionHeading('projects', 'Projects', listedProjects.length)}
                         <button
                           type="button"
@@ -1333,7 +1444,7 @@ function Sidebar({
                                     className="project-name"
                                     onClick={() => toggleProject(project.id)}
                                     onDoubleClick={() => beginProjectRename(project)}
-                                    title={`${project.folder_path} — double-click to rename`}
+                                    title={`${[project.folder_path, ...(project.folders ?? []).map((folder) => folder.path)].join('\n')}\nDouble-click to rename`}
                                   >
                                     {project.name}
                                   </button>
@@ -1365,36 +1476,44 @@ function Sidebar({
                                       <MoreHorizontal size={15} />
                                     </button>
                                     {openActionsMenu === `project:${project.id}` && (
-                                      <div className="sidebar-overflow-menu" role="menu">
-                                        <button
-                                          type="button"
-                                          role="menuitem"
+                                      <div className="app-menu sidebar-overflow-menu" role="menu">
+                                        <MenuItem
+                                          icon={<Pencil size={14} />}
+                                          label="Rename"
                                           onClick={() => {
                                             setOpenActionsMenu(null)
                                             beginProjectRename(project)
                                           }}
-                                        >
-                                          <Pencil size={13} /> Rename
-                                        </button>
-                                        <button
-                                          type="button"
-                                          role="menuitem"
+                                        />
+                                        {onEditProject && (
+                                          <MenuItem
+                                            icon={<FolderPlus size={14} />}
+                                            label="Edit project…"
+                                            onClick={() => {
+                                              setOpenActionsMenu(null)
+                                              onEditProject(project.id)
+                                            }}
+                                          />
+                                        )}
+                                        <MenuItem
+                                          icon={
+                                            project.is_pinned ? (
+                                              <PinOff size={14} />
+                                            ) : (
+                                              <Pin size={14} />
+                                            )
+                                          }
+                                          label={project.is_pinned ? 'Unpin' : 'Pin'}
                                           onClick={() => {
                                             setOpenActionsMenu(null)
                                             onToggleProjectPin(project.id, !project.is_pinned)
                                           }}
-                                        >
-                                          {project.is_pinned ? (
-                                            <PinOff size={13} />
-                                          ) : (
-                                            <Pin size={13} />
-                                          )}
-                                          {project.is_pinned ? 'Unpin' : 'Pin'}
-                                        </button>
-                                        <button
-                                          type="button"
-                                          role="menuitem"
-                                          className="danger"
+                                        />
+                                        <div className="app-menu-separator" role="separator" />
+                                        <MenuItem
+                                          danger
+                                          icon={<Trash2 size={14} />}
+                                          label="Remove project"
                                           onClick={() => {
                                             setOpenActionsMenu(null)
                                             setRemoveProjectConfirm(project.id)
@@ -1404,9 +1523,7 @@ function Sidebar({
                                           ).some((conversation) =>
                                             busyConversationIds.has(conversation.id)
                                           )}
-                                        >
-                                          <Trash2 size={13} /> Remove project
-                                        </button>
+                                        />
                                       </div>
                                     )}
                                   </span>
@@ -1421,7 +1538,8 @@ function Sidebar({
                                       className="project-new-chat-empty"
                                       onClick={() => onNewConversation(project.id)}
                                     >
-                                      <SquarePen size={12} /> New chat
+                                      <SquarePen size={14} aria-hidden="true" />
+                                      <span>New chat</span>
                                     </button>
                                   ) : null}
                                 </div>
@@ -1452,7 +1570,7 @@ function Sidebar({
                         if (dropTarget) finishDrop(dropTarget)
                       }}
                     >
-                      <div className="sidebar-section-label sidebar-section-label-with-action">
+                      <div className="section-heading sidebar-section-label sidebar-section-label-with-action">
                         {sectionHeading('chats', 'Chats', standaloneConversations.length)}
                         <button
                           type="button"
@@ -1489,8 +1607,28 @@ function Sidebar({
           )}
         </div>
         {/* The rail keeps its menu at the bottom, out of the way of the places above. */}
-        {isCollapsed && <div className="sidebar-rail-footer">{moreMenu}</div>}
+        {isCollapsed ? (
+          <div className="sidebar-rail-footer">
+            {phoneButton}
+            {moreMenu}
+          </div>
+        ) : (
+          <div className="sidebar-footer">
+            {phoneButton || <span className="sidebar-footer-spacer" />}
+            <AppVersionLabel />
+          </div>
+        )}
       </aside>
+
+      {phone && (
+        <PhoneCompanionPanel
+          isOpen={isPhoneOpen}
+          companion={phone}
+          anchorRef={phoneButtonRef}
+          placement={isCollapsed ? 'beside' : 'above'}
+          onClose={closePhone}
+        />
+      )}
 
       <ConfirmDialog
         isOpen={deleteConfirm !== null}

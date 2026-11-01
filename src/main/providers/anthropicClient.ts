@@ -7,10 +7,11 @@ import type {
   ProviderThinkingBlock
 } from '../../shared/providerRuntime'
 import type { ProviderInstance, ProviderInstanceModel } from '../../shared/settings'
-import { previewToolCallArguments } from './toolCallPreview'
+import { previewToolCallArguments, ToolCallPreviews } from './toolCallPreview'
 import { cancelProviderStreamReader, releaseProviderStreamReader } from './providerStreamReader'
 import { normalizeCompletedToolInput } from '../../shared/toolCalls'
 import { nearestEffort, requestReasoningLevel, type ReasoningLevel } from '../../shared/reasoning'
+import { anthropicReasoning } from './reasoningCapabilities'
 import { providerConnectionFailureMessage } from '../../shared/providerErrors'
 import { applyProviderModelOverrides, boolean, positiveInteger } from './modelCatalog'
 
@@ -198,14 +199,14 @@ const THINKING_BUDGETS: Partial<Record<ReasoningLevel, number>> = {
 
 function thinkingLevel(request: ProviderChatRequest): ReasoningLevel | undefined {
   const level = requestReasoningLevel(request)
-  return level && level !== 'off' && level !== 'auto' ? level : undefined
+  return level && level !== 'off' ? level : undefined
 }
 
 function effortConfig(request: ProviderChatRequest): { effort: string } | undefined {
   const level = thinkingLevel(request)
   if (!level || level === 'on' || !ADAPTIVE_THINKING.test(request.target.model.toLowerCase()))
     return undefined
-  return { effort: nearestEffort(level, ['low', 'medium', 'high', 'max'] as const) }
+  return { effort: nearestEffort(level, ['low', 'medium', 'high', 'xhigh', 'max'] as const) }
 }
 
 function thinkingConfig(request: ProviderChatRequest): Record<string, unknown> | undefined {
@@ -253,6 +254,15 @@ async function responseError(response: Response): Promise<string> {
   }
 }
 
+/**
+ * The HTTP status Anthropic gives each error type, for an error that arrives inside a stream that
+ * already answered 200; an overloaded server mid-reply is as busy as one that refused the request.
+ */
+const STREAM_ERROR_STATUS: Record<string, number> = {
+  overloaded_error: 529,
+  rate_limit_error: 429
+}
+
 function retryAfter(response: Response): number | undefined {
   const raw = response.headers.get('Retry-After')
   if (!raw) return undefined
@@ -295,7 +305,7 @@ export async function streamAnthropicChat(
     if (signal?.aborted) return { ok: false, error: 'aborted' }
     const decoder = new TextDecoder()
     const toolBlocks = new Map<number, { id: string; name: string; json: string }>()
-    const toolPreviewSignatures = new Map<number, string>()
+    const toolPreviews = new ToolCallPreviews()
     const thinkingBlocks = new Map<number, ProviderThinkingBlock>()
     let buffer = ''
     let promptTokens: number | undefined
@@ -303,6 +313,7 @@ export async function streamAnthropicChat(
     let finishReason = 'end_turn'
     let generationId: string | undefined
     let streamError: string | undefined
+    let streamErrorStatus: number | undefined
     let terminal = false
 
     const consume = (line: string): void => {
@@ -333,11 +344,9 @@ export async function streamAnthropicChat(
                 : ''
             }
             toolBlocks.set(event.index, tool)
-            const previewArguments = previewToolCallArguments(tool.json)
-            toolPreviewSignatures.set(
-              event.index,
-              `${tool.name}\n${JSON.stringify(previewArguments)}`
-            )
+            const previewArguments =
+              toolPreviews.next(event.index, tool.name, tool.json) ??
+              previewToolCallArguments(tool.json)
             emit({
               message: {
                 tool_calls: [
@@ -380,10 +389,8 @@ export async function streamAnthropicChat(
             const tool = toolBlocks.get(event.index)
             if (tool) {
               tool.json += event.delta.partial_json || ''
-              const previewArguments = previewToolCallArguments(tool.json)
-              const previewSignature = `${tool.name}\n${JSON.stringify(previewArguments)}`
-              if (toolPreviewSignatures.get(event.index) !== previewSignature) {
-                toolPreviewSignatures.set(event.index, previewSignature)
+              const previewArguments = toolPreviews.next(event.index, tool.name, tool.json)
+              if (previewArguments) {
                 emit({
                   message: {
                     tool_calls: [
@@ -422,7 +429,7 @@ export async function streamAnthropicChat(
             }
             emit({ message: { tool_calls: [call], closed_tool_calls: [call] }, done: false })
             toolBlocks.delete(event.index)
-            toolPreviewSignatures.delete(event.index)
+            toolPreviews.forget(event.index)
           }
           break
         }
@@ -440,6 +447,7 @@ export async function streamAnthropicChat(
           break
         case 'error':
           streamError = event.error?.message || event.error?.type || 'Anthropic stream failed'
+          streamErrorStatus = STREAM_ERROR_STATUS[event.error?.type ?? '']
           break
       }
     }
@@ -457,7 +465,11 @@ export async function streamAnthropicChat(
     if (signal?.aborted) return { ok: false, error: 'aborted' }
     if (streamError) {
       emit({ done: true, done_reason: 'error', error: streamError })
-      return { ok: false, error: streamError }
+      return {
+        ok: false,
+        error: streamError,
+        ...(streamErrorStatus ? { status: streamErrorStatus } : {})
+      }
     }
     if (!terminal) return { ok: false, error: 'Anthropic stream ended before its terminal event' }
     emit({
@@ -570,7 +582,10 @@ interface AnthropicCatalogModel {
   capabilities?: {
     image_input?: { supported?: boolean }
     pdf_input?: { supported?: boolean }
-    thinking?: { supported?: boolean }
+    /** `types` says which of adaptive, budgeted and disabled thinking the model takes. */
+    thinking?: { supported?: boolean; types?: Record<string, { supported?: boolean }> }
+    /** One entry per effort level, each `{ supported }`. */
+    effort?: Record<string, unknown>
   } | null
 }
 
@@ -584,11 +599,13 @@ export function normalizeAnthropicModel(model: AnthropicCatalogModel): ProviderI
     supportsPdfInput: boolean(capabilities?.pdf_input?.supported),
     supportsReasoning: boolean(capabilities?.thinking?.supported)
   }
+  const reasoning = anthropicReasoning(capabilities)
   const normalized: ProviderInstanceModel = {
     id: model.id,
     name: model.display_name || model.id,
     enabled: false,
     ...reported,
+    reasoningLevels: reasoning.reasoningLevels,
     // Every model the Messages API serves takes tools.
     supportsTools: true
   }

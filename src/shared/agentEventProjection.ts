@@ -7,6 +7,7 @@ import type {
 import { formatCompactionContext } from './compactionPrompt'
 import type { MessageImageAttachment } from './messageImages'
 import type { MessageContextAttachment } from './messageContextAttachments'
+import { agentPermissionDecision } from './permissions'
 import type { WorkspaceVerificationSummary } from './verification'
 
 export interface ProjectedToolExecution {
@@ -36,7 +37,18 @@ export type ProjectedContentSegment =
   | { type: 'tool'; tool: ProjectedToolExecution }
   | {
       type: 'artifact'
-      artifact: { type: 'react' | 'html' | 'svg'; title: string; code: string; isStreaming: false }
+      artifact: {
+        type: 'react' | 'html' | 'svg'
+        title: string
+        code: string
+        /** The call is still being written or reviewed; the code is its first version, or empty. */
+        isStreaming: boolean
+        toolCallId: string
+        /** The builder reviewing it, while it does. */
+        childRunId?: string
+        /** An edit_artifact call that has not finished: the chat keeps the version it changes. */
+        editing?: boolean
+      }
     }
   | {
       type: 'summary'
@@ -44,6 +56,8 @@ export type ProjectedContentSegment =
         originalTokens: number
         newTokens: number
         messagesCompacted: number
+        /** Tool results shortened instead of summarizing history; set only for that strategy. */
+        resultsCut?: number
         /** Window the budget used; absent on older events. */
         contextLength?: number
         /** False when the provider never reported a limit and a default was assumed. */
@@ -148,6 +162,45 @@ function resultFrom(event: AgentRunEvent): ToolExecutionResult | undefined {
 
 const HIDDEN_CONTROL_TOOLS = new Set(['enter_plan_mode', 'present_plan', 'complete_plan'])
 
+/**
+ * An artifact whose call is still streaming or being reviewed holds its place in the reply from
+ * the start, so it takes shape there and the finished one replaces it in place.
+ */
+function liveArtifact(tool: ProjectedToolExecution): ProjectedContentSegment | null {
+  if (tool.status !== 'pending' && tool.status !== 'running') return null
+  if (tool.name === 'edit_artifact') {
+    const title = typeof tool.input?.title === 'string' ? tool.input.title : ''
+    return {
+      type: 'artifact',
+      artifact: {
+        type: 'react',
+        title,
+        code: '',
+        isStreaming: true,
+        toolCallId: tool.id,
+        editing: true
+      }
+    }
+  }
+  if (tool.name !== 'create_artifact') return null
+  const input = tool.input ?? {}
+  const data =
+    tool.data && typeof tool.data === 'object' ? (tool.data as Record<string, unknown>) : {}
+  return {
+    type: 'artifact',
+    artifact: {
+      type: input.type === 'html' || input.type === 'svg' ? input.type : 'react',
+      title: typeof input.title === 'string' ? input.title : '',
+      code: tool.status === 'running' && typeof input.code === 'string' ? input.code : '',
+      isStreaming: true,
+      toolCallId: tool.id,
+      ...(typeof data.childRunId === 'string' ? { childRunId: data.childRunId } : {})
+    }
+  }
+}
+
+const LIVE_OUTPUT_CHARS = 16_000
+
 export function projectAgentRunEvents(events: readonly AgentRunEvent[]): ProjectedAgentRunMessage {
   // The durable run sequence is the chronology authority. Most callers already
   // provide ordered pages, but projection is also used by live repair paths that
@@ -159,6 +212,7 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       left.id.localeCompare(right.id)
   )
   const tools = new Map<string, ProjectedToolExecution>()
+  const outputTails = new Map<string, { chunks: string[]; length: number }>()
   const artifacts = new Map<string, ProjectedContentSegment>()
   const decisions = new Map<string, Extract<ProjectedContentSegment, { type: 'decision' }>>()
   const interactions = new Map<string, Extract<ProjectedContentSegment, { type: 'interaction' }>>()
@@ -245,6 +299,11 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
     }
     if (event.type === 'run.retrying' && event.payload.reason === VERIFICATION_PASS_REASON) {
       deferredAnswer = { contentBefore: committedContent, content: lastProvisionalContent }
+    }
+    if (event.type === 'context.estimated') {
+      // The prompt about to be sent already holds the previous turn's reply.
+      promptTokens = Number(event.payload.promptTokens || 0)
+      completionTokens = 0
     }
     if (event.type === 'usage.updated') {
       const turnCompletionTokens = Number(event.payload.completionTokens || 0)
@@ -346,11 +405,23 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       }
     }
     if (event.type === 'tool.output.delta') {
-      const tool = tools.get(toolCallId(event))
+      const id = toolCallId(event)
+      const tool = tools.get(id)
       if (tool) {
         const chunk = typeof event.payload.chunk === 'string' ? event.payload.chunk : ''
-        // Keep the live renderer bounded; complete output remains available by handle.
-        tool.output = `${tool.output || ''}${chunk}`.slice(-16_000)
+        // Keep the live renderer bounded; complete output remains available by handle. The tail
+        // keeps whole chunks and is joined once: a command that redraws a progress bar sends
+        // thousands of chunks, and copying the tail for each one froze the window.
+        let tail = outputTails.get(id)
+        if (!tail) {
+          tail = { chunks: tool.output ? [tool.output] : [], length: tool.output?.length ?? 0 }
+          outputTails.set(id, tail)
+        }
+        tail.chunks.push(chunk)
+        tail.length += chunk.length
+        while (tail.chunks.length > 1 && tail.length - tail.chunks[0].length >= LIVE_OUTPUT_CHARS) {
+          tail.length -= tail.chunks.shift()!.length
+        }
       }
     }
     if (event.type === 'permission.requested') {
@@ -374,14 +445,20 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       }
     }
     if (event.type === 'permission.resolved') {
-      const request = event.payload.request as Record<string, unknown> | undefined
       const response = event.payload.response as Record<string, unknown> | undefined
-      const tool = tools.get(String(event.payload.toolCallId || request?.toolCallId || ''))
-      if (tool) {
-        tool.approvalStatus =
-          event.payload.approved === false || response?.approved === false ? 'denied' : 'approved'
-      }
       const interaction = interactions.get(String(event.payload.interactionId || ''))
+      // A policy decision names its call; a user's answer names only the card that asked.
+      const tool = tools.get(
+        String(event.payload.toolCallId || interaction?.interaction.request.toolCallId || '')
+      )
+      if (tool) {
+        // Judged as the kernel judges it: a cancelled card or any answer but allow is a denial.
+        const approved = response
+          ? event.payload.status === 'resolved' &&
+            ['allow_once', 'allow_chat'].includes(agentPermissionDecision(response))
+          : event.payload.approved !== false
+        tool.approvalStatus = approved ? 'approved' : 'denied'
+      }
       if (interaction) {
         interaction.interaction.status =
           event.payload.status === 'cancelled' ? 'cancelled' : 'resolved'
@@ -403,6 +480,7 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
                 ? 'partial'
                 : 'error'
         tool.title = result.title || tool.title
+        outputTails.delete(id)
         tool.output = result.modelContent
         tool.error = result.error?.message
         tool.data = result.data
@@ -426,7 +504,8 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
               type: artifact.type,
               title: artifact.title,
               code: artifact.code,
-              isStreaming: false
+              isStreaming: false,
+              toolCallId: id
             }
           })
         }
@@ -475,6 +554,10 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       }
     }
   }
+  for (const [id, tail] of outputTails) {
+    const tool = tools.get(id)
+    if (tool) tool.output = tail.chunks.join('').slice(-LIVE_OUTPUT_CHARS)
+  }
 
   if (phase && ['failed', 'cancelled', 'interrupted'].includes(phase)) {
     for (const tool of tools.values()) {
@@ -497,15 +580,30 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
     marker: ProjectedContentSegment
     steps: ProjectedContentSegment[]
     followsAnswer: boolean
+    /** Where the reply the pass followed sits in the timeline, and how many segments it is. */
+    draft: { start: number; count: number }
   } | null = null
   let foldedVerification: { steps: ProjectedContentSegment[]; note: string } | null = null
+  // Where the verification result goes: before the answer its pass ended with, so that answer is
+  // what the reply ends on. Unset, the result goes last.
+  let verificationAt: number | null = null
   let streamedTurnContent = ''
   let streamedTurnThinking = ''
   let turnSegmentStart = 0
   let lastProvisional: { content: string; streamed: boolean } | null = null
-  const closeVerificationPass = (fold?: { note: string }): void => {
+  const closeVerificationPass = (
+    fold?: { note: string } | { answer: ProjectedContentSegment[] }
+  ): void => {
     if (!verificationPass) return
-    if (fold) foldedVerification = { steps: verificationPass.steps, note: fold.note }
+    if (fold && 'answer' in fold) {
+      // The draft stays in sight while the pass works; once the answer is in, it folds into the
+      // pass's result above that answer.
+      const { start, count } = verificationPass.draft
+      const draft = mainSegments.splice(start, count)
+      foldedVerification = { steps: [...draft, ...verificationPass.steps], note: '' }
+      verificationAt = mainSegments.length
+      mainSegments.push(...fold.answer)
+    } else if (fold) foldedVerification = { steps: verificationPass.steps, note: fold.note }
     else mainSegments.push(verificationPass.marker, ...verificationPass.steps)
     verificationPass = null
     segments = mainSegments
@@ -529,7 +627,7 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
     emittedTools.add(id)
     if (HIDDEN_CONTROL_TOOLS.has(tool.name)) return
     segments.push({ type: 'tool', tool })
-    const artifact = artifacts.get(id)
+    const artifact = artifacts.get(id) ?? liveArtifact(tool)
     if (artifact) segments.push(artifact)
   }
   for (const event of orderedEvents) {
@@ -583,7 +681,14 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
           }
           closeVerificationPass({ note: (content || streamedNote).trim() })
         } else {
-          closeVerificationPass()
+          // The pass ends with the whole answer; the draft it followed and its checks fold above.
+          const steps = verificationPass.steps
+          const answer: ProjectedContentSegment[] = []
+          for (let index = steps.length - 1; index >= turnStart; index--) {
+            if (steps[index]?.type !== 'text') continue
+            answer.unshift(...steps.splice(index, 1))
+          }
+          closeVerificationPass({ answer })
         }
       }
     }
@@ -604,6 +709,9 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
           originalTokens: Number(event.payload.originalTokens || 0),
           newTokens: Number(event.payload.summaryTokens || 0),
           messagesCompacted: Number(event.payload.messagesCompacted || 0),
+          ...(event.payload.strategy === 'cut_tool_results'
+            ? { resultsCut: Number(event.payload.resultsCut || 0) }
+            : {}),
           ...(Number(event.payload.contextLength) > 0
             ? { contextLength: Number(event.payload.contextLength) }
             : {}),
@@ -679,15 +787,16 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
         status: { kind: 'retrying', reason, detail, timestamp: event.timestamp }
       }
       if (reason === VERIFICATION_PASS_REASON && !verificationPass) {
-        // The answer the pass followed is the response to read. A provider that
-        // did not stream it has not shown it yet.
+        // The reply the pass followed is a draft of the answer, shown while the pass works. A
+        // provider that did not stream it has not shown it yet.
         if (lastProvisional?.content && !lastProvisional.streamed) {
           appendTextualSegment('text', lastProvisional.content)
         }
         verificationPass = {
           marker,
           steps: [],
-          followsAnswer: Boolean(lastProvisional?.content.trim())
+          followsAnswer: Boolean(lastProvisional?.content.trim()),
+          draft: { start: turnSegmentStart, count: segments.length - turnSegmentStart }
         }
         segments = verificationPass.steps
         streamedTurnContent = ''
@@ -754,18 +863,20 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
   const folded = foldedVerification as { steps: ProjectedContentSegment[]; note: string } | null
   const passSteps = openPass?.steps ?? folded?.steps ?? []
   const note = folded?.note ?? ''
-  if (latestVerification && latestVerification.status !== 'not_applicable') {
-    mainSegments.push({
-      type: 'verification',
-      verification: latestVerification,
-      ...(passSteps.length ? { steps: passSteps } : {}),
-      ...(note ? { content: note } : {}),
-      ...(openPass ? { pending: true } : {})
-    })
-  } else {
-    mainSegments.push(...passSteps)
-    if (note) mainSegments.push({ type: 'text', content: note })
-  }
+  const result: ProjectedContentSegment[] =
+    latestVerification && latestVerification.status !== 'not_applicable'
+      ? [
+          {
+            type: 'verification',
+            verification: latestVerification,
+            ...(passSteps.length ? { steps: passSteps } : {}),
+            ...(note ? { content: note } : {}),
+            ...(openPass ? { pending: true } : {})
+          }
+        ]
+      : [...passSteps, ...(note ? [{ type: 'text' as const, content: note }] : [])]
+  const resultAt = (verificationAt as number | null) ?? mainSegments.length
+  mainSegments.splice(resultAt, 0, ...result)
 
   return {
     content: fullContent,

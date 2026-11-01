@@ -2,14 +2,42 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { realpath, lstat } from 'node:fs/promises'
 import { relative, isAbsolute, sep, basename, dirname, join, resolve } from 'node:path'
+import type { WorkspaceFolder } from '../../shared/projects'
 
 const exec = promisify(execFile)
 export const SHELL_SANDBOX_IMAGE =
   'node@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e'
 
+/**
+ * Where each project folder appears in the container. A project of one folder is mounted at
+ * /workspace. With more folders, each one is mounted at /workspace/<name>, the primary under a
+ * name of its own; a folder mounted inside another's bind mount would make Docker create an empty
+ * folder for it on the host.
+ */
+export function sandboxFolderMounts(
+  primaryRoot: string,
+  folders: readonly WorkspaceFolder[]
+): Array<{ root: string; target: string }> {
+  if (!folders.length) return [{ root: primaryRoot, target: '/workspace' }]
+  const taken = new Set(folders.map(({ name }) => name.toLowerCase()))
+  let primaryName = basename(primaryRoot)
+    .replace(/[^A-Za-z0-9._-]/g, '-')
+    .replace(/^\.+/, '')
+  primaryName ||= 'main'
+  for (let number = 2; taken.has(primaryName.toLowerCase()); number++) {
+    primaryName = `${primaryName.replace(/-\d+$/, '')}-${number}`
+  }
+  return [
+    { root: primaryRoot, target: `/workspace/${primaryName}` },
+    ...folders.map(({ name, path }) => ({ root: path, target: `/workspace/${name}` }))
+  ]
+}
+
 export async function isolatedShellProcess(input: {
   id: string
   workspaceRoot: string
+  /** The project's other folders; each is mounted beside the primary one. */
+  folders?: readonly WorkspaceFolder[]
   cwd: string
   command: string
   timeoutSecs?: number
@@ -50,10 +78,24 @@ export async function isolatedShellProcess(input: {
   }
   const root = await realpath(input.workspaceRoot)
   const cwd = await realpath(input.cwd)
-  const child = relative(root, cwd)
-  if (child === '..' || child.startsWith(`..${sep}`) || isAbsolute(child))
-    throw new Error('Sandbox cwd escapes the project')
-  if (/[\r\n,]/.test(root)) throw new Error('Sandbox mount path cannot contain commas or newlines')
+  const mounts = await Promise.all(
+    sandboxFolderMounts(root, input.folders ?? []).map(async (mount) => {
+      if (
+        !/^\/workspace(?:\/[A-Za-z0-9._ -]+)?$/.test(mount.target) ||
+        /\/\.\.?$/.test(mount.target)
+      )
+        throw new Error('Invalid sandbox folder name')
+      const real = await realpath(mount.root)
+      if (/[\r\n,]/.test(real))
+        throw new Error('Sandbox mount path cannot contain commas or newlines')
+      return { ...mount, root: real }
+    })
+  )
+  const home = mounts
+    .map((mount) => ({ mount, child: relative(mount.root, cwd) }))
+    .find(({ child }) => !(child === '..' || child.startsWith(`..${sep}`) || isAbsolute(child)))
+  if (!home) throw new Error('Sandbox cwd escapes the project')
+  const workdir = [home.mount.target, ...home.child.split(sep).filter(Boolean)].join('/')
   const helperArgs: string[] = []
   if (input.skillAssetsPath) {
     if (!isAbsolute(input.skillAssetsPath) || /[\r\n,"\0]/.test(input.skillAssetsPath))
@@ -63,7 +105,7 @@ export async function isolatedShellProcess(input: {
       /[\r\n,"\0]/.test(assets) ||
       basename(assets).toLowerCase() !== 'skills' ||
       basename(dirname(assets)).toLowerCase() !== 'resources' ||
-      resolve(assets) === resolve(root)
+      mounts.some((mount) => resolve(assets) === resolve(mount.root))
     )
       throw new Error('Bundled helper mount must be the configured resources/skills directory')
     const directory = await lstat(input.skillAssetsPath)
@@ -120,11 +162,13 @@ export async function isolatedShellProcess(input: {
       `${process.getuid?.() || 1000}:${process.getgid?.() || 1000}`,
       '--tmpfs',
       '/tmp:rw,nosuid,nodev,size=268435456',
-      '--mount',
-      `type=bind,src=${root},dst=/workspace,bind-recursive=disabled`,
+      ...mounts.flatMap((mount) => [
+        '--mount',
+        `type=bind,src=${mount.root},dst=${mount.target},bind-recursive=disabled`
+      ]),
       ...helperArgs,
       '--workdir',
-      `/workspace/${child.split(sep).join('/')}`,
+      workdir,
       '--env',
       'HOME=/tmp',
       ...secretArgs,

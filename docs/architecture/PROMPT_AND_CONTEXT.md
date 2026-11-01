@@ -20,9 +20,16 @@ discoverable skills. The model calls `use_skill` when the current request matche
 full instructions arrive in that run's tool result. Conversation-scoped skills may remain active for
 later turns; run-scoped skills do not persist or become part of later system prompts.
 
-Live web artifacts are deliberately run-scoped. Their rendering tool is absent from the provider's
-initial tool list and becomes available only after the model loads the `web-artifacts` skill. An
-artifact is an interactive result inside the chat. Websites, landing pages, web apps, components,
+A skill's tools reach the model in one of two ways. The `web-artifacts` skill's `create_artifact`
+is offered from the start, so the tool list stays the same across turns and the prompt cache
+holds; an artifact made before the skill loads is rendered, and the skill's guidance comes back
+with it. Tools needed rarely enough that carrying their schemas in every run costs more than a lost
+cache are gated instead: the `schedules` skill's tools are absent from the initial tool list and
+join the run's catalog once `use_skill` loads that skill. A later run that calls one before
+loading the skill is told to load it. See [Scheduled runs](SCHEDULES.md#agent-tools).
+
+Live web artifacts are deliberately run-scoped. An artifact is an interactive result inside the
+chat. Websites, landing pages, web apps, components,
 and HTML/CSS/JavaScript deliverables for an active project are workspace-file work; SideKick does
 not create both forms unless the user explicitly requests both.
 
@@ -36,7 +43,7 @@ matches, command working directories, and file mutations resolve newly applicabl
 deferred, returns that rule to the model, and must be retried. Compaction resets nested delivery claims
 so the relevant instructions can be introduced again without changing the immutable transcript.
 
-Utility prompts for titles, checkpoint labels, web extraction, research, and sub-agents use the same data boundary. Source text is never interpolated as a system instruction. Research output is proportional to the question rather than forced into a fixed “exhaustive” length.
+Utility prompts for titles, web extraction, research, and sub-agents use the same data boundary. Source text is never interpolated as a system instruction. Research output is proportional to the question rather than forced into a fixed “exhaustive” length.
 
 ## Immutable transcript and provider projection
 
@@ -57,6 +64,14 @@ discards it, and records how many of that reply's provider messages it replaced
 is sent only the rest of the reply; sent the whole reply again, it compacted as soon as it
 started. A summary the run was stopped in the middle of is not recorded at all.
 
+A chat is also summarized between runs. Two minutes after a conversation-mode reply completes,
+if the chat has not changed, has no runnable goal and nothing is starting in it, the coordinator
+prepares the run its next message would get, with the last run's model, and compacts it when that
+request is at 85% or more of the compaction point; the summary is saved as any other. It takes
+slots only when they are free and nobody waits (`RunSlots.tryAcquire`), and stops when any run
+joins the slot queue, trying again later up to three times. A run starting in the chat waits for
+a summary already underway instead of writing its own, and a rewind or edit cancels it.
+
 At request time, the main-process `ConversationRunPreparer` emits:
 
 1. the composed system prompt;
@@ -68,9 +83,9 @@ Editing or rewinding history invalidates affected summaries. Forking a conversat
 
 ## Incremental compaction
 
-Prompt version `sidekick-compaction-v2` merges the prior anchored handoff with newly compactable events. Structured message serialization preserves tool input/status/approval/output/error, artifacts, decisions, file results, checkpoints, and bounded text instead of flattening everything into visible prose.
+Prompt version `sidekick-compaction-v5` merges the prior anchored handoff with newly compactable events. Structured message serialization preserves tool input/status/approval/output/error, artifacts, decisions, file results, checkpoints, and bounded text instead of flattening everything into visible prose.
 
-The planner retains a verbatim recent tail of 20% of context, bounded to 2,000–32,000 estimated tokens, always keeps the latest user turn/current assistant work, and will not split an assistant tool request from its provider tool-result run. The initial project-instruction message is never summarized: it stays word for word ahead of the new summary, so a compaction in the middle of a run keeps the rules it started with, while the previous summary is folded into the new one. The summarized history is excerpted fairly across events to at most 120,000 characters, and to what fits the window, measured by the token estimate, beside the instructions, the previous summary and the summary's own room.
+The planner retains a verbatim recent tail of 20% of context, bounded to 2,000–32,000 estimated tokens, and will not split an assistant tool request from its provider tool-result run. When that tail's tool results alone do not fit the room the window leaves, each oversized result keeps its opening and end and says what SideKick cut, so the model can read the missing part again; seven file reads in one turn on a 24k window had left nothing to summarize and ended the run. A history too short to be worth a summary is then kept as it is. The user's latest request, their last message that is not a SideKick block (`<sidekick_… trust="app-policy">` or a compaction summary), always stays word for word right after the summary, even when a long run has pushed it out of the tail: left to the summary, a local model wrote an earlier question in as the objective, and the agent answered that one instead. The summary prompt names that request as the objective and puts requests already answered under Completed, and the system prompt tells the model that SideKick's blocks and summaries are not the user speaking. The initial project-instruction message is never summarized: it stays word for word ahead of the new summary, so a compaction in the middle of a run keeps the rules it started with, while the previous summary is folded into the new one. The summarized history is excerpted fairly across events to at most 120,000 characters, and to what fits the window, measured by the token estimate, beside the instructions, the previous summary and the summary's own room.
 
 The summary request is streamed. Something in front of a slow local model gave up on requests that sent nothing until the whole reply was written, while streamed replies of the same length passed, so SideKick gives up only when the model makes no progress for five minutes. If the summary cannot be used, SideKick creates a bounded deterministic handoff with exact references and a warning to verify against the immutable transcript, and `compaction.completed` records why as `fallbackReason`: `timeout`, `connection_lost`, `server_unreachable`, `context_overflow`, `provider_error` (with `fallbackStatus` when there was one), `output_limit`, `reasoning_only` or `empty_output`.
 

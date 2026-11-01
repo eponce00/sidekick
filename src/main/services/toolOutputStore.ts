@@ -25,6 +25,21 @@ export interface ReadToolOutputResult {
   totalBytes: number
 }
 
+export interface ToolOutputMatch {
+  /** UTF-8 byte offset of the match, for reading on from there. */
+  offset: number
+  /** The match with the text around it. */
+  text: string
+}
+
+export interface SearchToolOutputResult {
+  /** The first matches, in order. */
+  matches: ToolOutputMatch[]
+  /** Every match, counted up to MAX_COUNTED_MATCHES. */
+  totalMatches: number
+  totalBytes: number
+}
+
 /** One labelled part of a sectioned result, such as a command's stdout or stderr. */
 export interface ToolOutputSection {
   name: string
@@ -50,6 +65,10 @@ const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000
 const HANDLE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 /** Room kept under the limits for the note that says what was left out and where to read it. */
 const NOTE_RESERVE = { lines: 2, bytes: 512, tokens: 128 }
+export const MAX_SEARCH_MATCHES = 20
+const MAX_COUNTED_MATCHES = 10_000
+/** Characters shown on each side of a match. */
+const MATCH_CONTEXT = 120
 
 interface CutLimits {
   maxLines: number
@@ -60,8 +79,9 @@ interface CutLimits {
 /**
  * Where a result too long to show is cut. The head and the tail are kept verbatim and end on
  * whole lines where the text has lines, so the model never reads a line that is cut in the
- * middle; everything between them is one contiguous range of the original, starting at
- * `omittedOffset`, which `tool_output` reads back.
+ * middle, unless a line is too long to show whole at all: then the room left shows the part of it
+ * nearest the head or tail. Everything between them is one contiguous range of the original,
+ * starting at `omittedOffset`, which `tool_output` reads back.
  */
 export interface ToolOutputCut {
   truncated: boolean
@@ -152,6 +172,15 @@ function scaled(limits: CutLimits, share: number): CutLimits {
   }
 }
 
+/** What is left of `limits` once `used` text of `lines` lines is kept. */
+function remaining(limits: CutLimits, used: string, lines: number): CutLimits {
+  return {
+    maxLines: Math.max(0, limits.maxLines - lines),
+    maxBytes: Math.max(0, limits.maxBytes - Buffer.byteLength(used, 'utf8')),
+    maxTokens: Math.max(0, limits.maxTokens - estimateTextTokens(used))
+  }
+}
+
 function cutWithin(
   content: string,
   limits: CutLimits,
@@ -180,18 +209,30 @@ function cutWithin(
   const tailRoom = scaled(room, 1 - headShare)
   const headLines = headShare > 0 ? wholeLines(lines, headRoom, false) : { count: 0, text: '' }
   let head = headLines.text
-  // One line longer than the room: keep what fits of it rather than nothing.
-  if (headShare > 0 && headLines.count === 0 && lines.length)
-    head = partOfLine(lines[0], headRoom, false)
+  // The next line is too long to show whole in any room this cut has, as a page's JSON on one
+  // line is: what is left of the room shows its start rather than nothing of it.
+  const longHeadLine =
+    headShare > 0 && headLines.count < headRoom.maxLines ? lines[headLines.count] : undefined
+  let headPart = ''
+  if (longHeadLine !== undefined && !fits(longHeadLine, headRoom)) {
+    headPart = partOfLine(longHeadLine, remaining(headRoom, head, headLines.count), false)
+    head += headPart
+  }
   const rest = lines.slice(headLines.count)
   const tailLines =
     headShare < 1 && rest.length ? wholeLines(rest, tailRoom, true) : { count: 0, text: '' }
   let tail = tailLines.text
-  if (headShare < 1 && tailLines.count === 0 && rest.length) {
-    const last = rest[rest.length - 1]
-    // A single line cut at both ends must not give the same characters twice.
-    const available = rest.length === 1 && headLines.count === 0 ? last.slice(head.length) : last
-    tail = partOfLine(available, tailRoom, true)
+  const longTailIndex = rest.length - 1 - tailLines.count
+  if (
+    headShare < 1 &&
+    longTailIndex >= 0 &&
+    tailLines.count < tailRoom.maxLines &&
+    !fits(rest[longTailIndex], tailRoom)
+  ) {
+    // A line cut at both ends must not give the same characters twice.
+    const line = rest[longTailIndex]
+    const available = longTailIndex === 0 ? line.slice(headPart.length) : line
+    tail = partOfLine(available, remaining(tailRoom, tail, tailLines.count), true) + tail
   }
   const omittedOffset = Buffer.byteLength(head, 'utf8')
   const omittedBytes = originalBytes - omittedOffset - Buffer.byteLength(tail, 'utf8')
@@ -287,7 +328,7 @@ export class ToolOutputStore {
     const note =
       `[… SideKick left out ${amount(cut.omittedLines, cut.omittedBytes)} here to keep this ` +
       `result short. The whole result is kept: read the part left out with tool_output, ` +
-      `handle "${handle}" and offset ${cut.omittedOffset}. …]`
+      `handle "${handle}" and offset ${cut.omittedOffset}, or look for text in it with find. …]`
     const shown = compose(cut.head, note, cut.tail)
     return {
       content: shown,
@@ -299,6 +340,29 @@ export class ToolOutputStore {
         returnedEstimatedTokens: estimateTextTokens(shown),
         fullOutputHandle: handle,
         continuation: { offset: cut.omittedOffset, bytes: cut.omittedBytes }
+      }
+    }
+  }
+
+  /**
+   * Keeps a whole result and gives the model `shown(handle)` instead: a shorter form the tool made
+   * itself, such as an outline of long JSON, which names the handle for reading the rest.
+   */
+  async keep(rawContent: string, shown: (handle: string) => string): Promise<BoundedToolOutput> {
+    const content = this.redactor.redact(rawContent)
+    const handle = await this.save(content)
+    const text = this.redactor.redact(shown(handle))
+    const originalBytes = Buffer.byteLength(content, 'utf8')
+    return {
+      content: text,
+      output: {
+        truncated: true,
+        originalBytes,
+        returnedBytes: Buffer.byteLength(text, 'utf8'),
+        originalEstimatedTokens: estimateTextTokens(content),
+        returnedEstimatedTokens: estimateTextTokens(text),
+        fullOutputHandle: handle,
+        continuation: { offset: 0, bytes: originalBytes }
       }
     }
   }
@@ -510,6 +574,43 @@ export class ToolOutputStore {
     } finally {
       await descriptor.close()
     }
+  }
+
+  /**
+   * Finds text in a kept output, ignoring case, so a model looking for one value in a long result
+   * need not read it in pieces. The text is searched as a read would show it: a value stored since
+   * the output was kept is hidden first, so a search cannot find what a read would not show. That
+   * can move later offsets by the few bytes the placeholder differs, well within a read.
+   */
+  async search(
+    handle: string,
+    text: string,
+    maxMatches = MAX_SEARCH_MATCHES
+  ): Promise<SearchToolOutputResult> {
+    const file = this.path(ToolOutputStore.handleFrom(handle))
+    const content = this.redactor.redact(await fs.readFile(file, 'utf8'))
+    const literal = new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu')
+    const matches: ToolOutputMatch[] = []
+    let totalMatches = 0
+    let counted = 0
+    let countedBytes = 0
+    for (const match of content.matchAll(literal)) {
+      if (++totalMatches > MAX_COUNTED_MATCHES) {
+        totalMatches = MAX_COUNTED_MATCHES
+        break
+      }
+      if (matches.length >= maxMatches) continue
+      countedBytes += Buffer.byteLength(content.slice(counted, match.index), 'utf8')
+      counted = match.index
+      const start = Math.max(0, match.index - MATCH_CONTEXT)
+      const end = Math.min(content.length, match.index + match[0].length + MATCH_CONTEXT)
+      const around = content.slice(start, end).replace(/\r?\n/g, ' ⏎ ')
+      matches.push({
+        offset: countedBytes,
+        text: `${start > 0 ? '…' : ''}${around}${end < content.length ? '…' : ''}`
+      })
+    }
+    return { matches, totalMatches, totalBytes: Buffer.byteLength(content, 'utf8') }
   }
 
   async cleanup(retentionMs = DEFAULT_RETENTION_MS): Promise<number> {

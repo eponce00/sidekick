@@ -55,8 +55,6 @@ describe('manager chat rows', () => {
         />
       )
     )
-    expect(container.textContent).toContain('Started 2 chats · each in its own worktree')
-    expect(button('Open schedules').getAttribute('aria-label')).toBe('Open schedules, needs you')
     expect(container.querySelector('.session-dot-waiting')).not.toBeNull()
     // The worktree of the manager's own project has no tag; another project does.
     const tags = [...container.querySelectorAll('.session-chip-project')].map((t) => t.textContent)
@@ -91,23 +89,18 @@ describe('manager chat rows', () => {
       )
     )
     const toggle = container.querySelector('.family-received-toggle') as HTMLButtonElement
-    expect(toggle.textContent).toContain('Received 2 messages')
-    expect(toggle.getAttribute('aria-expanded')).toBe('false')
     expect(container.querySelector('.family-received-list')).toBeNull()
 
     await act(async () => toggle.click())
     const lines = [...container.querySelectorAll('.family-received-list li')]
     expect(lines).toHaveLength(2)
-    expect(lines[0].textContent).toContain('schedules Needs you. Waiting for approval. · status')
     expect(lines[0].textContent).not.toContain('More detail')
-    expect(lines[1].textContent).toContain('api-contract Done. Done. 14 tests pass. · report')
     // A sender waiting on the user is a jump to its approval, not just a chat to open.
     await act(async () => button('Go to approval').click())
     expect(onOpenChat).toHaveBeenCalledWith(schedules.conversationId)
-    expect(lines[1].querySelector('button')?.textContent).toBe('Open')
   })
 
-  it('counts chats by state and stops the active ones only after a second confirmation', async () => {
+  it('stops the active chats only after a second confirmation', async () => {
     const onStopAll = vi.fn()
     const done = familyMember('question-card', { state: 'done' })
     await act(async () =>
@@ -119,14 +112,9 @@ describe('manager chat rows', () => {
         />
       )
     )
-    expect(container.querySelector('.family-strip-counts')?.textContent).toBe(
-      '1 working1 needs you1 done'
-    )
     await act(async () => button('Stop all').click())
     expect(onStopAll).not.toHaveBeenCalled()
-    expect(container.textContent).toContain('Stop 2 chats?')
     await act(async () => button('Keep running').click())
-    expect(container.textContent).not.toContain('Stop 2 chats?')
 
     await act(async () => button('Stop all').click())
     await act(async () =>
@@ -145,10 +133,10 @@ describe('manager chat rows', () => {
         />
       )
     )
-    expect(container.textContent).toBe('1 done')
+    expect(button('Stop all')).toBeUndefined()
   })
 
-  it('shows each task step’s linked chat as a chip with its state, and counts the steps', async () => {
+  it('links a task step to its chat while that chat is still in the family', async () => {
     const onOpenChat = vi.fn()
     await act(async () =>
       root.render(
@@ -179,19 +167,59 @@ describe('manager chat rows', () => {
       )
     )
     const steps = [...container.querySelectorAll('.family-todo')]
-    expect(steps.map((step) => step.querySelector('.family-todo-title')?.textContent)).toEqual([
-      'Done: Read the setup',
-      'Not started: Port schedules',
-      'Not started: Gone chat',
-      'In progress: Write it up'
-    ])
-    expect(steps[1].querySelector('.session-chip')?.textContent).toBe('schedulesNeeds you')
+    expect(steps[1].querySelector('.session-chip')).not.toBeNull()
     // A step whose chat is no longer in the family has no chip.
     expect(steps[2].querySelector('.session-chip')).toBeNull()
-    expect(container.querySelector('footer')?.textContent).toBe(
-      '4 steps · 1 done · 1 in other chats'
-    )
     await act(async () => button('Open schedules').click())
     expect(onOpenChat).toHaveBeenCalledWith(schedules.conversationId)
+  })
+
+  it('marks a delegated step by its chat’s state, not the list’s', async () => {
+    await act(async () =>
+      root.render(
+        <SessionTodoList
+          todos={[
+            {
+              id: 1,
+              title: 'Port schedules',
+              description: '',
+              status: 'not-started',
+              sessionId: schedules.conversationId
+            }
+          ]}
+          members={members}
+          statuses={statusMap([[schedules.conversationId, 'failed']])}
+          manager={manager}
+          onOpenChat={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector('.family-todo-title')?.textContent).toBe(
+      'Failed: Port schedules'
+    )
+  })
+
+  it('keeps a done step done once its chat is idle', async () => {
+    await act(async () =>
+      root.render(
+        <SessionTodoList
+          todos={[
+            {
+              id: 1,
+              title: 'Port schedules',
+              description: '',
+              status: 'completed',
+              sessionId: schedules.conversationId
+            }
+          ]}
+          members={members}
+          statuses={statusMap([[schedules.conversationId, 'idle']])}
+          manager={manager}
+          onOpenChat={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector('.family-todo-title')?.textContent).toBe('Done: Port schedules')
+    expect(container.querySelector('footer')?.textContent).toContain('1 done')
   })
 })

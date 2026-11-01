@@ -1,5 +1,320 @@
 # Changelog
 
+## 0.25.5 — 2026-10-31
+
+- Open local-network devices that use their own HTTPS certificate, such as a TwinCAT HMI server at
+  `https://10.50.161.1:3001`. The Browser panel used to show a raw `ERR_CERT_AUTHORITY_INVALID`
+  error with no way forward. It now says why the certificate isn't trusted and, for a private IP
+  address, offers **Continue…** with the certificate's details. Your answer is remembered for that
+  address and that certificate, and a changed certificate asks again. Only you can allow it, never
+  the agent or a page. Public addresses and device names stay refused.
+
+## 0.25.4 — 2026-10-31
+
+- Read PDFs properly. The agent used to get only a PDF's text, so a scanned page came back empty
+  and a chart as just its caption. It now reads each page itself, without Python, up to 20 at a
+  time. A model that can see images also gets a picture of scanned pages and of pages with charts,
+  diagrams or photos. Scanned pages are read with your computer's own text recognition, built into
+  Windows and macOS, or Tesseract on Linux when it is installed, so a text-only model can read
+  them too.
+- See what the model looked at. The PDF pages and images it opened show as thumbnails under its
+  folded work; click one to enlarge it and move between them.
+- Keep the window responsive while a command prints a lot. A chatty command, such as a PowerShell
+  download drawing its progress bar, could freeze the window until it finished.
+- Keep browser tabs the same width. A page flashing "You received a new message" in its title
+  made its tab grow and shrink every few seconds.
+
+## 0.25.3 — 2026-10-30
+
+- Attach files from anywhere on your computer. **+** → Files used to accept only files inside the
+  project; a file from elsewhere is now copied into the project's `.sidekick/uploads` folder, which
+  git ignores, and a chat without a project keeps the copy in its own folder.
+- Drop or paste PDFs, images and other files on the message box. It shows a dashed outline while
+  you drag over it, and a pasted file is attached rather than only a pasted image.
+
+## 0.25.2 — 2026-10-29
+
+- Send a message without it failing with "Cannot read properties of null (reading 'phase')". In
+  0.25.1 a reply could fail with that error the moment it started, until you pressed Retry.
+- Read the answer last when SideKick checks its work. A reply used to end on the check's closing
+  line ("fixed it", "all fine"), with the real answer above it; the agent now finishes with its
+  full answer, and its first draft and the check fold into **Checks passed**.
+- Open a saved chat at its end. It showed its top for a moment and then scrolled down, and the
+  folder and worktree choice for a new chat flashed while its messages loaded. That choice now
+  matches the message box's width.
+
+## 0.25.1 — 2026-10-29
+
+- Read long replies in full on the phone. The computer cut every reply it sent the phone to 4,000
+  characters, so a long answer ended in "… (shortened)". Opening a reply that was still running
+  showed only its first part, and a long saved reply could lose its final answer.
+- Keep the status line under a working reply in view on the phone. It slid behind the message box
+  when a run started. The box now stays one line during a run, and Stop sits evenly in its end.
+- See the whole hover row under the last message on the desktop. It hung into the fade above the
+  composer, which cut it off.
+- Resize a reply's table without it shrinking inside its card. The last column takes the room the
+  others leave, and a table wider than its card fades more clearly at the edge that scrolls.
+- Choose what to import from in **Import browser data** as one list: each browser profile is a row,
+  named as you named it in the browser.
+- Line up the sidebar: a project's chats start on the project name's edge, like the other chats,
+  New chat and Phone. The sidebar's foot shows the installed version beside Phone, under a divider.
+  In Settings, Back to app sits over the search field.
+- Project hooks and the Recent approvals list are gone from Agent settings. The Office Python
+  setting now says what it is for: checking that a Word, Excel or PowerPoint file the agent made
+  isn't broken.
+
+## 0.25.0 — 2026-10-29
+
+- Work across several folders in one project. **Edit project…** adds folders beside the primary
+  one, makes another primary, or removes one. The agent reads, searches and edits in every folder
+  (`<name>/path` names one), Files shows each folder, @-mentions cover them all, an extra folder's
+  own instructions load the first time the agent works there, and History undoes changes in every
+  folder together. Chats, Git, the pull request line and worktrees stay on the primary folder.
+- Rewinding to before a message no longer fails when an earlier reply in between was undone.
+- See the context meter move while a reply runs. It used to read 0 from the moment a message was
+  sent until the reply ended; it now shows the prompt being sent and the reply as it streams. The
+  ring loses its number and gets a thicker, round-ended arc.
+- Keep the page in view behind the Browser's menus. Opening the menu or the page tools sometimes
+  left the panel blank until the menu closed.
+- Get Microsoft Store updates. The Store had kept 0.14.0, because each release replaced the
+  previous submission while it was still in certification; releases now wait their turn. The
+  taskbar icon no longer sits on a square of your accent colour.
+
+## 0.24.0 — 2026-10-28
+
+- A new look, reworked over fourteen rounds of review against the Claude Code and Codex desktop
+  apps. The chat comes first: the side panel opens at about a quarter of the window instead of
+  640px, the sidebar folds before the chat gets narrow, and replies are 14px on one aligned column.
+  Your messages are right-aligned bubbles, work steps share one row with their status beside the
+  label, a folded work block shows when a step failed, and change cards, command boxes and the
+  Terminal header share one shape. Colour now means one thing each: accent for what is selected,
+  live or primary, orange for what needs you, green and red for added and deleted lines. The light
+  theme gets a white chat area between darker rails and a raised composer, and the dark theme wider
+  steps between surfaces.
+- Find the context meter beside the model it measures in the composer, "Full access" beside the +
+  button, a New chat row at the top of the sidebar, and the project in the title bar.
+- Load SideKick's typeface from the app itself. Inter used to be fetched from Google Fonts at every
+  launch; it now ships with SideKick, which no longer contacts Google's font servers.
+- Start the next message at once in a long chat. Two minutes after a reply, a chat close to its
+  context limit is summarized in the background, so the next message no longer waits for the
+  summary first. It uses the model only while no other reply needs it.
+- Delete a file without reading it first. The agent had to read every file in full before deleting
+  it; a file that changed after the agent read it is still refused.
+- List matching files when a read uses a pattern inside a folder: `*.ts` in `src` used to find
+  nothing.
+
+## 0.23.0 — 2026-10-27
+
+- Keep files intact when the agent edits them. A binary file is no longer filled with replacement
+  characters, an edit that fails puts the file back exactly as it was, and a UTF-8 byte-order mark,
+  old Mac line endings and UTF-16 text survive edits. A file spelled with different letter case or
+  through `..` counts as the same file, and renaming a file by case alone works.
+- Get long command output in seconds. A command printing a hundred thousand lines took minutes or
+  never returned; it now finishes in seconds, keeps to its time limit, and says when the start of its
+  output was cut and where the full log is. On Windows, `2>&1` no longer turns success into failure,
+  `Write-Error` no longer prints SideKick's own wrapper, and accented text and emoji come through.
+- Let a follow-up edit files the agent already read or wrote in the same chat, without reading them
+  again; a file that changed since is still refused, and rewinding the chat forgets what it read.
+- Keep connectors working. A local MCP server that logs a lot no longer hangs, stopping a reply stops
+  the server's work too, the call time limit applies, long tool lists are read in full, a server
+  that quit is started again, and a tool that reports an error counts as failed.
+- Read web pages in any character set, see the start of large JSON responses, and stop fetches that
+  are too slow or too large instead of hanging.
+- Keep a reply going through more provider trouble. Tool calls streamed in unusual shapes are
+  rebuilt correctly instead of stopping the reply, an Anthropic overload is waited out, partial text
+  is not shown twice after a retry, an exhausted quota fails at once with a clear message, and an
+  empty final reply is asked again once.
+- Rewind, retry and edit stop and say why when your files could not be restored, instead of deleting
+  messages anyway. Files you attach and project start-hook results stay in the next reply's history.
+- Schedules: a run that could not start is recorded with the reason, and an hourly schedule no
+  longer skips a run when daylight saving time ends.
+- Harden security boundaries: a saved API key is only sent to the address it was saved with, a
+  project folder must be one you picked, and more encodings of a stored secret are redacted.
+
+## 0.22.3 — 2026-10-27
+
+- Keep a reply going when the model server is busy or limiting requests. A single "too many
+  requests" from a free tier or a LiteLLM limit, or a local server still loading a model, ended the
+  reply at once. SideKick now waits and asks again for about a minute and a quarter, and the reply
+  says it is waiting. A gateway with no model behind it still fails at once, so you know to start
+  the server.
+- Keep a reply going when one step reads more than a small context window holds. Reading several
+  files at once on a small local model ended the reply with "Compaction did not reduce context".
+  Results too large for the room left now keep their opening and end, and the agent is told what
+  was cut so it can read that part again.
+
+## 0.22.2 — 2026-10-27
+
+- See PowerShell results that come back as objects. Commands such as `Select-Object`,
+  `ConvertFrom-Json` or a table of results printed nothing on Windows, so the agent saw an empty
+  result and guessed; they now print as in a terminal, and exit codes are kept.
+- Run the real curl on Windows. `curl` and `wget` in Windows PowerShell were Invoke-WebRequest,
+  which rejected curl's arguments or stopped at a security prompt; the agent's commands now get
+  curl.exe, and Invoke-WebRequest no longer asks.
+- Stop waiting on things that already happened. A command already at a prompt, or a server that
+  had already printed it was ready, left the agent waiting up to ten minutes; a wait sent right
+  after starting a command could not find it. A server started in the background is no longer
+  stopped by a short timeout meant for its startup.
+- Tell the agent how to recover after a failed step. The hint SideKick attaches to a failed tool
+  call, such as the corrected form of a malformed edit, never reached the model; it does now, and
+  a refused web search says plainly that the search engines refused, not the model provider.
+- Point the agent to the shell or the browser when it asks for a server on this computer, instead
+  of a message that named the wrong tool and told it to stop.
+
+## 0.22.1 — 2026-10-27
+
+- Keep a background command running while a program it started is still working. A command that
+  launched a program with `Start-Process` or `nohup` was reported finished at once with exit code
+  0, so the agent took a long job that was still running for one that had failed, and Stop could
+  not reach it. The command now runs until the program ends, Stop and the time limit end both,
+  and the agent is told the program's later output is not shown.
+- Stop searching when the search engines refuse. A search that DuckDuckGo, Brave and Bing all
+  refused looked like a search with no results, and an agent took their limit for its own model
+  server's and searched dozens of times in a row. It is now a failed search that names the engines,
+  and an engine that says "too many requests" is left alone for a few minutes.
+
+## 0.22.0 — 2026-10-26
+
+- Choose how much the agent asks from the shield beside the model: **Full access**, the default,
+  **Ask first**, or **Always ask**. It is one setting for every chat and every kind of action,
+  credentials included, and Settings shows the same one.
+- Keep credentials as in a password manager: a name, a website, a username, a password or key, and
+  a description. The agent picks the one a task needs and uses it without ever seeing the value.
+  Using one follows your permission mode, so Full access no longer asks before every command. A
+  credential with a website is only sent or filled in there, and shows that site's icon. The list
+  puts recently used ones first and copies a username or opens the site from each row. Saved
+  credentials keep working; their old per-credential settings are gone.
+- Let the agent fill a website's own dropdowns, typeaheads and date pickers, such as a flight or
+  hotel search, and wait for a page to finish loading before it acts.
+- Browse real sites more reliably: the agent's scripts run on pages with strict security, such as
+  GitHub and Google, a page stuck on a dialog no longer stalls a reply, and clicks land on a page
+  that is still scrolling.
+- Stay on your question in a long reply. When a reply ran long enough to summarize its own context,
+  the agent could lose the request it was answering and answer an earlier question instead, as if
+  you had just asked it. The current request now always stays word for word, and the agent knows
+  SideKick's own notes and summaries are not you speaking.
+
+## 0.21.0 — 2026-10-25
+
+- Watch artifacts build while the model writes them. The layout shows first and each part fills
+  in as its code arrives, then a builder checks how it rendered and fixes it in place, with no
+  failed attempts or "Building" cards in the reply. Ask for a change, such as "switch it to the
+  evening sky", and the agent edits the artifact in place instead of writing it again; follow-ups
+  are much faster. Charts no longer flash while they stream, artifacts are styled without a
+  network, and none gets a sideways scrollbar over its last line.
+- Use the Browser panel like a browser: tabs, back and forward, find in page, print, zoom, device
+  sizes and screenshots from its menu, and bookmarks and history imported from your other browsers.
+  Mark up a page for the agent: click to leave a comment, typed or spoken, change its styles live
+  from a style editor, then send every mark at once. A site's human check is cleared in the panel.
+- Arrange the side panel your way. Its apps open in tabs, a new tab offers them all, tabs split
+  into sections, and a tab dragged out of the window gets a window of its own. The panel keeps a
+  narrow column until the browser shows a page.
+- Open terminals of your own in the Terminal panel, laid out like VS Code's, with your shells and
+  the agent's commands listed beside them.
+- Rewind a chat with its files from the message itself: rewinding asks whether to take back the
+  chat only or the files too, and Undo and **Rewind chat and files** show as soon as a reply ends.
+  This replaces the Recovery tab.
+- Work without a project. A chat with no project, or detached from one, now has a folder of its
+  own, so the agent can make files, run commands and download there, and your terminal opens in
+  it; the Files panel shows it as **Chat files**. Attach files from anywhere on your computer to
+  such a chat: it keeps a copy, and deleting the chat deletes its folder.
+- Let the agent manage your schedules: list, create, change, pause and delete them from a chat,
+  with your approval for every change.
+- A new chat or tab you leave without using goes away instead of waiting in the sidebar.
+- Size reply tables to their content, and resize their columns by dragging.
+- See one quiet design across the app: menus, dialogs, Settings, the chat and the side panel
+  follow the same type, spacing and colors, with color kept for what needs attention.
+- Pair a phone every time: the certificate SideKick makes for the phone page now always works.
+
+## 0.20.0 — 2026-10-24
+
+- Dictate on your phone as on the computer: words appear in the message box as you speak. The
+  phone page now opens over HTTPS with a certificate SideKick makes for your computer, so the
+  phone asks once whether to trust it; phones paired before pair again. The microphone now only
+  dictates, on the phone and the computer: tap or click to start, again to stop, and sending
+  stops it. Replies are read aloud only when you tap **Read aloud**, and the **Talk back and
+  forth** setting is gone. On the computer the microphone now sits beside Send.
+- Do more from your phone. Tap a sent message for Copy, Read aloud, Edit and Retry; copied replies
+  keep their headings, lists and tables. Start a chat in a project, or in a new worktree of it,
+  and pin, rename, move, find in, archive or delete a chat from its menu. The page is laid out
+  like the ChatGPT app, with floating top buttons and a one-line message box whose **+** holds the
+  camera, photos, files, Research, Plan and the model.
+- Edit a queued message in the message box, as you edit a sent one, on the computer and the
+  phone. The bar's cancel button is now a small red cross.
+- Pick the model and how hard it thinks from one chip. It opens a card with the level and a slider
+  holding only the levels that model takes, which SideKick reads from the model's server when it
+  loads the models: LM Studio, Ollama, Anthropic, OpenRouter, LiteLLM and llama.cpp each say which
+  levels a model has. A model with no choice to make, or whose server says nothing, has no control
+  and uses its own default; mark it as reasoning in its settings to choose a level. **Let the
+  model decide** is gone.
+- Size everything with one setting. **Settings → Appearance → Text size** and Ctrl + / Ctrl − /
+  Ctrl 0 now step through the same sizes, 80% to 150%, and scale the whole window, so text and
+  interface keep their proportions; your earlier zoom and text size become the nearest step.
+- See each browser screenshot the agent takes as a thumbnail in its step, on the computer and the
+  phone.
+- Read replies in the app's own style: tables, quotes, checklists, code and headings now use its
+  rounded cards and quiet colors instead of plain document styling.
+- Update Electron to 43.8.3, with Node.js 24.22.0, for its fix for compromised eMudhra
+  certificates, and update undici, Zod, body-parser, fast-uri and ip-address for their security
+  fixes.
+
+## 0.19.0 — 2026-10-23
+
+- Use SideKick from your phone over your Wi-Fi. Click the phone icon at the bottom of the sidebar,
+  turn on **Phone access** and scan the QR code. Once you allow the phone on the computer, it shows
+  your chats as the computer does, laid out for a phone: replies as they stream, tools and their
+  output, changes, images, cards and the agent's other chats. From the phone you can send messages
+  in any mode and on any model, queue and steer them in the same queue the computer shows, attach
+  photos (or take one), text files and dictate, have replies read aloud in the computer's voice,
+  stop the agent and answer its cards. The phone connects to the computer directly, with no
+  service and no app to install; each code works once, every phone needs your approval, and the
+  connection is encrypted, so others on the network cannot join or read it. See
+  [Use SideKick from your phone](docs/user-guide/PHONE.md).
+
+## 0.18.2 — 2026-10-22
+
+- Show the agent what a long tool result holds instead of leaving it to read the rest in pieces.
+  A website tool's long JSON result arrives as an outline that keeps every field, such as an
+  editor's token, with as many of each list's first items as fit. Other long results keep the
+  start and end of a line too long to show whole, such as JSON on one line, which before showed
+  nothing of it.
+- Let the agent find text in a long result it was shown part of, in one step: `tool_output` now
+  takes `find`, and returns each match with where it is and the text around it.
+
+## 0.18.1 — 2026-10-22
+
+- Give each new chat worktree its own branch, named after its folder, such as
+  `sidekick/fix-cards-3f9a1c`, instead of a copy marked "detached from main". The agent is told it
+  works in a worktree and on which branch, and may rename, create and switch branches there.
+  Removing a worktree deletes its branch too when the base already has everything on it.
+- Ask before more kinds of commands in **Ask for sensitive actions**: a command runs without asking
+  only when nothing in it can write a file, change a branch or run another program. Search patterns
+  in quotes no longer make a read-only command ask.
+
+## 0.18.0 — 2026-10-22
+
+- Let the agent use the tools a website offers through WebMCP, instead of clicking through the
+  page. When a page offers tools, the browser panel's toolbar shows how many and lists them with
+  the site's own descriptions. A call acts on the site as you, so it asks like a click would in
+  your permission mode; a tool the site marks as consequential always asks. A call meant for
+  another site, or for a page that changed since the agent looked, is refused.
+- Attach images of any size up to 100 MB, including AVIF and BMP, instead of being told to keep
+  them under 8 MB. The chat keeps the original, and each model gets a copy it accepts; the image's
+  tooltip says when the model gets a smaller one. Photos are turned upright and their location
+  data is left out of the copy sent. Claude and OpenRouter models now receive up to four images
+  per message.
+- Keep each chat's model: choosing one in a chat no longer changes the others. A new chat starts
+  on the model chosen last, and a chat whose model was removed asks you to choose another instead
+  of switching on its own.
+- Dictate with Parakeet Ultra by Moondream, which makes fewer mistakes in English and Spanish and
+  writes numbers as digits more often. It downloads in the background, and dictation keeps using
+  the previous model until it is ready.
+- Keep the terminal's newest line off the bottom edge of the window, and use the panel's full
+  width instead of wrapping output in a narrow band.
+- Show **Approved** or **Denied** on a tool's row once you answer its permission card, instead of
+  **Approval needed**.
+- Hide stored credentials in more escaped forms of tool output.
+
 ## 0.17.1 — 2026-10-21
 
 - Keep each chat's summary again, so a long chat no longer compacts at the start of every run.

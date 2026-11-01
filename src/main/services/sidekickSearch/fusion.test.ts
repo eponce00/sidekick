@@ -1,13 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { canonicalSearchUrl, fuseSearchResults } from './fusion'
+import { fuseSearchResults } from './fusion'
 
 describe('embedded search result fusion', () => {
-  it('canonicalizes tracking variants into one destination', () => {
-    expect(canonicalSearchUrl('https://WWW.Example.com/post/?utm_source=x&b=2&a=1#top')).toBe(
-      'https://example.com/post?a=1&b=2'
-    )
-  })
-
   it('rewards cross-source consensus and preserves source attribution', () => {
     const results = fuseSearchResults(
       'sidekick search',

@@ -66,6 +66,7 @@ beforeEach(() => {
   openProviderKeyPrompt = vi.fn(() => true)
   const control = createControlHandlers({
     store: {
+      delete: () => undefined,
       get: (key: string, fallback?: unknown) => (key === 'settings' ? stored : fallback),
       set: (_key: string, value: unknown) => {
         stored = value as Record<string, unknown>

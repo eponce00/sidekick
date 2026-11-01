@@ -1,29 +1,35 @@
 .command-live {
   display: grid;
   gap: 6px;
-  margin: 4px 0 6px 22px;
+  margin: 4px 0 6px var(--work-indent);
   min-width: 0;
   cursor: default;
 }
 
-.command-live-tail {
-  margin: 0;
-  padding: 7px 10px;
-  max-height: calc(6 * 1.45em + 14px);
+/* One fill for the whole box, its sections split by hairlines, as a finished result draws it. */
+.command-live-box {
+  min-width: 0;
   overflow: hidden;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
+}
+
+.command-live-tail {
+  margin: 0;
+  padding: 7px 11px;
+  max-height: calc(6 * var(--code-leading) * 1em + 14px);
+  overflow: hidden;
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 11.5px;
-  line-height: 1.45;
+  font-size: var(--code-text);
+  line-height: var(--code-leading);
   white-space: pre;
   text-overflow: ellipsis;
 }
 
-.command-live.is-waiting .command-live-tail {
-  border-color: color-mix(in srgb, var(--warning) 45%, var(--border-subtle));
+.command-live.is-waiting .command-live-box {
+  border-color: color-mix(in srgb, var(--color-warning-mark) 45%, var(--border-subtle));
 }
 
 .command-live-answer {
@@ -36,12 +42,13 @@
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border-subtle));
+  border: 1px solid color-mix(in srgb, var(--color-warning-mark) 45%, var(--border-subtle));
   border-radius: var(--radius-sm);
   background: var(--surface-1);
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--code-text);
+  line-height: var(--code-leading);
 }
 
 .command-live-answer input:focus-visible {
@@ -49,20 +56,40 @@
   outline-offset: 1px;
 }
 
+/* The box's last section, the same for every running or background command: what it is doing
+   on the left, its controls on the right, on the box's fill and section padding. */
 .command-live-actions {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 4px 10px;
-  color: var(--text-muted);
-  font-size: var(--text-xs);
+  gap: 8px;
+  min-height: 28px;
+  padding: 0 6px 0 11px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  /* Its buttons sit inside the 28px row, clear of the hairline above it. */
+  --settings-control-height-sm: 24px;
+}
+
+/* Split from the live output by the hairline the result's sections use; with no output yet, the
+   command line's own hairline already does it. */
+.command-live-tail + .command-live-actions {
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* Its controls read at the status line's size, not the settings rows' smaller one. */
+.command-live-actions .settings-ghost-action.is-small {
+  font-size: inherit;
 }
 
 .command-live-state {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   margin-right: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .command-live-dot {
@@ -74,7 +101,7 @@
 }
 
 .command-live.is-waiting .command-live-dot {
-  background: var(--warning);
+  background: var(--color-warning-mark);
 }
 
 @keyframes command-live-pulse {
@@ -89,7 +116,6 @@
   }
 }
 
-.command-live-actions button,
 .command-live-answer button {
   display: inline-flex;
   align-items: center;
@@ -104,13 +130,11 @@
   cursor: pointer;
 }
 
-.command-live-actions button:hover,
 .command-live-answer button:hover {
   color: var(--text-primary);
   background: var(--surface-2);
 }
 
-.command-live-actions button:focus-visible,
 .command-live-answer button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;

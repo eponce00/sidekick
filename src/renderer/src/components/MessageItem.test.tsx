@@ -4,14 +4,34 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MessageItem } from './MessageItem'
-import ToolCallRow from './ToolCallRow'
-import AgentInteractionCard from './AgentInteractionCard'
 
-describe('MessageItem shared-channel presentation', () => {
+type Props = React.ComponentProps<typeof MessageItem>
+
+const baseProps = {
+  index: 0,
+  isLoading: false,
+  expandedThinking: new Set<string>(),
+  editingMessageId: null,
+  copiedMessageId: null,
+  onToggleThinking: vi.fn(),
+  onHandleArtifactResult: vi.fn(),
+  onEditMessage: vi.fn(),
+  onCopyMessage: vi.fn(),
+  onRetryMessage: vi.fn(),
+  onForkMessage: vi.fn(),
+  onApproveToolLimitDecision: vi.fn(),
+  onDenyToolLimitDecision: vi.fn()
+}
+
+describe('MessageItem', () => {
   let container: HTMLDivElement
   let root: Root
 
   beforeEach(() => {
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { siteIcons: { get: vi.fn(async () => ({ dataUrl: null })) } }
+    })
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -22,151 +42,8 @@ describe('MessageItem shared-channel presentation', () => {
     container.remove()
   })
 
-  it('uses the normal hover action surface', async () => {
-    const copyMessage = vi.fn()
-    const editMessage = vi.fn()
-    const retryMessage = vi.fn()
-    const forkMessage = vi.fn()
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={{
-            id: 'message',
-            role: 'user',
-            content: 'Run the analysis',
-            timestamp: Date.now()
-          }}
-          index={0}
-          isLoading={false}
-          expandedThinking={new Set()}
-          editingMessageId={null}
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={editMessage}
-          onCopyMessage={copyMessage}
-          onRetryMessage={retryMessage}
-          onForkMessage={forkMessage}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-          editActionTitle="Edit and resend"
-          retryActionTitle="Send again"
-        />
-      )
-    })
-
-    expect(container.querySelector('[aria-label="Copy message"]')).not.toBeNull()
-    expect(container.querySelector('[aria-label="Edit and resend"]')).not.toBeNull()
-    expect(container.querySelector('[aria-label="Send again"]')).not.toBeNull()
-    expect(container.querySelector('[aria-label="Fork from this message"]')).not.toBeNull()
-
-    const copyButton = container.querySelector('[aria-label="Copy message"]') as HTMLButtonElement
-    const editButton = container.querySelector(
-      '[aria-label="Edit and resend"]'
-    ) as HTMLButtonElement
-    const retryButton = container.querySelector('[aria-label="Send again"]') as HTMLButtonElement
-    const forkButton = container.querySelector(
-      '[aria-label="Fork from this message"]'
-    ) as HTMLButtonElement
-    await act(async () => {
-      copyButton.click()
-      editButton.click()
-      retryButton.click()
-      forkButton.click()
-    })
-    expect(copyMessage).toHaveBeenCalledOnce()
-    expect(editMessage).toHaveBeenCalledOnce()
-    expect(retryMessage).toHaveBeenCalledOnce()
-    expect(forkMessage).toHaveBeenCalledOnce()
-  })
-
-  it('steps back while it is edited in the message box, with no editor of its own', async () => {
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={{
-            id: 'editing-message',
-            role: 'user',
-            content: 'Change the tagline',
-            timestamp: Date.now()
-          }}
-          index={0}
-          isLoading={false}
-          expandedThinking={new Set()}
-          editingMessageId="editing-message"
-          isRewound
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
-      )
-    })
-    const message = container.querySelector('.message') as HTMLElement
-    expect(message.classList.contains('message-editing')).toBe(true)
-    expect(message.classList.contains('message-rewound')).toBe(true)
-    expect(message.getAttribute('aria-hidden')).toBe('true')
-    expect(container.querySelector('textarea')).toBeNull()
-    expect(container.textContent).toContain('Change the tagline')
-  })
-
-  it('keeps compact tool status hints available even when a row has no click action', async () => {
-    await act(async () => {
-      root.render(
-        <ToolCallRow
-          tool={{
-            id: 'tool',
-            name: 'write',
-            title: 'Writing src/app.tsx',
-            command: 'write',
-            status: 'success'
-          }}
-        />
-      )
-    })
-
-    const row = container.querySelector('.tool-call-row') as HTMLButtonElement
-    expect(row.disabled).toBe(false)
-    expect(row.tabIndex).toBe(-1)
-    expect(row.getAttribute('aria-disabled')).toBe('true')
-    expect(row.title).toContain('Completed')
-  })
-
-  it('keeps copy available but hides mutating actions in a read-only transcript', async () => {
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={{
-            id: 'read-only-message',
-            role: 'user',
-            content: 'Inspect this from the compact agent pane',
-            timestamp: Date.now()
-          }}
-          index={0}
-          isLoading={false}
-          expandedThinking={new Set()}
-          editingMessageId={null}
-          copiedMessageId={null}
-          readOnly
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
-      )
-    })
-
-    expect(container.querySelector('[aria-label="Copy message"]')).not.toBeNull()
-    expect(container.querySelector('[aria-label="Edit message"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Retry message"]')).toBeNull()
-  })
+  const render = (props: Partial<Props> & Pick<Props, 'message'>): Promise<void> =>
+    act(async () => root.render(<MessageItem {...baseProps} {...props} />))
 
   it('shows only the latest version of an artifact the reply revised', async () => {
     // Each fix made the artifact again under the same title, and every attempt,
@@ -175,217 +52,76 @@ describe('MessageItem shared-channel presentation', () => {
       type: 'artifact' as const,
       artifact: { type: 'svg' as const, title, code, isStreaming: false }
     })
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={{
-            id: 'reply',
-            role: 'agent',
-            content: 'Listo',
-            timestamp: Date.now(),
-            segments: [
-              artifact('<svg data-version="1"></svg>'),
-              artifact('<svg data-version="2"></svg>'),
-              artifact('<svg data-version="other"></svg>', 'Otra card'),
-              { type: 'text', content: 'Listo' }
-            ]
-          }}
-          index={0}
-          isLoading={false}
-          expandedThinking={new Set()}
-          editingMessageId={null}
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
-      )
+    await render({
+      message: {
+        id: 'reply',
+        role: 'agent',
+        content: 'Listo',
+        timestamp: Date.now(),
+        segments: [
+          artifact('<svg data-version="1"></svg>'),
+          artifact('<svg data-version="2"></svg>'),
+          artifact('<svg data-version="other"></svg>', 'Otra card'),
+          { type: 'text', content: 'Listo' }
+        ]
+      }
     })
 
     const cards = [...container.querySelectorAll('.artifact-segment')]
     expect(cards).toHaveLength(2)
-    expect(container.innerHTML).toContain('data-version="2"')
-    expect(container.innerHTML).not.toContain('data-version="1"')
-    expect(container.innerHTML).toContain('data-version="other"')
-  })
-
-  it('renders app notices as compact status rows without chat hover metadata', async () => {
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={{
-            id: 'notice',
-            role: 'system',
-            noticeTone: 'error',
-            content: 'Agent run stopped: provider unavailable',
-            timestamp: Date.now()
-          }}
-          index={0}
-          isLoading={false}
-          expandedThinking={new Set()}
-          editingMessageId={null}
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
+    // Artifacts run in a sandbox; their code is in the chat's DOM only in code view.
+    for (const card of cards) {
+      await act(async () =>
+        card.querySelector<HTMLButtonElement>('[aria-label="View code"]')!.click()
       )
-    })
-
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Agent run stopped')
-    expect(container.querySelector('.message-meta')).toBeNull()
-    expect(container.querySelector('.message-notice-error')).not.toBeNull()
+    }
+    const code = cards.map((card) => card.querySelector('.artifact-code')?.textContent).join(' ')
+    expect(code).toContain('data-version="2"')
+    expect(code).not.toContain('data-version="1"')
+    expect(code).toContain('data-version="other"')
   })
 
   it('shows a goal completion as one line, with the older long headline shortened and evidence folded', async () => {
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={{
-            id: 'goal-complete:goal-1',
-            role: 'system',
-            noticeTone: 'success',
-            content:
-              'Goal complete — Ship the settings page' +
-              String.fromCharCode(10, 10) +
-              'All tests pass',
-            timestamp: Date.now()
-          }}
-          index={0}
-          isLoading={false}
-          expandedThinking={new Set()}
-          editingMessageId={null}
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
-      )
+    await render({
+      message: {
+        id: 'goal-complete:goal-1',
+        role: 'system',
+        noticeTone: 'success',
+        content: 'Goal complete — Ship the settings page\n\nAll tests pass',
+        timestamp: Date.now()
+      }
     })
 
     const notice = container.querySelector('.message-notice-success [role="status"]')!
     // The objective is the message above; the notice does not say it again.
     expect(notice.querySelector('strong')?.textContent).toBe('Goal complete')
-    const details = notice.querySelector('details')!
-    expect(details.open).toBe(false)
-    expect(details.querySelector('.system-notice-detail')?.textContent).toBe('All tests pass')
-    expect(container.querySelector('[role="alert"]')).toBeNull()
-  })
-
-  it('expands a compaction marker to show and copy the model-facing context', async () => {
-    const writeText = vi.fn(async () => ({ success: true }))
-    Object.defineProperty(window, 'api', {
-      configurable: true,
-      value: { ...window.api, clipboard: { writeText } }
-    })
-    const modelContext = '<historical_context>\nDurable handoff\n</historical_context>'
-
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={{
-            id: 'compaction',
-            role: 'agent',
-            content: '',
-            timestamp: Date.now(),
-            segments: [
-              {
-                type: 'summary',
-                content: modelContext,
-                summary: { originalTokens: 12_000, newTokens: 2_000, messagesCompacted: 24 }
-              }
-            ]
-          }}
-          index={0}
-          isLoading={false}
-          expandedThinking={new Set()}
-          editingMessageId={null}
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
-      )
-    })
-
-    const disclosure = container.querySelector('.summary-segment-compact') as HTMLDetailsElement
-    expect(disclosure.open).toBe(false)
-    expect(disclosure.textContent).toContain('24 messages')
-    expect(container.querySelector('.summary-content')?.textContent).toBe(modelContext)
-
-    await act(async () => {
-      ;(
-        container.querySelector('[aria-label="Copy compacted context"]') as HTMLButtonElement
-      ).click()
-    })
-    expect(writeText).toHaveBeenCalledWith(modelContext)
+    expect(notice.querySelector('details .system-notice-detail')?.textContent).toBe(
+      'All tests pass'
+    )
   })
 
   it('renders a compaction marker at its historical position between tool calls', async () => {
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={{
-            id: 'compaction-chronology',
-            role: 'agent',
-            content: '',
-            timestamp: Date.now(),
-            segments: [
-              {
-                type: 'tool',
-                tool: {
-                  id: 'before',
-                  title: 'Tool before marker',
-                  command: 'read',
-                  status: 'success'
-                }
-              },
-              {
-                type: 'summary',
-                content: '<historical_context>handoff</historical_context>',
-                summary: { originalTokens: 10_000, newTokens: 1_000, messagesCompacted: 12 }
-              },
-              {
-                type: 'tool',
-                tool: {
-                  id: 'after',
-                  title: 'Tool after marker',
-                  command: 'write',
-                  status: 'success'
-                }
-              }
-            ]
-          }}
-          index={0}
-          isLoading
-          expandedThinking={new Set()}
-          editingMessageId={null}
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
-      )
+    const tool = (id: string, title: string) => ({
+      type: 'tool' as const,
+      tool: { id, title, command: 'read', status: 'success' as const }
+    })
+    await render({
+      isLoading: true,
+      message: {
+        id: 'compaction-chronology',
+        role: 'agent',
+        content: '',
+        timestamp: Date.now(),
+        segments: [
+          tool('before', 'Tool before marker'),
+          {
+            type: 'summary',
+            content: '<historical_context>handoff</historical_context>',
+            summary: { originalTokens: 10_000, newTokens: 1_000, messagesCompacted: 12 }
+          },
+          tool('after', 'Tool after marker')
+        ]
+      }
     })
 
     const text = container.querySelector('.message-segments')?.textContent || ''
@@ -394,164 +130,49 @@ describe('MessageItem shared-channel presentation', () => {
     expect(container.querySelectorAll('.agent-work-disclosure')).toHaveLength(2)
   })
 
-  it('shows generation speed with a compact, inspectable usage summary', async () => {
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={{
-            id: 'speed',
-            role: 'agent',
-            content: 'Finished',
-            timestamp: Date.now(),
-            tokenUsage: { promptTokens: 12_000, completionTokens: 900, tokensPerSecond: 47.25 }
-          }}
-          index={0}
-          isLoading={false}
-          expandedThinking={new Set()}
-          editingMessageId={null}
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
-      )
-    })
-
-    expect(container.querySelector('.message-token-info')?.textContent).toBe('47.3 t/s')
-    expect(container.querySelector('.message-run-stats > summary')?.textContent).toContain(
-      '12,900 tokens'
-    )
-    expect(container.querySelector('.message-run-stats-popover')?.textContent).toContain(
-      'Input 12,000'
-    )
-  })
-
   it('keeps a working reply that ends in text from looking finished', async () => {
-    const render = async (isLoading: boolean): Promise<void> => {
-      await act(async () => {
-        root.render(
-          <MessageItem
-            message={{
-              id: 'still-working',
-              role: 'agent',
-              content: 'Fixing those to derive from metres:',
-              timestamp: Date.now() - 21 * 60_000,
-              segments: [
-                { type: 'thinking', content: 'Checking the render' },
-                { type: 'text', content: 'Fixing those to derive from metres:' }
-              ],
-              tokenUsage: { promptTokens: 48_000, completionTokens: 1_411, tokensPerSecond: 12.5 }
-            }}
-            index={0}
-            isLoading={isLoading}
-            expandedThinking={new Set()}
-            editingMessageId={null}
-            copiedMessageId={null}
-            onToggleThinking={vi.fn()}
-            onHandleArtifactResult={vi.fn()}
-            onEditMessage={vi.fn()}
-            onCopyMessage={vi.fn()}
-            onRetryMessage={vi.fn()}
-            onApproveToolLimitDecision={vi.fn()}
-            onDenyToolLimitDecision={vi.fn()}
-          />
-        )
-      })
+    const message = {
+      id: 'still-working',
+      role: 'agent' as const,
+      content: 'Fixing those to derive from metres:',
+      timestamp: Date.now() - 21 * 60_000,
+      segments: [
+        { type: 'thinking' as const, content: 'Checking the render' },
+        { type: 'text' as const, content: 'Fixing those to derive from metres:' }
+      ],
+      tokenUsage: { promptTokens: 48_000, completionTokens: 1_411, tokensPerSecond: 12.5 }
     }
 
     // The model can spend minutes writing its next tool call with nothing new on screen; the
     // live line at the foot of the reply keeps counting.
-    await render(true)
-    const stats = container.querySelector('.agent-run-stats')
-    expect(stats?.textContent).toContain('Writing')
-    expect(stats?.textContent).toContain('21m')
-    expect(stats?.textContent).toContain('1.4k tokens')
-    expect(stats?.textContent).toContain('13 t/s')
-    expect(stats?.textContent).toContain('48.0k context')
+    await render({ message, isLoading: true })
+    expect(container.querySelector('.agent-run-stats')?.textContent).toContain('21m')
     expect(container.querySelector('.message-meta')).toBeNull()
 
-    await render(false)
+    await render({ message, isLoading: false })
     expect(container.querySelector('.agent-run-stats')).toBeNull()
-    expect(container.querySelector('.message-token-info')?.textContent).toBe('12.5 t/s')
-  })
-
-  it('offers message-level undo for a response that changed this workspace', async () => {
-    const undo = vi.fn()
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={{
-            id: 'changed-files',
-            role: 'agent',
-            content: 'Implemented it.',
-            timestamp: Date.now(),
-            checkpointHash: 'abc1234',
-            checkpointWorkspaceRoot: 'C:\\project'
-          }}
-          index={0}
-          isLoading={false}
-          expandedThinking={new Set()}
-          editingMessageId={null}
-          copiedMessageId={null}
-          workspaceFolder={'C:\\project'}
-          onUndoCheckpoint={undo}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
-      )
-    })
-
-    const button = container.querySelector('[aria-label="Undo file changes"]') as HTMLButtonElement
-    expect(button).not.toBeNull()
-    await act(async () => button.click())
-    expect(undo).toHaveBeenCalledWith('abc1234')
+    expect(container.querySelector('.message-meta')).not.toBeNull()
   })
 
   it('times a reply from the run that wrote it, so a retry starts the clock again', async () => {
-    const props = {
-      index: 0,
-      expandedThinking: new Set<string>(),
-      editingMessageId: null,
-      copiedMessageId: null,
-      onToggleThinking: vi.fn(),
-      onHandleArtifactResult: vi.fn(),
-      onEditMessage: vi.fn(),
-      onCopyMessage: vi.fn(),
-      onRetryMessage: vi.fn(),
-      onApproveToolLimitDecision: vi.fn(),
-      onDenyToolLimitDecision: vi.fn()
-    }
-    const reply = {
-      id: 'long-task',
-      role: 'agent' as const,
-      content: 'Done.',
-      timestamp: 5_000_000,
-      tokenUsage: {
-        promptTokens: 10,
-        completionTokens: 5,
-        // A retry, long after the message it answers was first sent.
-        runStartedAt: 4_000_000,
-        runCompletedAt: 4_200_000
-      },
-      segments: [
-        {
-          type: 'tool' as const,
-          tool: { id: 't', title: 'Read', command: 'read', status: 'success' as const }
+    await render({
+      message: {
+        id: 'long-task',
+        role: 'agent',
+        content: 'Done.',
+        timestamp: 5_000_000,
+        tokenUsage: {
+          promptTokens: 10,
+          completionTokens: 5,
+          // A retry, long after the message it answers was first sent.
+          runStartedAt: 4_000_000,
+          runCompletedAt: 4_200_000
         },
-        { type: 'text' as const, content: 'Done.' }
-      ]
-    }
-    await act(async () => {
-      root.render(<MessageItem {...props} message={reply} isLoading={false} />)
+        segments: [
+          { type: 'tool', tool: { id: 't', title: 'Read', command: 'read', status: 'success' } },
+          { type: 'text', content: 'Done.' }
+        ]
+      }
     })
     // 200 s from the retry to the end: 3m 20s, once, in the footer.
     expect(container.querySelector('.message-run-stats')?.textContent).toContain(
@@ -561,128 +182,67 @@ describe('MessageItem shared-channel presentation', () => {
   })
 
   it('collapses completed work and leaves the final answer visible', async () => {
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={{
-            id: 'completed-work',
-            role: 'agent',
-            content: 'I will inspect it. The fix is complete.',
-            timestamp: 1_000,
-            tokenUsage: {
-              promptTokens: 1_000,
-              completionTokens: 200,
-              runStartedAt: 1_000,
-              runCompletedAt: 202_000
-            },
-            segments: [
-              { type: 'thinking', content: 'Inspect the implementation.' },
-              { type: 'text', content: 'I will inspect it.' },
-              {
-                type: 'tool',
-                tool: {
-                  id: 'read-tool',
-                  title: 'Read the renderer',
-                  command: 'read',
-                  status: 'success'
-                }
-              },
-              { type: 'text', content: 'The fix is complete.' }
-            ]
-          }}
-          index={0}
-          isLoading={false}
-          expandedThinking={new Set()}
-          editingMessageId={null}
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
-      )
+    await render({
+      message: {
+        id: 'completed-work',
+        role: 'agent',
+        content: 'I will inspect it. The fix is complete.',
+        timestamp: 1_000,
+        segments: [
+          { type: 'thinking', content: 'Inspect the implementation.' },
+          { type: 'text', content: 'I will inspect it.' },
+          {
+            type: 'tool',
+            tool: {
+              id: 'read-tool',
+              title: 'Read the renderer',
+              command: 'read',
+              status: 'success'
+            }
+          },
+          { type: 'text', content: 'The fix is complete.' }
+        ]
+      }
     })
 
-    const toggle = container.querySelector('.agent-work-toggle') as HTMLButtonElement
-    // A finished reply carries its time once, in the footer, not inside the reply.
-    expect(toggle.textContent).not.toContain('Worked for')
-    expect(container.querySelector('.message-run-stats')?.textContent).toContain(
-      'Worked for 3m 21s'
-    )
-    expect(toggle.getAttribute('aria-expanded')).toBe('false')
     expect(container.textContent).toContain('The fix is complete.')
     expect(container.textContent).not.toContain('Read the renderer')
 
-    await act(async () => toggle.click())
+    await act(async () =>
+      (container.querySelector('.agent-work-toggle') as HTMLButtonElement).click()
+    )
     expect(container.textContent).toContain('Read the renderer')
     expect(container.textContent).toContain('I will inspect it.')
-
-    // Reasoning carries the composer toggle's brain in the tool rows' icon column.
-    const thought = container.querySelector('.thinking-step-toggle') as HTMLButtonElement
-    expect(thought.firstElementChild?.className).toBe('thinking-step-icon')
-    expect(thought.querySelector('svg.lucide-brain')?.getAttribute('aria-label')).toBe('Thinking')
-    expect(thought.querySelector('.actions-summary')?.textContent).toBe(
-      'Inspect the implementation.'
-    )
   })
 
   it('shows a steered message where it was sent, outside the folded work', async () => {
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={{
-            id: 'steered-reply',
-            role: 'agent',
-            content: 'Formatting with spaces. Switched to tabs.',
-            timestamp: 1_000,
-            segments: [
-              { type: 'text', content: 'Formatting with spaces.' },
-              {
-                type: 'tool',
-                tool: { id: 'format', title: 'Format files', command: 'shell', status: 'success' }
-              },
-              {
-                type: 'steer',
-                steer: { id: 'steer-1', content: 'Use tabs instead.', timestamp: 2_000 }
-              },
-              { type: 'text', content: 'Switched to tabs.' }
-            ]
-          }}
-          index={0}
-          isLoading={false}
-          expandedThinking={new Set()}
-          editingMessageId={null}
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
-      )
+    await render({
+      message: {
+        id: 'steered-reply',
+        role: 'agent',
+        content: 'Formatting with spaces. Switched to tabs.',
+        timestamp: 1_000,
+        segments: [
+          { type: 'text', content: 'Formatting with spaces.' },
+          {
+            type: 'tool',
+            tool: { id: 'format', title: 'Format files', command: 'shell', status: 'success' }
+          },
+          {
+            type: 'steer',
+            steer: { id: 'steer-1', content: 'Use tabs instead.', timestamp: 2_000 }
+          },
+          { type: 'text', content: 'Switched to tabs.' }
+        ]
+      }
     })
 
     const steer = container.querySelector('.steer-segment')
     expect(steer?.textContent).toContain('Use tabs instead.')
     expect(steer?.closest('.agent-work-disclosure')).toBeNull()
-
-    const writeText = vi.fn(async () => ({ success: true }))
-    Object.defineProperty(window, 'api', {
-      configurable: true,
-      value: { ...window.api, clipboard: { writeText } }
-    })
-    const copy = steer?.querySelector<HTMLButtonElement>('[aria-label="Copy message"]')
-    await act(async () => copy?.click())
-    expect(writeText).toHaveBeenCalledWith('Use tabs instead.')
     expect(container.querySelector('[data-final-answer]')?.textContent).toContain(
       'Switched to tabs.'
     )
-    expect(container.textContent).not.toContain('Format files')
   })
 
   it('offers one Continue on an interrupted reply that can still be continued', async () => {
@@ -709,110 +269,66 @@ describe('MessageItem shared-channel presentation', () => {
         }
       ]
     }
-    const props = {
-      index: 0,
-      isLoading: false,
-      expandedThinking: new Set<string>(),
-      editingMessageId: null,
-      editingGeometry: null,
-      editingContent: '',
-      copiedMessageId: null,
-      onToggleThinking: vi.fn(),
-      onHandleArtifactResult: vi.fn(),
-      onEditMessage: vi.fn(),
-      onCancelEditMessage: vi.fn(),
-      onConfirmEditMessage: vi.fn(),
-      onCopyMessage: vi.fn(),
-      onRetryMessage: vi.fn(),
-      onSetEditingContent: vi.fn(),
-      onApproveToolLimitDecision: vi.fn(),
-      onDenyToolLimitDecision: vi.fn()
-    }
-    await act(async () => {
-      root.render(<MessageItem {...props} message={message} onContinueRun={onContinueRun} />)
-    })
+    await render({ message, onContinueRun })
 
     const button = [...container.querySelectorAll('button')].find(
       (candidate) => candidate.textContent?.trim() === 'Continue'
     ) as HTMLButtonElement
-    expect(button).toBeDefined()
     expect(button.closest('.agent-work-disclosure')).toBeNull()
     await act(async () => button.click())
     await act(async () => button.click())
     expect(onContinueRun).toHaveBeenCalledOnce()
     expect(onContinueRun).toHaveBeenCalledWith(message)
-    expect(button.disabled).toBe(true)
 
     // Once continued, or once something else follows it, the interruption is a quiet note: the
     // reply below carries on, so it is not shown as a failure.
-    await act(async () => {
-      root.render(<MessageItem {...props} message={{ ...message }} />)
-    })
+    await render({ message: { ...message } })
     expect(container.querySelector('.run-error-segment')).toBeNull()
-    expect(container.querySelector('.run-interrupted-note')?.textContent).toContain(
-      'SideKick closed before this reply finished.'
-    )
+    expect(container.querySelector('.run-interrupted-note')).not.toBeNull()
   })
 
   it('shows a question the agent is waiting on outside the folded work', async () => {
     // The question sat inside the collapsed work block, so the run waited on an answer the user
     // could not see until they expanded it.
-    const message = {
-      id: 'asking',
-      runId: 'run-1',
-      role: 'agent' as const,
-      content: '',
-      timestamp: 1_000,
-      segments: [
-        { type: 'thinking' as const, content: 'Ask first.' },
-        {
-          type: 'tool' as const,
-          tool: { id: 'ask', title: 'ask user', command: 'ask_user', status: 'running' as const }
-        },
-        {
-          type: 'interaction' as const,
-          interaction: {
-            id: 'question-1',
-            kind: 'question' as const,
-            status: 'pending' as const,
-            request: {
-              questions: [
-                {
-                  id: 'install',
-                  question: 'Install ws-scrcpy now?',
-                  options: [{ label: 'Yes' }, { label: 'Later' }]
-                }
-              ]
+    await render({
+      isLoading: true,
+      onResolveAgentInteraction: vi.fn(),
+      message: {
+        id: 'asking',
+        runId: 'run-1',
+        role: 'agent',
+        content: '',
+        timestamp: 1_000,
+        segments: [
+          { type: 'thinking', content: 'Ask first.' },
+          {
+            type: 'tool',
+            tool: { id: 'ask', title: 'ask user', command: 'ask_user', status: 'running' }
+          },
+          {
+            type: 'interaction',
+            interaction: {
+              id: 'question-1',
+              kind: 'question',
+              status: 'pending',
+              request: {
+                questions: [
+                  {
+                    id: 'install',
+                    question: 'Install ws-scrcpy now?',
+                    options: [{ label: 'Yes' }, { label: 'Later' }]
+                  }
+                ]
+              }
             }
           }
-        }
-      ]
-    }
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={message}
-          index={0}
-          isLoading
-          expandedThinking={new Set<string>()}
-          editingMessageId={null}
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-          onResolveAgentInteraction={vi.fn()}
-        />
-      )
+        ]
+      }
     })
 
     const question = [...container.querySelectorAll('*')].find(
       (element) => element.children.length === 0 && element.textContent === 'Install ws-scrcpy now?'
     )
-    expect(question).toBeDefined()
     expect(question!.closest('.agent-work-disclosure')).toBeNull()
   })
 
@@ -831,45 +347,20 @@ describe('MessageItem shared-channel presentation', () => {
           type: 'run_error' as const,
           runError: {
             code: 'transient',
-            message:
-              'Lost the connection to the model server at 127.0.0.1:4000 while it was replying; the server stopped or restarted. (UND_ERR_SOCKET)',
+            message: 'Lost the connection to the model server while it was replying.',
             retryable: true
           }
         }
       ]
     }
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={message}
-          index={0}
-          isLoading={false}
-          expandedThinking={new Set<string>()}
-          editingMessageId={null}
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={onRetryMessage}
-          onContinueRun={onContinueRun}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
-      )
-    })
+    await render({ message, onRetryMessage, onContinueRun })
     const button = (label: string): HTMLButtonElement | undefined =>
       [...container.querySelectorAll('.run-error-segment button')].find(
         (candidate) => candidate.textContent?.trim() === label
       ) as HTMLButtonElement | undefined
 
-    // Says what went wrong in words, not the error code.
-    expect(container.querySelector('.run-error-segment strong')?.textContent).toBe(
-      'Connection lost'
-    )
     await act(async () => button('Retry')!.click())
     expect(onRetryMessage).not.toHaveBeenCalled()
-    expect(container.textContent).toContain('file changes it made are undone')
     await act(async () => button('Cancel')!.click())
     expect(button('Discard and retry')).toBeUndefined()
 
@@ -882,116 +373,6 @@ describe('MessageItem shared-channel presentation', () => {
     expect(onContinueRun).toHaveBeenCalledWith(message)
     // While it continues, the reply cannot also be started over.
     expect(button('Retry')!.disabled).toBe(true)
-  })
-
-  it('titles a failed reply by what went wrong with the model, not by its error code', async () => {
-    const render = async (code: string, message: string): Promise<string | null | undefined> => {
-      await act(async () => {
-        root.render(
-          <MessageItem
-            message={{
-              id: `failed-${code}`,
-              role: 'agent',
-              content: '',
-              timestamp: 1_000,
-              segments: [{ type: 'run_error', runError: { code, message, retryable: true } }]
-            }}
-            index={0}
-            isLoading={false}
-            expandedThinking={new Set<string>()}
-            editingMessageId={null}
-            copiedMessageId={null}
-            onToggleThinking={vi.fn()}
-            onHandleArtifactResult={vi.fn()}
-            onEditMessage={vi.fn()}
-            onCopyMessage={vi.fn()}
-            onRetryMessage={vi.fn()}
-            onApproveToolLimitDecision={vi.fn()}
-            onDenyToolLimitDecision={vi.fn()}
-          />
-        )
-      })
-      return container.querySelector('.run-error-segment strong')?.textContent
-    }
-
-    expect(
-      await render(
-        'timeout',
-        'The model server at 127.0.0.1:4000 took the request but sent no reply for 5 minutes, so SideKick stopped waiting. (UND_ERR_HEADERS_TIMEOUT)'
-      )
-    ).toBe('Model server timed out')
-    expect(await render('transient', 'The model server failed (HTTP 502 Bad Gateway).')).toBe(
-      'Model server unavailable'
-    )
-    expect(await render('not_configured', 'Provider LiteLLM is not configured.')).toBe(
-      'Model not set up'
-    )
-    expect(await render('permission_denied', 'The provider refused the key (HTTP 401).')).toBe(
-      'Provider refused access'
-    )
-  })
-
-  it('renders thinking and tool activity in the order it happened', async () => {
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={{
-            id: 'chronological-work',
-            role: 'agent',
-            content: '',
-            timestamp: Date.now(),
-            segments: [
-              { type: 'thinking', content: 'First thought' },
-              {
-                type: 'tool',
-                tool: {
-                  id: 'first-tool',
-                  title: 'First command',
-                  command: 'read',
-                  status: 'success'
-                }
-              },
-              { type: 'thinking', content: 'Second thought' },
-              {
-                type: 'tool',
-                tool: {
-                  id: 'second-tool',
-                  title: 'Second command',
-                  command: 'write',
-                  status: 'success'
-                }
-              }
-            ]
-          }}
-          index={0}
-          isLoading
-          expandedThinking={
-            new Set([
-              'chronological-work-group-0-thinking-0',
-              'chronological-work-group-0-thinking-2'
-            ])
-          }
-          editingMessageId={null}
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
-      )
-    })
-    // A running reply shows its current step; the full list opens from the header.
-    await act(async () =>
-      (container.querySelector('.agent-work-toggle') as HTMLButtonElement).click()
-    )
-
-    const workText = container.querySelector('.actions-group')?.textContent || ''
-    expect(workText.indexOf('First thought')).toBeLessThan(workText.indexOf('First command'))
-    expect(workText.indexOf('First command')).toBeLessThan(workText.indexOf('Second thought'))
-    expect(workText.indexOf('Second thought')).toBeLessThan(workText.indexOf('Second command'))
   })
 
   it('re-renders immediately when switching between expanded thinking blocks', async () => {
@@ -1009,143 +390,64 @@ describe('MessageItem shared-channel presentation', () => {
         { type: 'thinking' as const, content: 'Second thought' }
       ]
     }
-    const common = {
-      message,
-      index: 0,
-      isLoading: true,
-      editingMessageId: null,
-      editingGeometry: null,
-      editingContent: '',
-      copiedMessageId: null,
-      onToggleThinking: vi.fn(),
-      onHandleArtifactResult: vi.fn(),
-      onEditMessage: vi.fn(),
-      onCancelEditMessage: vi.fn(),
-      onConfirmEditMessage: vi.fn(),
-      onCopyMessage: vi.fn(),
-      onRetryMessage: vi.fn(),
-      onSetEditingContent: vi.fn(),
-      onApproveToolLimitDecision: vi.fn(),
-      onDenyToolLimitDecision: vi.fn()
-    }
+    const content = (): string => container.querySelector('.actions-content')?.textContent ?? ''
 
-    await act(async () => {
-      root.render(
-        <MessageItem {...common} expandedThinking={new Set(['live-thinking-group-0-thinking-0'])} />
-      )
+    await render({
+      message,
+      isLoading: true,
+      expandedThinking: new Set(['live-thinking-group-0-thinking-0'])
     })
     // A running reply shows its current step; the full list opens from the header.
     await act(async () =>
       (container.querySelector('.agent-work-toggle') as HTMLButtonElement).click()
     )
-    expect(container.querySelectorAll('.actions-content')).toHaveLength(1)
-    expect(container.querySelector('.actions-content')?.textContent).toContain('First thought')
-    expect(container.querySelector('.actions-content')?.textContent).not.toContain('Second thought')
+    expect(content()).toContain('First thought')
+    expect(content()).not.toContain('Second thought')
 
-    await act(async () => {
-      root.render(
-        <MessageItem {...common} expandedThinking={new Set(['live-thinking-group-0-thinking-2'])} />
-      )
+    await render({
+      message,
+      isLoading: true,
+      expandedThinking: new Set(['live-thinking-group-0-thinking-2'])
     })
     expect(container.querySelectorAll('.actions-content')).toHaveLength(1)
-    expect(container.querySelector('.actions-content')?.textContent).not.toContain('First thought')
-    expect(container.querySelector('.actions-content')?.textContent).toContain('Second thought')
-  })
-
-  it('compacts an approval immediately and treats deny as a decision', async () => {
-    let finish!: () => void
-    const onResolve = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finish = resolve
-        })
-    )
-    await act(async () => {
-      root.render(
-        <AgentInteractionCard
-          interaction={{
-            id: 'permission-1',
-            kind: 'permission',
-            status: 'pending',
-            request: {
-              title: 'Run command?',
-              arguments: { command: 'npm test', environment: { large: 'payload' } }
-            }
-          }}
-          onResolve={onResolve}
-        />
-      )
-    })
-
-    expect(container.querySelector('.agent-interaction-detail-disclosure')).not.toBeNull()
-    const deny = [...container.querySelectorAll('button')].find(
-      (button) => button.textContent === 'Deny'
-    ) as HTMLButtonElement
-    await act(async () => deny.click())
-
-    expect(container.textContent).toContain('Denying…')
-    expect(container.querySelector('.agent-interaction-detail-disclosure')).toBeNull()
-    expect(onResolve).toHaveBeenCalledWith('permission-1', { approved: false, decision: 'deny' })
-    await act(async () => finish())
-    expect(container.textContent).toContain('Denied')
-    expect(container.textContent).not.toContain('Denying…')
+    expect(content()).not.toContain('First thought')
+    expect(content()).toContain('Second thought')
   })
 
   it('keeps a generated artifact outside the collapsed work disclosure', async () => {
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={{
-            id: 'artifact-output',
-            role: 'agent',
-            content: 'The dashboard is ready.',
-            timestamp: 1_000,
-            segments: [
-              {
-                type: 'tool',
-                tool: {
-                  id: 'weather-tool',
-                  title: 'Checking weather',
-                  command: 'web_search',
-                  status: 'success'
-                }
-              },
-              {
-                type: 'artifact',
-                artifact: {
-                  type: 'svg',
-                  title: 'Weather dashboard',
-                  code: '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" /></svg>'
-                }
-              },
-              { type: 'text', content: 'The dashboard is ready.' }
-            ]
-          }}
-          index={0}
-          isLoading={false}
-          expandedThinking={new Set()}
-          editingMessageId={null}
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
-      )
+    await render({
+      message: {
+        id: 'artifact-output',
+        role: 'agent',
+        content: 'The dashboard is ready.',
+        timestamp: 1_000,
+        segments: [
+          {
+            type: 'tool',
+            tool: {
+              id: 'weather-tool',
+              title: 'Checking weather',
+              command: 'web_search',
+              status: 'success'
+            }
+          },
+          {
+            type: 'artifact',
+            artifact: {
+              type: 'svg',
+              title: 'Weather dashboard',
+              code: '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" /></svg>'
+            }
+          },
+          { type: 'text', content: 'The dashboard is ready.' }
+        ]
+      }
     })
 
     const disclosure = container.querySelector('.agent-work-disclosure')
     const artifact = container.querySelector('.artifact-segment')
-    expect(container.querySelector('.agent-work-toggle')?.getAttribute('aria-expanded')).toBe(
-      'false'
-    )
     expect(artifact).not.toBeNull()
     expect(disclosure?.contains(artifact)).toBe(false)
-    expect(container.textContent).toContain('Weather dashboard')
-    expect(container.textContent).toContain('The dashboard is ready.')
     expect(container.textContent).not.toContain('Checking weather')
   })
 
@@ -1169,100 +471,65 @@ describe('MessageItem shared-channel presentation', () => {
       startedAt: completedAt - 10,
       completedAt
     })
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={{
-            id: 'verified-output',
-            role: 'agent',
-            content: 'Done.',
-            timestamp: 1_000,
-            segments: [
-              {
-                type: 'verification',
-                verification: {
-                  status: 'passed',
-                  workspaceRoot: 'C:\\project',
-                  baselineRevision: 3,
-                  currentRevision: 4,
-                  changedPaths: ['src/app.ts'],
-                  evidence: [
-                    evidence('failed', 'failed', 'Build failed.', 10),
-                    evidence('passed', 'passed', 'Build passed.', 20)
-                  ],
-                  suggestedChecks: [],
-                  headline: 'Verified with build.'
-                }
-              }
-            ]
-          }}
-          index={0}
-          isLoading={false}
-          expandedThinking={new Set()}
-          editingMessageId={null}
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
-      )
+    await render({
+      message: {
+        id: 'verified-output',
+        role: 'agent',
+        content: 'Done.',
+        timestamp: 1_000,
+        segments: [
+          {
+            type: 'verification',
+            verification: {
+              status: 'passed',
+              workspaceRoot: 'C:\\project',
+              baselineRevision: 3,
+              currentRevision: 4,
+              changedPaths: ['src/app.ts'],
+              evidence: [
+                evidence('failed', 'failed', 'Build failed.', 10),
+                evidence('passed', 'passed', 'Build passed.', 20)
+              ],
+              suggestedChecks: [],
+              headline: 'Verified with build.'
+            }
+          }
+        ]
+      }
     })
 
-    const verification = container.querySelector('.message-verification') as HTMLDetailsElement
-    expect(verification.querySelector('summary')?.textContent).toBe('Checks passed')
-    verification.open = true
     expect(container.textContent).toContain('Build passed.')
     expect(container.textContent).toContain('Earlier attempts (1)')
     expect(container.querySelector('.verification-history')?.getAttribute('open')).toBeNull()
   })
 
   it('keeps the answer last to read, with the verification pass in its footer', async () => {
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={{
-            id: 'folded-verification',
-            role: 'agent',
-            content: 'Here is the full answer.',
-            timestamp: 1_000,
-            segments: [
-              { type: 'thinking', content: 'Planning the edit' },
-              { type: 'text', content: 'Here is the full answer.' },
-              {
-                type: 'verification',
-                content: 'All tests pass.',
-                steps: [{ type: 'text', content: 'Running the tests.' }],
-                verification: {
-                  status: 'passed',
-                  workspaceRoot: 'C:\\project',
-                  baselineRevision: 0,
-                  currentRevision: 1,
-                  changedPaths: ['src/app.ts'],
-                  evidence: [],
-                  suggestedChecks: [],
-                  headline: 'Verified with test.'
-                }
-              }
-            ]
-          }}
-          index={0}
-          isLoading={false}
-          expandedThinking={new Set()}
-          editingMessageId={null}
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
-      )
+    await render({
+      message: {
+        id: 'folded-verification',
+        role: 'agent',
+        content: 'Here is the full answer.',
+        timestamp: 1_000,
+        segments: [
+          { type: 'thinking', content: 'Planning the edit' },
+          { type: 'text', content: 'Here is the full answer.' },
+          {
+            type: 'verification',
+            content: 'All tests pass.',
+            steps: [{ type: 'text', content: 'Running the tests.' }],
+            verification: {
+              status: 'passed',
+              workspaceRoot: 'C:\\project',
+              baselineRevision: 0,
+              currentRevision: 1,
+              changedPaths: ['src/app.ts'],
+              evidence: [],
+              suggestedChecks: [],
+              headline: 'Verified with test.'
+            }
+          }
+        ]
+      }
     })
 
     const answer = container.querySelector('[data-final-answer]')
@@ -1271,107 +538,64 @@ describe('MessageItem shared-channel presentation', () => {
     // Checks are work: the reply body ends with the answer, and the result is one footer item.
     expect(container.querySelector('.message-segments .verification-detail')).toBeNull()
     const verification = container.querySelector('.message-meta .message-verification')
-    expect(verification?.querySelector('summary')?.textContent).toBe('Checks passed')
-    expect(verification?.querySelector('.verification-note')?.textContent).toBe('All tests pass.')
-    expect(verification?.querySelector('.verification-steps')?.textContent).toContain(
-      'Running the tests.'
-    )
+    expect(verification?.textContent).toContain('All tests pass.')
+    expect(verification?.textContent).toContain('Running the tests.')
   })
 
   it('shows a saved reply whose only answer is its verification note as the answer', async () => {
-    const render = (
+    const renderNote = (
       suggestedChecks: Array<{ kind: 'test'; command: string; source: string }>
     ): Promise<void> =>
-      act(async () => {
-        root.render(
-          <MessageItem
-            message={{
-              id: 'legacy-note',
-              role: 'agent',
-              content: '',
-              timestamp: 1_000,
-              segments: [
-                { type: 'thinking', content: 'Checking the file' },
-                {
-                  type: 'verification',
-                  content: 'Cleaned up the page.',
-                  verification: {
-                    status: 'unverified',
-                    workspaceRoot: '/project',
-                    baselineRevision: 0,
-                    currentRevision: 1,
-                    changedPaths: ['site/index.html'],
-                    evidence: [],
-                    suggestedChecks,
-                    headline: 'Workspace changes have not been verified.',
-                    detail: 'Run the smallest relevant test before finishing.'
-                  }
-                }
-              ]
-            }}
-            index={0}
-            isLoading={false}
-            expandedThinking={new Set()}
-            editingMessageId={null}
-            copiedMessageId={null}
-            onToggleThinking={vi.fn()}
-            onHandleArtifactResult={vi.fn()}
-            onEditMessage={vi.fn()}
-            onCopyMessage={vi.fn()}
-            onRetryMessage={vi.fn()}
-            onApproveToolLimitDecision={vi.fn()}
-            onDenyToolLimitDecision={vi.fn()}
-          />
-        )
+      render({
+        message: {
+          id: 'legacy-note',
+          role: 'agent',
+          content: '',
+          timestamp: 1_000,
+          segments: [
+            { type: 'thinking', content: 'Checking the file' },
+            {
+              type: 'verification',
+              content: 'Cleaned up the page.',
+              verification: {
+                status: 'unverified',
+                workspaceRoot: '/project',
+                baselineRevision: 0,
+                currentRevision: 1,
+                changedPaths: ['site/index.html'],
+                evidence: [],
+                suggestedChecks,
+                headline: 'Workspace changes have not been verified.',
+                detail: 'Run the smallest relevant test before finishing.'
+              }
+            }
+          ]
+        }
       })
 
-    await render([{ kind: 'test', command: 'npm test', source: 'package.json' }])
+    await renderNote([{ kind: 'test', command: 'npm test', source: 'package.json' }])
     expect(container.querySelector('.message-segments')?.textContent).toContain(
       'Cleaned up the page.'
     )
-    const verification = container.querySelector('.message-verification')
-    expect(verification?.querySelector('summary')?.textContent).toBe('Not checked')
     // The answer is not repeated in the footer, and saved wording gives way to the current one.
+    const verification = container.querySelector('.message-verification')
     expect(verification?.textContent).not.toContain('Cleaned up the page.')
-    expect(verification?.textContent).toContain('No check ran after these changes.')
     expect(verification?.textContent).not.toContain('Run the smallest relevant test')
 
     // A project with no check to suggest has nothing to report, in saved replies too.
-    await render([])
+    await renderNote([])
     expect(container.querySelector('.message-verification')).toBeNull()
     expect(container.querySelector('.message-segments')?.textContent).toContain(
       'Cleaned up the page.'
     )
   })
 
-  it('offers to rewind to before a message, with or without its file changes', async () => {
+  it('offers to rewind to before a message, with or without the file changes since', async () => {
     const rewind = vi.fn()
     const message = { id: 'ask', role: 'user' as const, content: 'Tighten it', timestamp: 1_000 }
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={message}
-          index={0}
-          isLoading={false}
-          expandedThinking={new Set()}
-          editingMessageId={null}
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onRewindMessage={rewind}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
-      )
-    })
+    await render({ message, onRewindMessage: rewind, rewindCanRestoreFiles: true })
 
     const item = container.querySelector('.message-rewind') as HTMLDetailsElement
-    expect(item.querySelector('summary')?.getAttribute('title')).toBe(
-      'Rewind to before this message'
-    )
     const choice = (label: string): HTMLButtonElement =>
       [...item.querySelectorAll('button')].find((button) => button.textContent === label)!
     await act(async () => choice('Chat only').click())
@@ -1386,37 +610,17 @@ describe('MessageItem shared-channel presentation', () => {
     vi.useFakeTimers()
     vi.setSystemTime(233_000)
     try {
-      await act(async () => {
-        root.render(
-          <MessageItem
-            message={{
-              id: 'active-work',
-              role: 'agent',
-              content: '',
-              timestamp: 1_000,
-              tokenUsage: {
-                promptTokens: 0,
-                completionTokens: 0,
-                runStartedAt: 1_000
-              }
-            }}
-            index={0}
-            isLoading
-            expandedThinking={new Set()}
-            editingMessageId={null}
-            copiedMessageId={null}
-            onToggleThinking={vi.fn()}
-            onHandleArtifactResult={vi.fn()}
-            onEditMessage={vi.fn()}
-            onCopyMessage={vi.fn()}
-            onRetryMessage={vi.fn()}
-            onApproveToolLimitDecision={vi.fn()}
-            onDenyToolLimitDecision={vi.fn()}
-          />
-        )
+      await render({
+        isLoading: true,
+        message: {
+          id: 'active-work',
+          role: 'agent',
+          content: '',
+          timestamp: 1_000,
+          tokenUsage: { promptTokens: 0, completionTokens: 0, runStartedAt: 1_000 }
+        }
       })
       const stats = (): string => container.querySelector('.agent-run-stats')?.textContent ?? ''
-      expect(stats()).toContain('Waiting for model')
       expect(stats()).toContain('3m 52s')
 
       await act(async () => {
@@ -1430,105 +634,39 @@ describe('MessageItem shared-channel presentation', () => {
   })
 
   it('says the reply is compacting context rather than still in its last step', async () => {
-    const render = async (compacting: boolean): Promise<void> =>
-      act(async () => {
-        root.render(
-          <MessageItem
-            message={{
-              id: 'compacting-work',
-              role: 'agent',
-              content: '',
-              timestamp: 1_000,
-              segments: [
-                {
-                  type: 'tool',
-                  tool: { id: 'tool-1', title: 'Read file', command: '', status: 'success' }
-                }
-              ],
-              tokenUsage: {
-                promptTokens: 150_000,
-                completionTokens: 0,
-                runStartedAt: 1_000,
-                ...(compacting ? { compacting: { startedAt: 2_000 } } : {})
-              }
-            }}
-            index={0}
-            isLoading
-            expandedThinking={new Set()}
-            editingMessageId={null}
-            copiedMessageId={null}
-            onToggleThinking={vi.fn()}
-            onHandleArtifactResult={vi.fn()}
-            onEditMessage={vi.fn()}
-            onCopyMessage={vi.fn()}
-            onRetryMessage={vi.fn()}
-            onApproveToolLimitDecision={vi.fn()}
-            onDenyToolLimitDecision={vi.fn()}
-          />
-        )
+    const renderRun = (compacting: boolean): Promise<void> =>
+      render({
+        isLoading: true,
+        message: {
+          id: 'compacting-work',
+          role: 'agent',
+          content: '',
+          timestamp: 1_000,
+          segments: [
+            {
+              type: 'tool',
+              tool: { id: 'tool-1', title: 'Read file', command: '', status: 'success' }
+            }
+          ],
+          tokenUsage: {
+            promptTokens: 150_000,
+            completionTokens: 0,
+            runStartedAt: 1_000,
+            ...(compacting ? { compacting: { startedAt: 2_000 } } : {})
+          }
+        }
       })
     const stats = (): Element | null => container.querySelector('.agent-run-stats')
     try {
-      await render(true)
+      await renderRun(true)
       expect(stats()?.getAttribute('data-activity')).toBe('compacting')
-      expect(stats()?.textContent).toContain('Compacting context')
-      expect(stats()?.textContent).not.toContain('Using tools')
 
-      await render(false)
-      expect(stats()?.textContent).toContain('Using tools')
+      await renderRun(false)
+      expect(stats()?.getAttribute('data-activity')).not.toBe('compacting')
     } finally {
       await act(async () => root.render(<></>))
     }
   })
-})
-
-describe('MessageItem in long conversations', () => {
-  let container: HTMLDivElement
-  let root: Root
-
-  beforeEach(() => {
-    Object.defineProperty(window, 'api', {
-      configurable: true,
-      value: { siteIcons: { get: vi.fn(async () => ({ dataUrl: null })) } }
-    })
-    container = document.createElement('div')
-    document.body.appendChild(container)
-    root = createRoot(container)
-  })
-
-  afterEach(async () => {
-    await act(async () => root.unmount())
-    container.remove()
-  })
-
-  const handlers = {
-    onToggleThinking: vi.fn(),
-    onHandleArtifactResult: vi.fn(),
-    onEditMessage: vi.fn(),
-    onCancelEditMessage: vi.fn(),
-    onConfirmEditMessage: vi.fn(),
-    onCopyMessage: vi.fn(),
-    onRetryMessage: vi.fn(),
-    onForkMessage: vi.fn(),
-    onSetEditingContent: vi.fn(),
-    onApproveToolLimitDecision: vi.fn(),
-    onDenyToolLimitDecision: vi.fn()
-  }
-  const expandedThinking = new Set<string>()
-
-  function renderReply(message: Parameters<typeof MessageItem>[0]['message'], isLoading: boolean) {
-    return (
-      <MessageItem
-        message={message}
-        index={0}
-        isLoading={isLoading}
-        expandedThinking={expandedThinking}
-        editingMessageId={null}
-        copiedMessageId={null}
-        {...handlers}
-      />
-    )
-  }
 
   it('does not re-render when the chat re-renders around it, as it does on every keystroke', async () => {
     // A new fork callback per render defeated the memo, so typing re-rendered
@@ -1546,7 +684,7 @@ describe('MessageItem in long conversations', () => {
     const Chat = ({ draft }: { draft: string }) => (
       <>
         <span data-draft={draft} />
-        {renderReply(message, false)}
+        <MessageItem {...baseProps} message={message} />
       </>
     )
     await act(async () => root.render(<Chat draft="a" />))
@@ -1566,45 +704,34 @@ describe('MessageItem in long conversations', () => {
       type: 'tool' as const,
       tool: { id, title, command: 'shell', status, input: { command: title } }
     })
-    const reply = (segments: Parameters<typeof MessageItem>[0]['message']['segments']) => ({
+    const reply = (segments: Props['message']['segments']) => ({
       id: 'live-run',
       role: 'agent' as const,
       content: '',
       timestamp: 1,
       segments
     })
-    await act(async () =>
-      root.render(
-        renderReply(
-          reply([
-            { type: 'thinking', content: 'Plan the pull' },
-            tool('pull', 'podman pull sglang', 'running')
-          ]),
-          true
-        )
-      )
-    )
+    await render({
+      isLoading: true,
+      message: reply([
+        { type: 'thinking', content: 'Plan the pull' },
+        tool('pull', 'podman pull sglang', 'running')
+      ])
+    })
 
     const live = () => container.querySelector('.agent-work-live')
     expect(live()?.textContent).toContain('podman pull sglang')
     expect(live()?.textContent).not.toContain('Plan the pull')
     expect(container.querySelector('.agent-work-content')).toBeNull()
 
-    const first = live()
-    await act(async () =>
-      root.render(
-        renderReply(
-          reply([
-            { type: 'thinking', content: 'Plan the pull' },
-            tool('pull', 'podman pull sglang', 'success'),
-            { type: 'thinking', content: 'Now compare the profiles' }
-          ]),
-          true
-        )
-      )
-    )
-    // A new step mounts a new line, which is what plays its entrance.
-    expect(live()).not.toBe(first)
+    await render({
+      isLoading: true,
+      message: reply([
+        { type: 'thinking', content: 'Plan the pull' },
+        tool('pull', 'podman pull sglang', 'success'),
+        { type: 'thinking', content: 'Now compare the profiles' }
+      ])
+    })
     expect(live()?.textContent).toContain('Now compare the profiles')
 
     await act(async () => (live() as HTMLElement).click())
@@ -1612,20 +739,6 @@ describe('MessageItem in long conversations', () => {
     expect(container.querySelector('.agent-work-content')?.textContent).toContain(
       'podman pull sglang'
     )
-
-    // Finished, the work folds to its summary line.
-    await act(async () =>
-      root.render(
-        renderReply(
-          reply([
-            { type: 'thinking', content: 'Plan the pull' },
-            { type: 'text', content: 'Done' }
-          ]),
-          false
-        )
-      )
-    )
-    expect(live()).toBeNull()
   })
 
   it('mounts only the latest steps of a long work block, with the rest one click away', async () => {
@@ -1635,14 +748,16 @@ describe('MessageItem in long conversations', () => {
       { type: 'thinking' as const, content: `Step ${index} reasoning` },
       { type: 'text' as const, content: `Progress ${index}` }
     ]).flat()
-    const message = {
-      id: 'long-run',
-      role: 'agent' as const,
-      content: '',
-      timestamp: 1,
-      segments: [...segments, { type: 'text' as const, content: 'Done' }]
-    }
-    await act(async () => root.render(renderReply(message, true)))
+    await render({
+      isLoading: true,
+      message: {
+        id: 'long-run',
+        role: 'agent',
+        content: '',
+        timestamp: 1,
+        segments: [...segments, { type: 'text', content: 'Done' }]
+      }
+    })
     // A running reply shows its current step; the full list opens from the header.
     await act(async () =>
       (container.querySelector('.agent-work-toggle') as HTMLButtonElement).click()

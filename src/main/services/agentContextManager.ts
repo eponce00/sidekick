@@ -168,6 +168,21 @@ function previousSummaryFrom(messages: ProviderChatMessage[]): string | null {
   return summary?.content || null
 }
 
+/** A user message SideKick wrote: a compaction summary, or a notice such as a verification guard. */
+function isHarnessMessage(message: ProviderChatMessage): boolean {
+  const content = message.content?.trimStart() ?? ''
+  return content.startsWith('<historical_context') || content.startsWith('<sidekick_')
+}
+
+/** Where the user's latest request is: their last message that SideKick did not write. */
+function latestRequestIndex(messages: readonly ProviderChatMessage[]): number {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message.role === 'user' && !isHarnessMessage(message)) return index
+  }
+  return -1
+}
+
 function compactionMessage(summary: string): ProviderChatMessage {
   return {
     role: 'user',
@@ -293,6 +308,57 @@ function chooseSplit(messages: ProviderChatMessage[], contextLength: number): nu
   return split
 }
 
+/** Room left for a summary when deciding how much of the latest turn fits. */
+const SUMMARY_ALLOWANCE_TOKENS = 2_000
+/** A history this short is not worth a summary when cutting the latest turn already frees room. */
+const SMALL_HISTORY_TOKENS = 2_000
+const MIN_CUT_RESULT_TOKENS = 400
+
+/**
+ * The latest turn stays word for word, so a turn whose tool results alone outgrew the window left
+ * compaction nothing to free: seven file reads at once on a 24k window ended the run with "did not
+ * reduce context". A result too large for the room left keeps its opening and end, and says what
+ * SideKick cut.
+ */
+function fitToolResults(
+  messages: ProviderChatMessage[],
+  roomTokens: number
+): { messages: ProviderChatMessage[]; cut: number; beforeTokens: number; afterTokens: number } {
+  const beforeTokens = estimateConversationTokens(messages)
+  if (beforeTokens <= roomTokens) {
+    return { messages, cut: 0, beforeTokens, afterTokens: beforeTokens }
+  }
+  const results = messages.filter(
+    (message) => message.role === 'tool' && typeof message.content === 'string'
+  )
+  const otherTokens = beforeTokens - estimateConversationTokens(results)
+  const share = Math.max(
+    MIN_CUT_RESULT_TOKENS,
+    Math.floor((roomTokens - otherTokens) / Math.max(1, results.length))
+  )
+  let cut = 0
+  const fitted = messages.map((message) => {
+    const content = message.content
+    if (message.role !== 'tool' || typeof content !== 'string') return message
+    const tokens = estimateTextTokens(content)
+    if (tokens <= share) return message
+    cut++
+    // Kept in this text's own characters per token; code and prose differ.
+    const keep = Math.floor((share * content.length) / tokens)
+    const head = content.slice(0, Math.floor(keep * 0.7))
+    const tail = content.slice(-Math.floor(keep * 0.3))
+    const removed = content.length - head.length - tail.length
+    return {
+      ...message,
+      content:
+        `${head}\n\n[SideKick cut ${removed} characters from the middle of this result so the ` +
+        `conversation fits the model's context window. Read the part you need again, for ` +
+        `example with an offset, rather than guessing what it held.]\n\n${tail}`
+    }
+  })
+  return { messages: fitted, cut, beforeTokens, afterTokens: estimateConversationTokens(fitted) }
+}
+
 export class AgentContextManager implements AgentKernelContextManager {
   private compactionCount = 0
   private compactionsSinceSuccessfulSample = 0
@@ -335,6 +401,31 @@ export class AgentContextManager implements AgentKernelContextManager {
     }).shouldCompact
   }
 
+  requestTokens(messages: ProviderChatMessage[], tools: readonly unknown[]): number {
+    return calculateRequestBudget({
+      messages,
+      tools,
+      contextLength: this.options.contextLength,
+      reservedOutputTokens: this.options.maxOutputTokens,
+      compactionThreshold: this.options.threshold,
+      estimationBiasTokens: this.estimationBiasTokens
+    }).requestTokens
+  }
+
+  /** How full the request is as a share of the point where it compacts; 0 when it never does. */
+  compactionPressure(messages: ProviderChatMessage[], tools: readonly unknown[]): number {
+    if (!this.options.enabled) return 0
+    const budget = calculateRequestBudget({
+      messages,
+      tools,
+      contextLength: this.options.contextLength,
+      reservedOutputTokens: this.options.maxOutputTokens,
+      compactionThreshold: this.options.threshold,
+      estimationBiasTokens: this.estimationBiasTokens
+    })
+    return budget.requestTokens / Math.max(1, budget.compactionTriggerTokens)
+  }
+
   replyLimit(
     messages: ProviderChatMessage[],
     tools: readonly unknown[],
@@ -372,7 +463,7 @@ export class AgentContextManager implements AgentKernelContextManager {
 
   async compact(
     messages: ProviderChatMessage[],
-    _tools: readonly unknown[],
+    tools: readonly unknown[],
     signal: AbortSignal
   ): Promise<{
     messages: ProviderChatMessage[]
@@ -399,7 +490,29 @@ export class AgentContextManager implements AgentKernelContextManager {
     )
     const split = chooseSplit(conversation, this.options.contextLength)
     const compactedMessages = conversation.slice(0, split)
-    const recent = conversation.slice(split)
+    const room =
+      this.options.contextLength -
+      this.options.maxOutputTokens -
+      estimateProviderRequestTokens([...system, ...projectInstructions], tools) -
+      SUMMARY_ALLOWANCE_TOKENS -
+      Math.max(512, Math.floor(this.options.contextLength * 0.05))
+    const latest = fitToolResults(conversation.slice(split), room)
+    const recent = latest.messages
+    if (latest.cut && estimateConversationTokens(compactedMessages) < SMALL_HISTORY_TOKENS) {
+      // Nothing is summarized, so nothing is recorded for the chat and `count` stays the number
+      // of summaries; the consecutive limit still applies, so cutting cannot loop.
+      this.compactionsSinceSuccessfulSample++
+      return {
+        messages: [...system, ...projectInstructions, ...compactedMessages, ...recent],
+        compacted: true,
+        details: {
+          strategy: 'cut_tool_results',
+          resultsCut: latest.cut,
+          originalTokens: latest.beforeTokens,
+          summaryTokens: latest.afterTokens
+        }
+      }
+    }
     if (!compactedMessages.length) {
       return {
         messages: [...system, ...projectInstructions, ...recent],
@@ -484,8 +597,18 @@ export class AgentContextManager implements AgentKernelContextManager {
       compactedMessages
     }
     this.options.onCompacted?.(record)
+    // The request the run is answering stays word for word. Left to the summary, a local model
+    // wrote an earlier question in as the objective, and the agent answered that one instead.
+    const requestIndex = latestRequestIndex(conversation)
+    const request = requestIndex >= 0 && requestIndex < split ? [conversation[requestIndex]] : []
     return {
-      messages: [...system, ...projectInstructions, compactionMessage(summary), ...recent],
+      messages: [
+        ...system,
+        ...projectInstructions,
+        compactionMessage(summary),
+        ...request,
+        ...recent
+      ],
       compacted: true,
       details: {
         summary,

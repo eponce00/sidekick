@@ -18,11 +18,7 @@ import { execFile } from 'child_process'
 import { promises as fs } from 'fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { promisify } from 'util'
-import type {
-  HistoryConflict,
-  HistoryMutationResult,
-  HistoryStatus
-} from '../../shared/checkpointTitles'
+import type { HistoryConflict, HistoryRestoreTarget } from '../../shared/workspaceHistory'
 
 const execFileAsync = promisify(execFile)
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
@@ -49,20 +45,10 @@ const MANAGED_EXCLUDES = [
   '*.key'
 ] as const
 
-export interface Checkpoint {
-  hash: string
-  message: string
-  timestamp: number
-  workspaceRoot: string
-  changeCount?: number
-  captureVersion?: number
-}
-
 export interface CreatedCheckpoint {
   hash: string
   changeCount: number
   captureVersion: number
-  changedPaths: string[]
 }
 
 interface CaptureSession {
@@ -100,31 +86,28 @@ interface RestoreOperation {
   desired: TreeState | null
 }
 
-interface CoordinatedRewindPlan {
+interface CoordinatedRestorePlan {
   workspaceRoot: string
   checkpointHash: string
   previousBranch: string | null
   previousApplied: string
-  parentHash: string | null
+  /** Where the history and its applied state point afterwards. */
+  nextRef: string | null
   operations: RestoreOperation[]
-}
-
-export interface CoordinatedRewindTarget {
-  workspaceRoot: string
-  checkpointHash: string
 }
 
 export interface CoordinatedHistoryConflict extends HistoryConflict {
   workspaceRoot: string
 }
 
-export type CoordinatedRewindResult =
+export type CoordinatedRestoreResult =
   | {
       ok: true
       workspaces: Array<{
         workspaceRoot: string
         checkpointHash: string
-        parentHash: string | null
+        /** The point the folder's history now ends at; null when nothing is left before it. */
+        nextRef: string | null
         changedFiles: number
       }>
     }
@@ -507,14 +490,14 @@ export async function createCheckpoint(
       ])
       if (existingHash) {
         const metadata = await commitMetadata(root, existingHash)
-        const files = await changedPaths(root, metadata.baseTree, existingHash)
+        const changeCount =
+          metadata.changeCount ?? (await changedPaths(root, metadata.baseTree, existingHash)).length
         await updateRef(root, APPLIED_REF, existingHash)
         await removeCapture(capture)
         return {
           hash: existingHash,
-          changeCount: metadata.changeCount ?? files.length,
-          captureVersion: metadata.captureVersion,
-          changedPaths: files
+          changeCount,
+          captureVersion: metadata.captureVersion
         }
       }
     } catch {
@@ -559,8 +542,7 @@ export async function createCheckpoint(
   return {
     hash,
     changeCount: files.length,
-    captureVersion: HISTORY_VERSION,
-    changedPaths: files
+    captureVersion: HISTORY_VERSION
   }
 }
 
@@ -592,7 +574,17 @@ export async function recoverInterruptedCheckpointCaptures(): Promise<
           checkpoint
         })
     } catch (error) {
-      console.warn('[History] Could not recover interrupted capture:', error)
+      // Its folder is gone with its chat, so there is nothing to recover, now or on any later start.
+      const folderIsGone = await fs.stat(capture.workspaceRoot).then(
+        () => false,
+        () => true
+      )
+      if (folderIsGone) {
+        captureSessions.delete(capture.id)
+        await fs.rm(captureMetadataPath(capture.id), { force: true }).catch(() => undefined)
+      } else {
+        console.warn('[History] Could not recover interrupted capture:', error)
+      }
     }
   }
   return recovered
@@ -801,7 +793,7 @@ function invertOperations(operations: RestoreOperation[]): RestoreOperation[] {
 async function planRewindToBeforeCheckpoint(
   workspaceRoot: string,
   checkpointHash: string
-): Promise<CoordinatedRewindPlan> {
+): Promise<CoordinatedRestorePlan> {
   const root = resolve(workspaceRoot)
   await initShadowRepo(root)
   const previousBranch = await ref(root, HISTORY_BRANCH)
@@ -821,35 +813,51 @@ async function planRewindToBeforeCheckpoint(
     checkpointHash,
     previousBranch,
     previousApplied,
-    parentHash: await ref(root, `${checkpointHash}^`),
+    nextRef: await ref(root, `${checkpointHash}^`),
     operations: await operationsForCommits(root, history.slice(0, checkpointIndex + 1), 'backward')
   }
 }
 
+/** The earliest of these points still on the folder's timeline; null when every one is undone. */
+async function earliestLivePoint(workspaceRoot: string, hashes: string[]): Promise<string | null> {
+  await initShadowRepo(workspaceRoot)
+  const applied = await ref(workspaceRoot, APPLIED_REF)
+  if (!applied) return null
+  for (const hash of hashes) {
+    if (await isAncestor(workspaceRoot, hash, applied)) return hash
+  }
+  return null
+}
+
 /**
- * Rewinds several independent project histories as one logical operation.
- * Every workspace is conflict-checked before any file changes are made. If an
- * application or ref update fails, already-applied workspaces are restored to
- * their exact prior file and ref state.
+ * Restores several folders' histories as one operation, each to before the earliest of its points
+ * still on its timeline. Every folder is conflict-checked before any file changes. If applying
+ * files or moving a history fails, the folders already changed go back to their exact prior files
+ * and history.
  */
-export async function rewindWorkspacesToBeforeCheckpoints(
-  targets: CoordinatedRewindTarget[]
-): Promise<CoordinatedRewindResult> {
-  const unique = new Map<string, CoordinatedRewindTarget>()
+export async function restoreWorkspaceHistory(
+  targets: readonly HistoryRestoreTarget[]
+): Promise<CoordinatedRestoreResult> {
+  const unique = new Map<string, string[]>()
   for (const target of targets) {
     const root = resolve(target.workspaceRoot)
-    const existing = unique.get(root)
-    if (existing && existing.checkpointHash !== target.checkpointHash) {
-      throw new Error('A workspace cannot be rewound to two history points at once')
-    }
-    unique.set(root, { ...target, workspaceRoot: root })
+    if (unique.has(root)) throw new Error('A workspace cannot be restored twice at once')
+    unique.set(root, target.hashes)
   }
-  if (!unique.size) return { ok: true, workspaces: [] }
+  // A point already undone, by Undo or an earlier rewind, has nothing left to take back.
+  const points = await Promise.all(
+    [...unique].map(async ([workspaceRoot, hashes]) => ({
+      workspaceRoot,
+      hash: await earliestLivePoint(workspaceRoot, hashes)
+    }))
+  )
+  const live = points.filter((point): point is { workspaceRoot: string; hash: string } =>
+    Boolean(point.hash)
+  )
+  if (!live.length) return { ok: true, workspaces: [] }
 
   const plans = await Promise.all(
-    [...unique.values()].map(({ workspaceRoot, checkpointHash }) =>
-      planRewindToBeforeCheckpoint(workspaceRoot, checkpointHash)
-    )
+    live.map(({ workspaceRoot, hash }) => planRewindToBeforeCheckpoint(workspaceRoot, hash))
   )
   const conflicts = (
     await Promise.all(
@@ -863,8 +871,8 @@ export async function rewindWorkspacesToBeforeCheckpoints(
   ).flat()
   if (conflicts.length) return { ok: false, conflicts }
 
-  const appliedPlans: CoordinatedRewindPlan[] = []
-  const refsChanged: CoordinatedRewindPlan[] = []
+  const appliedPlans: CoordinatedRestorePlan[] = []
+  const refsChanged: CoordinatedRestorePlan[] = []
   try {
     for (const plan of plans) {
       await applyOperations(plan.workspaceRoot, plan.operations)
@@ -872,8 +880,8 @@ export async function rewindWorkspacesToBeforeCheckpoints(
     }
     for (const plan of plans) {
       refsChanged.push(plan)
-      await updateRef(plan.workspaceRoot, HISTORY_BRANCH, plan.parentHash)
-      await updateRef(plan.workspaceRoot, APPLIED_REF, plan.parentHash)
+      await updateRef(plan.workspaceRoot, HISTORY_BRANCH, plan.nextRef)
+      await updateRef(plan.workspaceRoot, APPLIED_REF, plan.nextRef)
     }
   } catch (error) {
     let rollbackError: unknown
@@ -894,7 +902,7 @@ export async function rewindWorkspacesToBeforeCheckpoints(
     }
     if (rollbackError) {
       throw new Error(
-        `Coordinated history rewind failed and could not fully roll back: ${error instanceof Error ? error.message : String(error)}`,
+        `Coordinated history restore failed and could not fully roll back: ${error instanceof Error ? error.message : String(error)}`,
         { cause: rollbackError }
       )
     }
@@ -906,156 +914,10 @@ export async function rewindWorkspacesToBeforeCheckpoints(
     workspaces: plans.map((plan) => ({
       workspaceRoot: plan.workspaceRoot,
       checkpointHash: plan.checkpointHash,
-      parentHash: plan.parentHash,
+      nextRef: plan.nextRef,
       changedFiles: new Set(plan.operations.map(({ path }) => path)).size
     }))
   }
-}
-
-async function commitsBetween(
-  workspaceRoot: string,
-  applied: string,
-  target: string
-): Promise<{ commits: string[]; direction: 'backward' | 'forward' }> {
-  if (applied === target) return { commits: [], direction: 'backward' }
-  if (await isAncestor(workspaceRoot, target, applied)) {
-    const output = await git(workspaceRoot, ['rev-list', applied, `^${target}`])
-    return { commits: output.split('\n').filter(Boolean), direction: 'backward' }
-  }
-  if (await isAncestor(workspaceRoot, applied, target)) {
-    const output = await git(workspaceRoot, ['rev-list', '--reverse', target, `^${applied}`])
-    return { commits: output.split('\n').filter(Boolean), direction: 'forward' }
-  }
-  throw new Error('This history point is no longer on the active timeline')
-}
-
-async function moveAppliedState(
-  workspaceRoot: string,
-  target: string
-): Promise<HistoryMutationResult> {
-  await initShadowRepo(workspaceRoot)
-  const tip = await ref(workspaceRoot, HISTORY_BRANCH)
-  if (!tip || !(await isAncestor(workspaceRoot, target, tip))) {
-    throw new Error('History point not found')
-  }
-  const applied = (await ref(workspaceRoot, APPLIED_REF)) ?? tip
-  const sequence = await commitsBetween(workspaceRoot, applied, target)
-  const operations = await operationsForCommits(workspaceRoot, sequence.commits, sequence.direction)
-  const conflicts = await preflightOperations(workspaceRoot, operations)
-  if (conflicts.length > 0) return { ok: false, conflicts }
-  await applyOperations(workspaceRoot, operations)
-  await updateRef(workspaceRoot, APPLIED_REF, target)
-  return { ok: true, changedFiles: new Set(operations.map(({ path }) => path)).size }
-}
-
-export async function restoreCheckpoint(
-  workspaceRoot: string,
-  hash: string
-): Promise<HistoryMutationResult> {
-  return moveAppliedState(resolve(workspaceRoot), hash)
-}
-
-export async function hardResetCheckpoint(
-  workspaceRoot: string,
-  hash: string
-): Promise<HistoryMutationResult> {
-  const root = resolve(workspaceRoot)
-  const result = await moveAppliedState(root, hash)
-  if (!result.ok) return result
-  await updateRef(root, HISTORY_BRANCH, hash)
-  await updateRef(root, APPLIED_REF, hash)
-  return result
-}
-
-export async function rewindToBeforeCheckpoint(
-  workspaceRoot: string,
-  hash: string
-): Promise<HistoryMutationResult & { parentHash: string | null }> {
-  const root = resolve(workspaceRoot)
-  await initShadowRepo(root)
-  const tip = await ref(root, HISTORY_BRANCH)
-  const applied = await ref(root, APPLIED_REF)
-  if (!tip || !applied || !(await isAncestor(root, hash, applied))) {
-    throw new Error('History point not found on the active timeline')
-  }
-  const history = (await git(root, ['rev-list', applied])).split('\n').filter(Boolean)
-  const checkpointIndex = history.indexOf(hash)
-  if (checkpointIndex < 0) throw new Error('History point not found')
-  const commits = history.slice(0, checkpointIndex + 1)
-  const operations = await operationsForCommits(root, commits, 'backward')
-  const conflicts = await preflightOperations(root, operations)
-  const parentHash = await ref(root, `${hash}^`)
-  if (conflicts.length > 0) return { ok: false, conflicts, parentHash }
-  await applyOperations(root, operations)
-  await updateRef(root, HISTORY_BRANCH, parentHash)
-  await updateRef(root, APPLIED_REF, parentHash)
-  return {
-    ok: true,
-    changedFiles: new Set(operations.map(({ path }) => path)).size,
-    parentHash
-  }
-}
-
-export async function getCheckpointDiff(workspaceRoot: string, hash: string): Promise<string> {
-  const MAX_DIFF_BYTES = 8_000
-  await initShadowRepo(workspaceRoot)
-  const metadata = await commitMetadata(workspaceRoot, hash)
-  const stat = await git(workspaceRoot, ['diff', '--stat', metadata.baseTree, hash])
-  let patch = ''
-  try {
-    patch = await git(workspaceRoot, ['diff', '-U2', metadata.baseTree, hash])
-    if (patch.length > MAX_DIFF_BYTES)
-      patch = `${patch.slice(0, MAX_DIFF_BYTES)}\n... (diff truncated)`
-  } catch {
-    // Binary-only history entries still expose the stat summary.
-  }
-  return stat + (patch ? `\n\n${patch}` : '')
-}
-
-export async function getHistoryStatus(workspaceRoot: string): Promise<HistoryStatus> {
-  await initShadowRepo(workspaceRoot)
-  let realRepository = false
-  try {
-    realRepository =
-      (await realGit(workspaceRoot, ['rev-parse', '--is-inside-work-tree'])) === 'true'
-  } catch {
-    // Ordinary folders are fully supported by the private history repository.
-  }
-  return {
-    storage: 'private-app-data',
-    realRepository,
-    appliedHash: await ref(workspaceRoot, APPLIED_REF)
-  }
-}
-
-export async function listCheckpoints(workspaceRoot: string): Promise<Checkpoint[]> {
-  await initShadowRepo(workspaceRoot)
-  if (!(await ref(workspaceRoot, HISTORY_BRANCH))) return []
-  const log = await git(workspaceRoot, ['log', HISTORY_BRANCH, '--format=%H%x1f%ct%x1f%B%x1e'])
-  if (!log) return []
-
-  const entries: Checkpoint[] = []
-  for (const record of log
-    .split('\x1e')
-    .map((item) => item.trim())
-    .filter(Boolean)) {
-    const [hash, timestampText, ...bodyParts] = record.split('\x1f')
-    const body = bodyParts.join('\x1f').trim()
-    const metadata = await commitMetadata(workspaceRoot, hash)
-    let changeCount = metadata.changeCount
-    if (changeCount === undefined) {
-      changeCount = (await changedPaths(workspaceRoot, metadata.baseTree, hash)).length
-    }
-    entries.push({
-      hash,
-      message: body.split(/\r?\n/)[0] || 'SideKick changes',
-      timestamp: Number.parseInt(timestampText, 10) * 1000,
-      workspaceRoot,
-      changeCount,
-      captureVersion: metadata.captureVersion
-    })
-  }
-  return entries
 }
 
 export async function deleteShadowRepo(workspaceRoot: string): Promise<void> {

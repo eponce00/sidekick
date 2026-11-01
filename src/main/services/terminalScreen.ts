@@ -4,6 +4,14 @@ import { credentialRedactor } from './credentialRedaction'
 export const TERMINAL_COLUMNS = 160
 export const TERMINAL_ROWS = 40
 const SCROLLBACK_LINES = 5_000
+/** Several times what the history holds, and well below what the terminal refuses to queue. */
+const MAX_PENDING_CHARACTERS = 8 * 1024 * 1024
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void
+  const promise = new Promise<void>((done) => (resolve = done))
+  return { promise, resolve }
+}
 
 /**
  * A terminal with no display, fed a command's raw output, so what the model reads is what a
@@ -12,7 +20,16 @@ const SCROLLBACK_LINES = 5_000
  */
 export class TerminalScreen {
   private readonly terminal: Terminal
-  private written: Promise<void> = Promise.resolve()
+  /** Output waiting for the terminal to finish the batch it is parsing. */
+  private pending: string[] = []
+  private pendingLength = 0
+  /** Settles when the batch being parsed is on the screen. */
+  private parsing?: Promise<void>
+  /** The same for the pending output, made once something waits for it. */
+  private next?: { promise: Promise<void>; resolve: () => void }
+  private full = false
+  /** Whether lines scrolled out of the history, or output was let go unparsed. */
+  private lost = false
 
   constructor(options: { newlineIsLineBreak: boolean }) {
     this.terminal = new Terminal({
@@ -23,18 +40,60 @@ export class TerminalScreen {
       // A pipe's bare "\n" starts a new line at the left edge; a terminal's own output says so.
       convertEol: options.newlineIsLineBreak
     })
+    // A scroll once the history is full drops its oldest line.
+    this.terminal.onScroll(() => {
+      const buffer = this.terminal.buffer.active
+      if (buffer.type !== 'normal') return
+      if (this.full) this.lost = true
+      this.full = buffer.length >= TERMINAL_ROWS + SCROLLBACK_LINES
+    })
   }
 
+  /**
+   * Queues output and feeds it to the terminal in batches. Written one chunk at a time, each
+   * chunk waited for a timer tick, about 15 ms on Windows, so 100,000 lines took minutes.
+   */
   write(data: string): Promise<void> {
-    this.written = this.written.then(
-      () => new Promise<void>((resolve) => this.terminal.write(data, resolve))
-    )
-    return this.written
+    this.pending.push(data)
+    this.pendingLength += data.length
+    // Far more than the history holds is waiting: the oldest would only scroll out of it.
+    while (this.pendingLength > MAX_PENDING_CHARACTERS && this.pending.length > 1) {
+      this.pendingLength -= this.pending.shift()!.length
+      this.lost = true
+    }
+    if (!this.parsing) this.feed()
+    return this.settled()
   }
 
-  /** Resolves once everything written so far is on the screen. */
+  private feed(): void {
+    if (!this.pending.length) {
+      this.parsing = undefined
+      return
+    }
+    const batch = this.pending.join('')
+    const done = this.next ?? deferred()
+    this.pending = []
+    this.pendingLength = 0
+    this.next = undefined
+    this.parsing = done.promise
+    this.terminal.write(batch, () => {
+      done.resolve()
+      this.feed()
+    })
+  }
+
+  /**
+   * Resolves once everything written so far is on the screen, not output that arrives later: a
+   * command that kept printing never let a wait for all of it end.
+   */
   settled(): Promise<void> {
-    return this.written
+    if (this.pending.length) return (this.next ??= deferred()).promise
+    return this.parsing ?? Promise.resolve()
+  }
+
+  /** Whether the screen no longer holds the start of the output. */
+  get droppedLines(): boolean {
+    return this.lost
   }
 
   /**

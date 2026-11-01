@@ -1,5 +1,6 @@
 import React from 'react'
 import {
+  AlertTriangle,
   AtSign,
   Check,
   Command,
@@ -11,9 +12,7 @@ import {
   MessageSquareText,
   Microscope,
   Paperclip,
-  Pencil,
   Plus,
-  Square,
   StickyNote,
   Target,
   X
@@ -22,7 +21,8 @@ import type { PinnedModel } from '../types/models.types'
 import type { AgentRunPhase } from '../../../shared/agentRuntime'
 import { ChatComposer } from './ChatComposer'
 import { ChatModelPicker } from './ChatModelPicker'
-import { ReasoningMenu } from './ReasoningMenu'
+import { PermissionModePicker } from './PermissionModePicker'
+import type { PermissionMode } from '../../../shared/permissions'
 import {
   nextReasoningLevel,
   REASONING_LEVEL_LABELS,
@@ -34,21 +34,25 @@ import { promptRefinementModelForPinnedModel } from '../services/providers/promp
 import type { ConversationGoal } from '../../../shared/conversationGoals'
 import type { PromptRefinementHistorySelection } from '../utils/promptRefinementHistory'
 import { ConversationGoalBar, GoalArmedBar } from './ConversationGoalBar'
+import { ComposerEditingBar } from './ComposerEditingBar'
 import { QueuedMessageTray } from './QueuedMessageTray'
 import { PullRequestBar } from './PullRequestBar'
 import type { PendingRunMessageItem } from '../hooks/useConversationRun'
 import type { MessageImageAttachment } from '../../../shared/messageImages'
+import type { ProviderImageProfile } from '../../../shared/imagePreparation'
 import {
+  isBrowserAnnotationAttachment,
   isPastedTextAttachment,
   isReviewCommentAttachment,
   reviewCommentLineLabel,
   shouldAttachPastedText,
+  type BrowserAnnotationAttachment,
   type MessageContextAttachment
 } from '../../../shared/messageContextAttachments'
-import { clipboardImageFiles } from '../utils/messageImageAttachments'
+import { BrowserMarkChip } from './BrowserMarkChip'
 import { ImageAttachmentPreview } from './ImageAttachmentPreview'
 import { DictationButton } from './DictationButton'
-import { useVoiceLoop } from '../services/voice/voiceLoop'
+import { useDictating } from '../services/voice/dictationControl'
 import { PastedTextAttachmentCard } from './PastedTextAttachment'
 import {
   caretAllowsPromptHistoryStep,
@@ -65,6 +69,7 @@ import {
 import { SAVED_PROMPT_ARGUMENTS, type SavedPrompt } from '../../../shared/savedPrompts'
 import './ChatInput.css'
 import { Select } from './Select'
+import { StopGlyph } from './StopGlyph'
 
 interface FeatureMenuActionProps {
   label: string
@@ -74,6 +79,10 @@ interface FeatureMenuActionProps {
   disabled?: boolean
   unavailableReason?: string
   selected?: boolean
+  /** Shows the description in the row, for behaviour that is unfamiliar from its name alone. */
+  showHint?: boolean
+  /** Quiet text at the row's end, such as the folder an action would change. */
+  trailing?: string
 }
 
 function FeatureMenuAction({
@@ -83,7 +92,9 @@ function FeatureMenuAction({
   onClick,
   disabled = false,
   unavailableReason,
-  selected = false
+  selected = false,
+  showHint = false,
+  trailing
 }: FeatureMenuActionProps): React.JSX.Element {
   const helpText = unavailableReason || description
 
@@ -95,12 +106,23 @@ function FeatureMenuAction({
       onClick={onClick}
       disabled={disabled}
       title={helpText}
-      aria-label={`${label}. ${helpText}`}
+      // The trailing text is hidden from the name's parts, so the name says it once.
+      aria-label={trailing ? `${label}, ${trailing}. ${helpText}` : `${label}. ${helpText}`}
     >
       <span className="features-menu-item-icon" aria-hidden="true">
         {icon}
       </span>
       <span className="features-menu-item-label">{label}</span>
+      {showHint && (
+        <span className="features-menu-item-hint" aria-hidden="true">
+          {helpText}
+        </span>
+      )}
+      {trailing && (
+        <span className="features-menu-item-trailing" aria-hidden="true">
+          {trailing}
+        </span>
+      )}
       {selected && (
         <span className="features-menu-item-check" aria-label="Selected">
           <Check size={15} />
@@ -141,7 +163,12 @@ function FeatureMenuStatus({
 interface ChatInputProps {
   inputValue: string
   attachedImages: MessageImageAttachment[]
+  /** What the selected model accepts, so an image's chip can say it will get a smaller copy. */
+  imageSendProfile?: ProviderImageProfile
   attachedContext: MessageContextAttachment[]
+  /** Places marked in the Browser panel, which go with the next message. */
+  browserMarks?: BrowserAnnotationAttachment[]
+  onRemoveBrowserMark?: (id: string) => void
   attachmentError: string | null
   visionAvailable: boolean
   visionUnavailableReason?: string
@@ -150,6 +177,10 @@ interface ChatInputProps {
   /** A message from the chat is being edited here; sending replaces it and what follows. */
   editingMessageId: string | null
   onCancelEdit?: () => void
+  /** A queued message is being edited here; sending saves it back in the queue. */
+  editingQueuedId?: string | null
+  onEditQueuedMessage: (message: PendingRunMessageItem, source: HTMLElement | null) => void
+  onCancelQueuedEdit?: () => void
   researchSelected: boolean
   researchActive: boolean
   researchPhase: AgentRunPhase | 'idle'
@@ -172,6 +203,9 @@ interface ChatInputProps {
   isFeaturesMenuOpen: boolean
   isModelMenuOpen: boolean
   selectedModel: string
+  /** This chat's model, when it is no longer set up; the chat asks for another before sending. */
+  unavailableModelName?: string | null
+  onChooseModel?: () => void
   pinnedModels: PinnedModel[]
   queuedMessages: PendingRunMessageItem[]
   pivotMessage: PendingRunMessageItem | null
@@ -180,6 +214,8 @@ interface ChatInputProps {
   modelMenuRef: React.RefObject<HTMLDivElement | null>
   onInputChange: (value: string) => void
   onAddImageFiles: (files: File[]) => void
+  /** Files dropped or pasted on the box, images and any other kind. */
+  onAddFiles: (files: File[]) => void
   onAddContextAttachments: () => void
   /** Attaches a project file named with `@` in the message, so it is read before the reply. */
   onAddFileMention?: (relativePath: string) => void
@@ -202,14 +238,18 @@ interface ChatInputProps {
   onToggleModelMenu: () => void
   onModelChange: (modelId: string) => void
   onOpenModelSearch: () => void
+  permissionMode?: PermissionMode
+  /** Shows the permission picker beside the model. */
+  onPermissionModeChange?: (mode: PermissionMode) => void
   workspaceFolder: string | null
+  /** The chat has no project and keeps attached files as copies in its own folder. */
+  attachesToChatFolder?: boolean
   /** Shown after the add menu, such as the chat's worktree. */
   toolbarExtra?: React.ReactNode
   onOpenWorkspace: () => void
   onOpenWorkspaceMemory: () => void
   workspaceMemoryAvailable: boolean
   workspaceMemoryUnavailableReason?: string
-  onUpdatePendingMessage: (id: string, content: string) => boolean
   onRemovePendingMessage: (id: string) => void
   onMoveQueuedMessage: (id: string, toIndex: number) => void
   onSteerQueuedMessage: (id: string) => void
@@ -221,12 +261,17 @@ interface ChatInputProps {
   getPromptHistory?: () => readonly PromptHistoryEntry[]
   showScrollToBottom?: boolean
   onScrollToBottom?: () => void
+  /** The chat's context meter, first of the run controls. */
+  contextMeter?: React.ReactNode
 }
 
 export function ChatInput({
   inputValue,
   attachedImages,
+  imageSendProfile,
   attachedContext,
+  browserMarks = [],
+  onRemoveBrowserMark,
   attachmentError,
   visionAvailable,
   visionUnavailableReason,
@@ -234,6 +279,9 @@ export function ChatInput({
   isStopping,
   editingMessageId,
   onCancelEdit,
+  editingQueuedId = null,
+  onEditQueuedMessage,
+  onCancelQueuedEdit,
   researchSelected,
   researchActive,
   researchPhase,
@@ -255,6 +303,8 @@ export function ChatInput({
   isFeaturesMenuOpen,
   isModelMenuOpen,
   selectedModel,
+  unavailableModelName,
+  onChooseModel,
   pinnedModels,
   queuedMessages,
   pivotMessage,
@@ -263,6 +313,7 @@ export function ChatInput({
   modelMenuRef,
   onInputChange,
   onAddImageFiles,
+  onAddFiles,
   onAddContextAttachments,
   onAddPastedText,
   onInsertPastedText,
@@ -283,13 +334,15 @@ export function ChatInput({
   onToggleModelMenu,
   onModelChange,
   onOpenModelSearch,
+  permissionMode = 'full-access',
+  onPermissionModeChange,
   workspaceFolder,
+  attachesToChatFolder = false,
   toolbarExtra,
   onOpenWorkspace,
   onOpenWorkspaceMemory,
   workspaceMemoryAvailable,
   workspaceMemoryUnavailableReason,
-  onUpdatePendingMessage,
   onRemovePendingMessage,
   onMoveQueuedMessage,
   onSteerQueuedMessage,
@@ -300,11 +353,12 @@ export function ChatInput({
   getPromptHistory,
   showScrollToBottom = false,
   onScrollToBottom = () => undefined,
-  onAddFileMention
+  onAddFileMention,
+  contextMeter
 }: ChatInputProps) {
   const imageInputRef = React.useRef<HTMLInputElement>(null)
-  // With voice on, the empty box says what the conversation is doing.
-  const voiceLoop = useVoiceLoop()
+  // While dictating, the empty box says it is listening.
+  const dictating = useDictating()
   // Ctrl+Shift+V pastes long text into the message itself instead of attaching it.
   const plainPasteRef = React.useRef(false)
   const [commandIndex, setCommandIndex] = React.useState(0)
@@ -504,8 +558,9 @@ export function ChatInput({
   React.useEffect(() => {
     if (!fileMentionActive || !workspaceFolder) return
     let cancelled = false
-    // Listed each time the menu opens, so files made since the last mention appear.
-    void window.api.workspace.listFiles(workspaceFolder).then((result) => {
+    // Listed each time the menu opens, so files made since the last mention appear. Every folder
+    // of the project is listed; another folder's files start with its name.
+    void window.api.workspace.listProjectFiles(workspaceFolder).then((result) => {
       if (!cancelled && result.ok) setProjectFiles({ root: workspaceFolder, files: result.files })
     })
     return () => {
@@ -614,6 +669,11 @@ export function ChatInput({
       onInputChange('')
       return
     }
+    if (editingQueuedId && event.key === 'Escape') {
+      event.preventDefault()
+      onCancelQueuedEdit?.()
+      return
+    }
     if (editingMessageId && event.key === 'Escape') {
       event.preventDefault()
       onCancelEdit?.()
@@ -641,37 +701,40 @@ export function ChatInput({
       value={inputValue}
       inputRef={inputRef}
       placeholder={
-        voiceLoop === 'listening'
-          ? 'Listening… press Enter to send'
-          : voiceLoop === 'waiting'
-            ? 'Waiting for the reply…'
-            : voiceLoop === 'speaking'
-              ? 'Reading the reply aloud · Esc to skip'
-              : goalArmed
-                ? 'Describe the outcome and how SideKick should prove it works…'
-                : goal?.status === 'active'
-                  ? 'Steer the goal or add a constraint…'
-                  : planActive
-                    ? 'Add guidance while the plan is running…'
-                    : planSelected
-                      ? 'What should SideKick plan?'
-                      : researchActive
-                        ? 'Add a follow-up or steer the research…'
-                        : researchSelected
-                          ? 'What should SideKick research?'
-                          : 'Type a message...'
+        dictating
+          ? 'Listening…'
+          : goalArmed
+            ? 'Describe the outcome and how SideKick should prove it works…'
+            : goal?.status === 'active'
+              ? 'Steer the goal or add a constraint…'
+              : planActive
+                ? 'Add guidance while the plan is running…'
+                : planSelected
+                  ? 'What should SideKick plan?'
+                  : researchActive
+                    ? 'Add a follow-up or steer the research…'
+                    : researchSelected
+                      ? 'What should SideKick research?'
+                      : 'Type a message...'
       }
       contextBar={
         <>
-          {editingMessageId && (
-            <div className="composer-editing-bar" role="status">
-              <Pencil size={13} aria-hidden="true" />
-              <strong>Editing your message</strong>
-              <span>Sending replaces it and everything after it.</span>
-              <button type="button" onClick={onCancelEdit} title="Cancel the edit (Esc)">
-                Cancel
+          {unavailableModelName && (
+            <div className="composer-editing-bar composer-model-missing-bar" role="status">
+              <AlertTriangle size={13} aria-hidden="true" />
+              <strong>{unavailableModelName} is no longer available</strong>
+              <span>Choose another model to keep going in this chat.</span>
+              <button type="button" onClick={onChooseModel}>
+                Choose model
               </button>
             </div>
+          )}
+          {editingQueuedId ? (
+            <ComposerEditingBar queued onCancel={() => onCancelQueuedEdit?.()} />
+          ) : (
+            editingMessageId && (
+              <ComposerEditingBar queued={false} onCancel={() => onCancelEdit?.()} />
+            )
           )}
           {goal ? (
             <ConversationGoalBar
@@ -771,14 +834,21 @@ export function ChatInput({
           <QueuedMessageTray
             queuedMessages={queuedMessages}
             pivotMessage={pivotMessage}
-            onUpdate={onUpdatePendingMessage}
             onRemove={onRemovePendingMessage}
             onMove={onMoveQueuedMessage}
             onSteer={onSteerQueuedMessage}
+            onEdit={onEditQueuedMessage}
+            editingId={editingQueuedId}
           />
         ) : undefined
       }
-      footer={<PullRequestBar workspaceRoot={workspaceFolder} />}
+      footer={
+        // Holds the pull-request bar's line even when there is none, so the composer stays put
+        // between an empty chat, a chat outside a repository and one with a pull request.
+        <div className="composer-footer">
+          <PullRequestBar workspaceRoot={workspaceFolder} />
+        </div>
+      }
       promptRefinement={
         selectedPinnedModel
           ? {
@@ -800,10 +870,10 @@ export function ChatInput({
       onPaste={(event) => {
         const plainPaste = plainPasteRef.current
         plainPasteRef.current = false
-        const files = clipboardImageFiles(event.clipboardData.items)
+        const files = Array.from(event.clipboardData.files)
         if (files.length) {
           event.preventDefault()
-          onAddImageFiles(files)
+          onAddFiles(files)
           return
         }
         if (plainPaste) return
@@ -812,6 +882,7 @@ export function ChatInput({
         event.preventDefault()
         onAddPastedText(text)
       }}
+      onDropFiles={onAddFiles}
       onSend={onSendMessage}
       popover={
         commandMatch ? (
@@ -897,8 +968,19 @@ export function ChatInput({
             : undefined
       }
       attachmentTray={
-        attachedImages.length || attachedContext.length || attachmentError ? (
+        attachedImages.length ||
+        attachedContext.length ||
+        browserMarks.length ||
+        attachmentError ? (
           <div className="composer-attachments" aria-label="Message attachments">
+            {browserMarks.map((mark) => (
+              <BrowserMarkChip
+                key={mark.id}
+                mark={mark}
+                className="composer-context-attachment"
+                onRemove={onRemoveBrowserMark && (() => onRemoveBrowserMark(mark.id))}
+              />
+            ))}
             {attachedContext.map((attachment) =>
               isPastedTextAttachment(attachment) ? (
                 <PastedTextAttachmentCard
@@ -926,6 +1008,14 @@ export function ChatInput({
                     <X size={11} />
                   </button>
                 </div>
+              ) : isBrowserAnnotationAttachment(attachment) ? (
+                // A message being edited keeps the marks it was sent with.
+                <BrowserMarkChip
+                  key={attachment.id}
+                  mark={attachment}
+                  className="composer-context-attachment"
+                  onRemove={() => onRemoveContextAttachment(attachment.id)}
+                />
               ) : (
                 <div
                   className="composer-context-attachment"
@@ -951,7 +1041,11 @@ export function ChatInput({
             )}
             {attachedImages.map((image) => (
               <div className="composer-attachment" key={image.id}>
-                <ImageAttachmentPreview image={image} className="composer-image-preview" />
+                <ImageAttachmentPreview
+                  image={image}
+                  className="composer-image-preview"
+                  sendProfile={imageSendProfile}
+                />
                 <button
                   type="button"
                   className="composer-attachment-remove"
@@ -973,19 +1067,24 @@ export function ChatInput({
         <ScrollToBottomButton visible={showScrollToBottom} onClick={onScrollToBottom} />
       }
       sendDisabled={
-        (!inputValue.trim() && !attachedImages.length && !attachedContext.length) ||
+        (!inputValue.trim() &&
+          !attachedImages.length &&
+          !attachedContext.length &&
+          !browserMarks.length) ||
         Boolean(commandMatch) ||
         isStopping
       }
       sendButtonClassName={isStopping ? 'is-stopping' : ''}
       sendTitle={
-        isLoading
-          ? 'Add message to queue'
-          : researchSelected
-            ? 'Start research report'
-            : planSelected
-              ? 'Start Plan mode'
-              : 'Send message'
+        unavailableModelName
+          ? 'Choose a model for this chat first'
+          : isLoading
+            ? 'Add message to queue'
+            : researchSelected
+              ? 'Start research report'
+              : planSelected
+                ? 'Start Plan mode'
+                : 'Send message'
       }
       toolbarLeft={
         <>
@@ -997,7 +1096,7 @@ export function ChatInput({
               ref={imageInputRef}
               className="composer-image-input"
               type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
+              accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp"
               multiple
               tabIndex={-1}
               aria-hidden="true"
@@ -1028,15 +1127,19 @@ export function ChatInput({
                 aria-label="Add to message"
               >
                 <section className="features-menu-section" role="group" aria-label="Add">
-                  <div className="features-menu-section-label">Add</div>
+                  <div className="features-menu-section-label section-heading">Add</div>
                   <FeatureMenuAction
-                    label="Files and folders"
-                    description="Attach files or a folder from the current project"
+                    label={attachesToChatFolder ? 'Files' : 'Files and folders'}
+                    description={
+                      attachesToChatFolder
+                        ? 'Attach files from your computer; this chat keeps a copy'
+                        : 'Attach files from anywhere, or a folder from this project'
+                    }
                     icon={<Paperclip size={16} />}
                     onClick={() => runFeatureAction(onAddContextAttachments)}
-                    disabled={!workspaceFolder}
+                    disabled={!workspaceFolder && !attachesToChatFolder}
                     unavailableReason={
-                      !workspaceFolder
+                      !workspaceFolder && !attachesToChatFolder
                         ? 'Open a project before attaching files or folders'
                         : undefined
                     }
@@ -1060,13 +1163,13 @@ export function ChatInput({
                   role="group"
                   aria-label="Project context"
                 >
-                  <div className="features-menu-section-label">Project context</div>
+                  <div className="features-menu-section-label section-heading">Project context</div>
                   <FeatureMenuAction
                     label={workspaceFolder ? 'Change project folder' : 'Open project folder'}
                     description="Choose the files SideKick can read and change"
                     icon={<FolderOpen size={16} />}
                     onClick={() => runFeatureAction(onOpenWorkspace)}
-                    selected={Boolean(workspaceFolder)}
+                    trailing={workspaceFolder?.split(/[\\/]/).filter(Boolean).at(-1)}
                   />
                   {workspaceFolder && (
                     <FeatureMenuAction
@@ -1089,7 +1192,7 @@ export function ChatInput({
                 </section>
 
                 <section className="features-menu-section" role="group" aria-label="Agent behavior">
-                  <div className="features-menu-section-label">Agent behavior</div>
+                  <div className="features-menu-section-label section-heading">Agent behavior</div>
                   <FeatureMenuAction
                     label="Ongoing goal"
                     description="Keep SideKick working toward an objective across messages"
@@ -1098,6 +1201,7 @@ export function ChatInput({
                     disabled={!goalAvailable && !goalArmed}
                     unavailableReason={goalUnavailableReason}
                     selected={goalArmed}
+                    showHint
                   />
                   <FeatureMenuAction
                     label="Plan first"
@@ -1107,6 +1211,7 @@ export function ChatInput({
                     disabled={!planAvailable}
                     unavailableReason={planUnavailableReason}
                     selected={planSelected}
+                    showHint
                   />
                   <FeatureMenuAction
                     label="Research report"
@@ -1116,24 +1221,22 @@ export function ChatInput({
                     disabled={!researchAvailable}
                     unavailableReason={researchUnavailableReason}
                     selected={researchSelected}
+                    showHint
                   />
                 </section>
               </div>
             )}
           </div>
           {toolbarExtra}
+          {/* With the chat's context, not the run controls: it is a standing setting. */}
+          {onPermissionModeChange && (
+            <PermissionModePicker mode={permissionMode} onChange={onPermissionModeChange} />
+          )}
         </>
       }
       toolbarRight={
         <>
-          <DictationButton inputRef={inputRef} onInputChange={onInputChange} />
-          {reasoningOptions && reasoningLevel && (
-            <ReasoningMenu
-              options={reasoningOptions}
-              level={reasoningLevel}
-              onChange={onReasoningLevelChange}
-            />
-          )}
+          {contextMeter}
           <ChatModelPicker
             selectedModelId={selectedModel}
             models={pinnedModels}
@@ -1142,7 +1245,18 @@ export function ChatInput({
             onToggle={onToggleModelMenu}
             onModelChange={onModelChange}
             onManageModels={onOpenModelSearch}
+            reasoning={
+              reasoningOptions && reasoningLevel
+                ? {
+                    options: reasoningOptions,
+                    level: reasoningLevel,
+                    onChange: onReasoningLevelChange
+                  }
+                : null
+            }
           />
+          {/* Next to Send, where it is reached for most. */}
+          <DictationButton inputRef={inputRef} onInputChange={onInputChange} />
           {isLoading && (
             <button
               className={`stop-button ${isStopping ? 'is-stopping' : ''}`}
@@ -1150,7 +1264,7 @@ export function ChatInput({
               disabled={isStopping}
               title={isStopping ? 'Stopping...' : 'Stop generation'}
             >
-              <Square size={14} fill="currentColor" />
+              <StopGlyph />
             </button>
           )}
         </>

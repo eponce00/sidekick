@@ -24,7 +24,8 @@ its timer, and the run; the renderer only edits schedules and shows them. User b
 
 Times are wall-clock times in the computer's time zone, built from local date parts, so a daily
 run keeps its time across daylight-saving changes. A time skipped by a spring-forward change runs
-at the time JavaScript shifts it to; a time repeated by a fall-back change runs once.
+at the time JavaScript shifts it to; a time repeated by a fall-back change runs once. An hourly
+run is found minute by minute in real time, so it also runs in the hour a fall-back repeats.
 
 The service keeps one timer, set for the earliest due schedule and never longer than a minute,
 and also checks on `powerMonitor` resume and unlock. Each pass compares stored due times with the
@@ -77,7 +78,41 @@ its approvals because the user, not the schedule, decides what an agent may do.
 A schedule whose model is no longer enabled, or whose project was removed, pauses itself with a
 reason rather than running with a fallback. A run whose start fails for another reason, such as an
 unreachable provider, is recorded as failed, leaves an error notice in its chat, and keeps the
-schedule's next time.
+schedule's next time. One that fails before its chat exists, such as a worktree that could not be
+created, is recorded as failed with the reason and logged.
+
+## Agent tools
+
+The agent manages schedules through the same `ScheduleService` the dialog uses, from the main
+process only; the renderer has no path to it. The tools are defined in `src/shared/scheduleTools.ts`
+and implemented in `agentScheduleToolHandlers.ts`, which `ipc/schedules.ts` connects to the
+`AgentToolRuntime` with read-only views of enabled models, projects, and the calling chat.
+
+- **Progressive disclosure.** `schedules_list`, `schedules_create`, `schedules_update`, and
+  `schedules_delete` belong to the bundled `schedules` skill. The catalog adds them only once
+  `use_skill` has loaded it in the run (`SKILLS_WITH_GATED_TOOLS`); a later run that calls one is
+  told to load the skill first. They need the `schedules` capability, which conversation runs
+  have outside planning and read-only workers do not.
+- **One decision per call.** The kernel asks the tool router how much each change needs.
+  `requestedAccess` validates the call there, once, against the calling chat: arguments, an enabled
+  model, an existing project, the prompt length, the ceiling, the scheduled-run rule, and the
+  agent's limit. It records the decision by tool call. A valid decision returns `always`, so the
+  kernel suspends on an approval in every mode with no chat-wide grant; the card's preview, with
+  the prompt as a quote, is built from that same decision. An invalid one returns `auto` and is
+  excluded from policy, so its handler refuses it without a card.
+- **Save only what was shown.** The handler saves only a decision recorded as valid, and only if
+  deciding the call again gives the same result, so nothing changes between the card and the
+  write. A call that reaches the handler without a recorded decision saves nothing. A denial never
+  reaches the handler.
+- **Ceilings.** The ceiling defaults to the calling chat's effective permission mode and may not be
+  looser; a change or resume is held to the same rule for the schedule's resulting ceiling, while a
+  pause, which only takes permissions away, is not. `ScheduleService` still enforces the setting.
+- **No self-propagation.** A chat a schedule created, or one such a chat started, cannot create,
+  change, or resume schedules; it may pause or delete them. At most
+  `AGENT_ACTIVE_SCHEDULE_LIMIT` (ten) enabled schedules may have been created by the agent.
+- **Provenance.** A schedule the agent created stores `created_by_kind = 'agent'` and
+  `created_by_conversation_id`, which becomes null if that chat is deleted. The dialog labels it
+  with that chat.
 
 ## Renderer
 

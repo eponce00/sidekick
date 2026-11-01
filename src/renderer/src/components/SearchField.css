@@ -1,0 +1,62 @@
+/* The one search field (SearchField.tsx): a fill a step from the surface it sits on, no border,
+   and the standard focus ring. In the light theme the fill is a step under both the rail and a
+   white card, so it shows on either. */
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 30px;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 0 var(--space-3) 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: var(--surface-2);
+  cursor: text;
+  transition: box-shadow var(--duration-fast) ease;
+}
+
+.search-field.is-form {
+  height: 32px;
+}
+
+/* With a trailing control the field's end belongs to it. */
+.search-field:has(> :last-child:not(input)) {
+  padding-right: 3px;
+}
+
+.search-field > svg {
+  flex: none;
+}
+
+.search-field:focus-within {
+  box-shadow: var(--focus-ring);
+}
+
+.search-field input {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.search-field input:focus-visible {
+  box-shadow: none;
+}
+
+.search-field input::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+.search-field input::-webkit-search-cancel-button {
+  display: none;
+}

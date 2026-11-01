@@ -6,7 +6,7 @@ import type {
   LanguageIntelligenceWorkspaceStatus
 } from '../../../shared/verification'
 import { LspClient } from './lspClient'
-import { resolveSecureWorkspacePath } from '../../utils/workspacePaths'
+import { locateWorkspacePath, resolveSecureWorkspacePath } from '../../utils/workspacePaths'
 import {
   availableWorkspaceServers,
   detectWorkspaceLanguages,
@@ -66,7 +66,8 @@ export class LanguageIntelligenceService {
     filePath: string,
     allowWorkspaceStart = false
   ): LspClient | null {
-    const root = resolve(workspaceRoot)
+    // A file in another of the project's folders is served from that folder.
+    const root = locateWorkspacePath(workspaceRoot, filePath).root
     const server = resolveServerForFile(root, filePath)
     if (!server) return null
     const serverRoot = languageServerRoot(root, filePath, server)

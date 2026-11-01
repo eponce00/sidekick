@@ -180,33 +180,21 @@ describe('AgentRunStore', () => {
     expect(() => store.transition(run.id, 'streaming', 'late')).toThrow('already terminal')
   })
 
-  it('marks a successfully completed conversation as unread', () => {
+  it('marks a completed conversation unread, and a failed one not', () => {
     db.prepare(
       `INSERT INTO conversations (id, title, created_at, updated_at)
        VALUES ('thread-1', 'Background chat', 1, 1)`
     ).run()
-    const run = start()
+    const unread = () =>
+      (
+        db
+          .prepare('SELECT unread_completion_at FROM conversations WHERE id = ?')
+          .get('thread-1') as { unread_completion_at: number | null }
+      ).unread_completion_at
 
-    store.transition(run.id, 'completed', 'complete')
-
-    const row = db
-      .prepare('SELECT unread_completion_at FROM conversations WHERE id = ?')
-      .get('thread-1') as { unread_completion_at: number | null }
-    expect(row.unread_completion_at).toEqual(expect.any(Number))
-  })
-
-  it('does not mark a failed conversation as a completed unread response', () => {
-    db.prepare(
-      `INSERT INTO conversations (id, title, created_at, updated_at)
-       VALUES ('thread-1', 'Failed chat', 1, 1)`
-    ).run()
-    const run = start()
-
-    store.transition(run.id, 'failed', 'failed')
-
-    const row = db
-      .prepare('SELECT unread_completion_at FROM conversations WHERE id = ?')
-      .get('thread-1') as { unread_completion_at: number | null }
-    expect(row.unread_completion_at).toBeNull()
+    store.transition(start('failed').id, 'failed', 'failed')
+    expect(unread()).toBeNull()
+    store.transition(start('done').id, 'completed', 'complete')
+    expect(unread()).toEqual(expect.any(Number))
   })
 })

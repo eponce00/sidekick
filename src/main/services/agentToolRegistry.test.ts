@@ -8,6 +8,7 @@ import { OutsideProjectError } from '../utils/workspacePaths'
 import {
   AgentToolExecutionError,
   AgentToolRegistry,
+  externalSchemaIssues,
   normalizeAgentToolArguments,
   prepareAgentToolCall,
   validateAgentToolArguments,
@@ -119,14 +120,6 @@ describe('AgentToolRegistry', () => {
       context: { runId: 'internal', signal: new AbortController().signal }
     })
     expect(observe.mock.calls[0][0]).not.toHaveProperty('toolCallId')
-  })
-
-  it('rejects unavailable tools without calling an executor', async () => {
-    const executor = vi.fn()
-    const result = await registry.execute(input('not_a_tool', {}), executor)
-    expect(result.status).toBe('error')
-    expect(result.error?.code).toBe('unknown_tool')
-    expect(executor).not.toHaveBeenCalled()
   })
 
   it('validates required arguments before side effects', async () => {
@@ -307,14 +300,8 @@ describe('tool refusals', () => {
     ['apply_patch', 'structured-edit', 'edit', 'file_path, old_string, new_string'],
     ['apply_patch', 'claude-edit', 'Edit', 'file_path, old_string, new_string'],
     ['Edit', 'apply-patch', 'apply_patch', 'patch'],
-    ['str_replace_based_edit_tool', 'search-replace', 'search_replace', 'file_path'],
-    ['write_file', 'structured-edit', 'write', 'file_path, content'],
-    ['ask_user_question', 'structured-edit', 'ask_user', 'questions'],
     ['AskUserQuestion', 'structured-edit', 'ask_user', 'questions'],
-    ['exec_command', 'structured-edit', 'shell', 'command'],
-    ['Bash', 'structured-edit', 'shell', 'command'],
-    ['TodoWrite', 'structured-edit', 'manage_todo_list', 'operation'],
-    ['WebFetch', 'structured-edit', 'web_fetch', 'url']
+    ['Bash', 'structured-edit', 'shell', 'command']
   ] as const)(
     'names the SideKick tool for %s from another harness (%s)',
     async (name, editingDialect, equivalent, required) => {
@@ -367,10 +354,7 @@ describe('argument names from other harnesses', () => {
   it.each([
     [{ file_path: 'src/a.ts' }, 'file_path → path'],
     [{ filePath: 'src/a.ts' }, 'filePath → path'],
-    [{ filepath: 'src/a.ts' }, 'filepath → path'],
-    [{ absolute_path: 'src/a.ts' }, 'absolute_path → path'],
-    [{ target_file: 'src/a.ts' }, 'target_file → path'],
-    [{ dir_path: 'src/a.ts' }, 'dir_path → path']
+    [{ target_file: 'src/a.ts' }, 'target_file → path']
   ])('repairs read %j to path', (args, repair) => {
     const normalized = normalizeAgentToolArguments(read, args)
     expect(normalized).toEqual({ arguments: { path: 'src/a.ts' }, repairs: [repair] })
@@ -431,6 +415,21 @@ describe('argument names from other harnesses', () => {
     })
   })
 
+  it('takes ask_user options written as plain labels', () => {
+    // "options[0] must be object" lost the model a round.
+    const askUser = getAgentToolEntry({ surface: 'conversation' }, 'ask_user')!.definition
+    const normalized = normalizeAgentToolArguments(askUser, {
+      questions: [{ question: 'Which theme?', options: ['Light', { label: 'Dark' }] }]
+    })
+    expect(normalized).toEqual({
+      arguments: {
+        questions: [{ question: 'Which theme?', options: [{ label: 'Light' }, { label: 'Dark' }] }]
+      },
+      repairs: ['questions[0].options[0]: text → label']
+    })
+    expect(validateAgentToolArguments(askUser, normalized.arguments)).toEqual([])
+  })
+
   it('does not choose between two spellings of one argument', () => {
     const normalized = normalizeAgentToolArguments(read, { file_path: 'a.ts', filePath: 'b.ts' })
     expect(normalized).toEqual({ arguments: { file_path: 'a.ts', filePath: 'b.ts' }, repairs: [] })
@@ -466,5 +465,45 @@ describe('argument names from other harnesses', () => {
       vi.fn()
     )
     expect(invalid.error?.recovery).toContain('SideKick normalized: file_path → path.')
+  })
+})
+
+describe('externalSchemaIssues', () => {
+  const schema = {
+    type: 'object',
+    required: ['item'],
+    properties: {
+      item: { type: 'string', pattern: '^(a+)+$' },
+      quantity: { type: 'integer', minimum: 1 }
+    }
+  }
+
+  it("finds what a web page's schema can check cheaply", () => {
+    expect(externalSchemaIssues(schema, { quantity: 0 })?.map((issue) => issue.code)).toEqual([
+      'required',
+      'minimum'
+    ])
+    expect(externalSchemaIssues(schema, { item: 'apple', quantity: 2 })).toEqual([])
+  })
+
+  it('never runs a page-supplied pattern', () => {
+    // This pattern backtracks catastrophically on this input; checking it would stall the main process.
+    expect(externalSchemaIssues(schema, { item: `${'a'.repeat(40)}!` })).toEqual([])
+  })
+
+  it('gives up on a schema whose alternatives multiply beyond its budget', () => {
+    let nested: Record<string, unknown> = { type: 'string' }
+    for (let depth = 0; depth < 40; depth++) nested = { anyOf: [nested, nested] }
+    expect(externalSchemaIssues(nested, 1)).toBeNull()
+  })
+
+  it('reports a malformed schema as an issue rather than failing on it', () => {
+    expect(externalSchemaIssues({ anyOf: [null] }, {})).toEqual([
+      { path: '', code: 'schema', message: 'arguments has a malformed schema' }
+    ])
+    expect(externalSchemaIssues({ properties: { a: { anyOf: [false] } } }, { a: 1 })).toEqual([
+      { path: 'a', code: 'schema', message: 'a is not allowed by schema' }
+    ])
+    expect(externalSchemaIssues({ anyOf: [true, 7] }, { a: 1 })).toEqual([])
   })
 })

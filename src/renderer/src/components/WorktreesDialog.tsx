@@ -105,14 +105,11 @@ export function WorktreesDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="fork-dialog-header">
-          <span className="fork-dialog-icon">
-            <FolderGit2 size={18} />
-          </span>
           <div>
             <h2 id={titleId}>Worktrees</h2>
             <p>
-              Each chat can work in its own copy of the project. SideKick keeps the 15 most recently
-              used; older ones are set aside and come back as they were when their chat continues.
+              Chats&apos; own copies of their project. The 15 most recently used stay on disk; older
+              ones come back as they were when their chat continues.
             </p>
           </div>
           <button type="button" onClick={onClose} aria-label="Close">

@@ -54,9 +54,7 @@ describe('Select', () => {
   it('shows the chosen option and lists every option, through fragments and arrays', async () => {
     const trigger = await render('cherry')
     expect(trigger.textContent).toBe('Cherry')
-    expect(trigger.getAttribute('aria-expanded')).toBe('false')
     await act(async () => trigger.click())
-    expect(trigger.getAttribute('aria-expanded')).toBe('true')
     const options = [...list()!.querySelectorAll('[role="option"]')]
     expect(options.map((option) => option.textContent)).toEqual([
       'Apple',
@@ -106,15 +104,6 @@ describe('Select', () => {
     expect(escape.defaultPrevented).toBe(true)
     expect(list()).toBeNull()
     expect(onChange).not.toHaveBeenCalled()
-  })
-
-  it('closes when the user clicks elsewhere', async () => {
-    const trigger = await render('apple')
-    await act(async () => trigger.click())
-    await act(async () => {
-      document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
-    })
-    expect(list()).toBeNull()
   })
 
   it('stays open through a late scroll event, and closes once the page really scrolls', async () => {

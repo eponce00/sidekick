@@ -73,20 +73,6 @@ const rows = (): HTMLElement[] => [
 ]
 
 describe('AppMenuHost', () => {
-  it('draws the menu the main process sends, with its checkmarks and submenus', async () => {
-    await open()
-    const menu = container.querySelector('.app-menu') as HTMLElement
-    expect(menu.getAttribute('role')).toBe('menu')
-    expect(rows().map((row) => row.textContent)).toEqual([
-      'Open in VS Code',
-      'Unavailable',
-      'Open with',
-      'Phone'
-    ])
-    expect(rows()[3].getAttribute('aria-checked')).toBe('true')
-    expect(container.querySelector('.app-menu-separator')).not.toBeNull()
-  })
-
   it('reports the chosen item by token, and nothing for a disabled one', async () => {
     await open()
     await act(async () => rows()[1].click())

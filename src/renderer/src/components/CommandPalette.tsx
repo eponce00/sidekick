@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { FolderOpen, MessageSquare, Search, Zap } from 'lucide-react'
+import { FolderOpen, MessageSquare, Search, type LucideIcon } from 'lucide-react'
 import { useModalDialog } from '../hooks/useModalDialog'
 import {
   filterCommandPalette,
@@ -15,8 +15,9 @@ interface CommandPaletteProps {
   onClose: () => void
 }
 
-const GROUP_ICONS: Record<CommandPaletteGroupId, typeof Zap> = {
-  actions: Zap,
+/** Chats and projects share their group's icon; an action shows its own, or none. */
+const GROUP_ICONS: Record<CommandPaletteGroupId, LucideIcon | undefined> = {
+  actions: undefined,
   conversations: MessageSquare,
   projects: FolderOpen
 }
@@ -93,17 +94,17 @@ function CommandPaletteDialog({
         <div ref={listRef} id={listId} className="command-palette-list" role="listbox">
           {sections.length === 0 && <div className="command-palette-empty">No matches</div>}
           {sections.map((section, sectionIndex) => {
-            const Icon = GROUP_ICONS[section.id]
             const start = sections
               .slice(0, sectionIndex)
               .reduce((count, previous) => count + previous.items.length, 0)
             return (
               <div key={section.id} role="group" aria-label={section.label}>
-                <div className="command-palette-group-label" aria-hidden="true">
+                <div className="command-palette-group-label section-heading" aria-hidden="true">
                   {section.label}
                 </div>
                 {section.items.map((item, itemIndex) => {
                   const index = start + itemIndex
+                  const Icon = item.icon ?? GROUP_ICONS[section.id]
                   return (
                     <div
                       key={item.id}
@@ -117,7 +118,9 @@ function CommandPaletteDialog({
                       }}
                       onClick={() => choose(item)}
                     >
-                      <Icon size={14} className="command-palette-icon" aria-hidden="true" />
+                      <span className="command-palette-icon" aria-hidden="true">
+                        {Icon && <Icon size={14} />}
+                      </span>
                       <span className="command-palette-title">{item.title}</span>
                       {item.detail && <span className="command-palette-detail">{item.detail}</span>}
                       {item.shortcut && (

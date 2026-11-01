@@ -122,8 +122,27 @@ export interface BrowserNetworkApproval {
   approvedAt: number
 }
 
+/** A certificate the user accepted for one HTTPS address on their local network. */
+export interface BrowserCertificateApproval {
+  origin: string
+  /** `sha256/` and the base64 hash of the certificate, as Chromium reports it. */
+  fingerprint: string
+  approvedAt: number
+}
+
+/** A certificate's SHA-256 hash the way devices and other tools print it, in hex pairs. */
+export function certificateFingerprintHex(fingerprint: string): string {
+  const bytes = atob(fingerprint.replace(/^sha256\//, ''))
+  return Array.from(bytes, (byte) => byte.charCodeAt(0).toString(16).padStart(2, '0'))
+    .join(':')
+    .toUpperCase()
+}
+
 export interface BrowserNetworkAPI {
   /** Local-network addresses the browser may open over plain HTTP. */
   list: () => Promise<BrowserNetworkApproval[]>
   revoke: (origin: string) => Promise<BrowserNetworkApproval[]>
+  /** Local-network addresses whose untrusted certificate the user accepted. */
+  certificates: () => Promise<BrowserCertificateApproval[]>
+  revokeCertificate: (origin: string) => Promise<BrowserCertificateApproval[]>
 }

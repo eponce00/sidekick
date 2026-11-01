@@ -6,16 +6,21 @@ import type { Message } from '../types/chat.types'
 import type { MessageImageAttachment } from '../../../shared/messageImages'
 import type { MessageContextAttachment } from '../../../shared/messageContextAttachments'
 import type { ConversationRunMode } from '../../../shared/agentRunApi'
+import { historyRestoreTargets, type HistoryRestoreTarget } from '../../../shared/workspaceHistory'
 
 interface ConversationActionsOptions {
   messages: Message[]
   setMessages: Dispatch<SetStateAction<Message[]>>
   conversationId: string | null
+  /** The model the chat runs with; empty when it has none it can use. */
   selectedModel: string
+  /** Asked to answer again while the chat has no model it can use. */
+  onModelUnavailable?: () => void
   workspaceFolder: string | null
+  /** The project's other folders, whose History points go back together with the workspace's. */
+  otherFolders?: readonly string[]
   /** Whether a reply is running or starting, read at call time. */
   isRunActive?: () => boolean
-  onCheckpointCreated?: (restoredHash?: string) => void
   rerunStream: (
     messages: Message[],
     conversationId: string,
@@ -77,7 +82,8 @@ export function useConversationActions(options: ConversationActionsOptions): {
   /** Replaces the message being edited with this and answers again from there. */
   submitEdit: (edit: MessageEdit) => void
   copyMessage: (message: Message) => Promise<void>
-  requestCheckpointRestore: (hash: string) => void
+  /** Asks to undo a reply's file changes, by the reply's message ID. */
+  requestCheckpointRestore: (messageId: string) => void
   cancelCheckpointRestore: () => void
   confirmCheckpointRestore: () => Promise<void>
   retryMessage: (message: Message) => void
@@ -103,60 +109,49 @@ export function useConversationActions(options: ConversationActionsOptions): {
     []
   )
 
-  /**
-   * Returns the project's files to how they were before the message at this index: back to the
-   * last earlier History point, or, with none, to before the first one after it.
-   */
-  const restoreFilesBefore = async (targetIndex: number): Promise<void> => {
-    if (options.workspaceFolder) {
-      const priorHash = options.messages
-        .slice(0, targetIndex)
-        .reverse()
-        .find(
-          (candidate) =>
-            candidate.checkpointHash &&
-            candidate.checkpointWorkspaceRoot === options.workspaceFolder
-        )?.checkpointHash
-      if (priorHash) {
-        try {
-          const authorization = await authorizeCheckpointMutation('hard-reset', priorHash)
-          if (authorization) {
-            const result = await window.api.workspace.hardResetCheckpoint(
-              options.workspaceFolder,
-              priorHash,
-              authorization
-            )
-            if (result.ok) options.onCheckpointCreated?.(priorHash)
-            else console.warn('[Rewind] Checkpoint hard-reset failed:', result.error)
-          }
-        } catch (error) {
-          console.warn('[Rewind] Checkpoint hard-reset failed:', error)
-        }
-      } else {
-        const ownHash = options.messages
-          .slice(targetIndex + 1)
-          .find(
-            (candidate) =>
-              candidate.checkpointHash &&
-              candidate.checkpointWorkspaceRoot === options.workspaceFolder
-          )?.checkpointHash
-        if (ownHash) {
-          try {
-            const authorization = await authorizeCheckpointMutation('rewind', ownHash)
-            if (!authorization) throw new Error('Checkpoint rewind denied')
-            const result = await window.api.workspace.rewindToBeforeCheckpoint(
-              options.workspaceFolder,
-              ownHash,
-              authorization
-            )
-            if (result.ok) options.onCheckpointCreated?.(result.parentHash ?? undefined)
-            else console.warn('[Rewind] rewindToBeforeCheckpoint failed:', result.error)
-          } catch (error) {
-            console.warn('[Rewind] rewindToBeforeCheckpoint threw:', error)
-          }
-        }
-      }
+  const folderRoots = (): string[] =>
+    options.workspaceFolder ? [options.workspaceFolder, ...(options.otherFolders ?? [])] : []
+
+  /** Puts these folders back together; resolves to why they could not, or null. */
+  const restoreHistory = async (targets: HistoryRestoreTarget[]): Promise<string | null> => {
+    if (!targets.length) return null
+    try {
+      const authorization = await authorizeCheckpointMutation(targets)
+      if (!authorization) return 'Restoring the files was not approved.'
+      const result = await window.api.workspace.restoreHistory(targets, authorization)
+      return result.ok ? null : result.error || 'The files could not be restored.'
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
     }
+  }
+
+  /**
+   * Returns the project's files to how they were before the message at this index: each folder
+   * back to its last earlier History point, or, with none, to before the first one after it.
+   * Resolves to why the files could not be restored, or null when they were or there was nothing
+   * to restore.
+   */
+  const restoreFilesBefore = (targetIndex: number): Promise<string | null> =>
+    restoreHistory(historyRestoreTargets(options.messages, targetIndex, folderRoots()))
+
+  /**
+   * A rewind that cannot finish leaves the chat as it was and says why in it. Deleting the
+   * messages anyway, or answering again, would leave the chat, the stored history and the
+   * project's files disagreeing.
+   */
+  const reportRewindFailure = (summary: string, error: unknown): void => {
+    console.error('[Rewind]', summary, error)
+    setReplacingMessageId(null)
+    options.setMessages((current) => [
+      ...current,
+      {
+        id: crypto.randomUUID(),
+        role: 'agent',
+        noticeTone: 'error',
+        content: `${summary} ${error instanceof Error ? error.message : String(error)}`,
+        timestamp: Date.now()
+      }
+    ])
   }
 
   const rewindingRef = useRef(false)
@@ -178,11 +173,13 @@ export function useConversationActions(options: ConversationActionsOptions): {
   }
 
   const rewindConversationOnce = async (message: Message, edit?: MessageEdit): Promise<void> => {
-    if (!options.conversationId || !options.selectedModel) return
+    if (!options.conversationId) return
+    if (!options.selectedModel) {
+      options.onModelUnavailable?.()
+      return
+    }
     const targetIndex = options.messages.findIndex((candidate) => candidate.id === message.id)
     if (targetIndex < 0) return
-
-    await restoreFilesBefore(targetIndex)
 
     const trimmedContent = edit?.content.trim() ?? ''
     if (edit && !trimmedContent && !edit.images.length && !edit.attachments.length) return
@@ -203,22 +200,16 @@ export function useConversationActions(options: ConversationActionsOptions): {
 
     // A failed rewind must not start a new run. The stored history still holds
     // the messages this rewind meant to replace, so answering on top of them
-    // interleaves the stale and new turns the next time the chat is loaded.
-    // Leave the visible transcript in place and report the failure rather than
-    // letting the run silently diverge from what is stored.
-    const abortRewind = (summary: string, error: unknown): void => {
-      console.error('[Rewind]', summary, error)
-      setReplacingMessageId(null)
-      options.setMessages((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          role: 'agent',
-          noticeTone: 'error',
-          content: `${summary} ${error instanceof Error ? error.message : String(error)}`,
-          timestamp: Date.now()
-        }
-      ])
+    // interleaves the stale and new turns the next time the chat is loaded; with
+    // the files left as they were, it would work on changes the chat no longer
+    // shows. Leave the visible transcript in place and report the failure.
+    const restoreError = await restoreFilesBefore(targetIndex)
+    if (restoreError) {
+      reportRewindFailure(
+        'Your files could not be restored, so the messages were kept and no new reply was started:',
+        restoreError
+      )
+      return
     }
 
     if (edit) {
@@ -236,14 +227,17 @@ export function useConversationActions(options: ConversationActionsOptions): {
           timestamp: message.timestamp
         })
       } catch (error) {
-        abortRewind('Your edit could not be saved, so no new reply was started:', error)
+        reportRewindFailure('Your edit could not be saved, so no new reply was started:', error)
         return
       }
     }
     try {
       await window.api.conversations.deleteMessagesAfter(options.conversationId, message.timestamp)
     } catch (error) {
-      abortRewind('The replaced messages could not be cleared, so no new reply was started:', error)
+      reportRewindFailure(
+        'The replaced messages could not be cleared, so no new reply was started:',
+        error
+      )
       return
     }
     await latestOptionsRef.current.beforeMessagesLeave?.(message, edit ? 'edit' : 'retry')
@@ -270,7 +264,11 @@ export function useConversationActions(options: ConversationActionsOptions): {
     if (!options.conversationId || options.isRunActive?.()) return
     const targetIndex = options.messages.findIndex((candidate) => candidate.id === message.id)
     if (targetIndex < 0) return
-    if (restoreFiles) await restoreFilesBefore(targetIndex)
+    const restoreError = restoreFiles ? await restoreFilesBefore(targetIndex) : null
+    if (restoreError) {
+      reportRewindFailure('Your files could not be restored, so nothing was rewound:', restoreError)
+      return
+    }
     const previous = options.messages[targetIndex - 1]
     try {
       await window.api.conversations.deleteMessagesAfter(
@@ -278,7 +276,7 @@ export function useConversationActions(options: ConversationActionsOptions): {
         previous ? previous.timestamp : message.timestamp - 1
       )
     } catch (error) {
-      console.error('[Rewind] The rewound messages could not be cleared:', error)
+      reportRewindFailure('The rewound messages could not be cleared:', error)
       return
     }
     // The message heads back into the box while it and what follows leave the chat.
@@ -323,28 +321,25 @@ export function useConversationActions(options: ConversationActionsOptions): {
   }
 
   const confirmCheckpointRestore = async (): Promise<void> => {
-    if (!pendingCheckpointRestore || !options.workspaceFolder) return
-    const hash = pendingCheckpointRestore
+    const messageId = pendingCheckpointRestore
     setPendingCheckpointRestore(null)
-    try {
-      const authorization = await authorizeCheckpointMutation('rewind', hash)
-      if (!authorization) return
-      const result = await window.api.workspace.rewindToBeforeCheckpoint(
-        options.workspaceFolder,
-        hash,
-        authorization
-      )
-      if (result.ok) {
-        options.onCheckpointCreated?.(result.parentHash ?? undefined)
-        options.setMessages((previous) =>
-          previous.map((message) =>
-            message.checkpointHash === hash ? { ...message, restoredFrom: hash } : message
-          )
-        )
-      } else console.error('[Checkpoint] Undo failed:', result.error)
-    } catch (error) {
-      console.error('[Checkpoint] Undo error:', error)
+    const message = options.messages.find((candidate) => candidate.id === messageId)
+    const roots = folderRoots()
+    // Every folder the reply changed goes back to before it, or none does.
+    const targets: HistoryRestoreTarget[] = (message?.checkpoints ?? [])
+      .filter(({ workspaceRoot }) => roots.includes(workspaceRoot))
+      .map(({ workspaceRoot, hash }) => ({ workspaceRoot, hashes: [hash] }))
+    if (!messageId || !targets.length) return
+    const error = await restoreHistory(targets)
+    if (error) {
+      console.error('[Checkpoint] Undo failed:', error)
+      return
     }
+    options.setMessages((previous) =>
+      previous.map((candidate) =>
+        candidate.id === messageId ? { ...candidate, restored: true } : candidate
+      )
+    )
   }
 
   const retryMessage = (message: Message): void => {

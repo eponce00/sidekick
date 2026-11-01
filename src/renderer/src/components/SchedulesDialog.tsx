@@ -36,6 +36,7 @@ import { SCHEDULE_TEMPLATES, type ScheduleTemplate } from '../utils/scheduleTemp
 import ConfirmDialog from './ConfirmDialog'
 import './SchedulesDialog.css'
 import { Select } from './Select'
+import { Checkbox, SettingsEmptyState } from './SettingsLayout'
 
 interface SchedulesDialogProps {
   isOpen: boolean
@@ -194,22 +195,22 @@ export default function SchedulesDialog({
       >
         <header>
           <div className="schedules-heading">
-            <span className="schedules-icon">
-              <CalendarClock size={18} />
-            </span>
-            <div>
-              <h2 id="schedules-title">
-                {editing
-                  ? editing.mode === 'create'
-                    ? 'New schedule'
-                    : 'Edit schedule'
-                  : 'Schedules'}
-              </h2>
-              <p>Start agent runs on their own, at the times you choose.</p>
-            </div>
+            <h2 id="schedules-title">
+              {editing
+                ? editing.mode === 'create'
+                  ? 'New schedule'
+                  : 'Edit schedule'
+                : 'Schedules'}
+            </h2>
+            {!editing && <p>Start agent runs on their own, at the times you choose.</p>}
           </div>
-          <button type="button" className="schedules-close" onClick={onClose} aria-label="Close">
-            <X size={17} />
+          <button
+            type="button"
+            className="settings-ghost-action is-icon schedules-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            <X size={16} />
           </button>
         </header>
 
@@ -248,11 +249,11 @@ export default function SchedulesDialog({
         ) : (
           <div className="schedules-body">
             {models.length === 0 ? (
-              <div className="schedules-empty">
-                <CalendarClock size={22} />
-                <strong>No models are ready</strong>
-                <span>Enable a model in Provider settings, then come back to schedule a run.</span>
-              </div>
+              <SettingsEmptyState
+                icon={CalendarClock}
+                title="No models are ready"
+                description="Enable a model in Provider settings, then come back to schedule a run."
+              />
             ) : (
               <>
                 <div className="schedules-toolbar">
@@ -261,40 +262,49 @@ export default function SchedulesDialog({
                       ? `${schedules.length} ${schedules.length === 1 ? 'schedule' : 'schedules'}`
                       : 'No schedules yet'}
                   </span>
-                  <button type="button" className="schedules-primary" onClick={() => startCreate()}>
+                  <button
+                    type="button"
+                    className="settings-primary-action"
+                    onClick={() => startCreate()}
+                  >
                     <Plus size={14} /> New schedule
                   </button>
                 </div>
-                {schedules.map((schedule) => (
-                  <ScheduleCard
-                    key={schedule.id}
-                    schedule={schedule}
-                    projectName={
-                      schedule.projectId
-                        ? (projects.find(({ id }) => id === schedule.projectId)?.name ??
-                          'Removed project')
-                        : 'Standalone chat'
-                    }
-                    modelName={
-                      models.find(({ id }) => id === schedule.modelId)?.name ?? 'Unavailable model'
-                    }
-                    onEdit={() => {
-                      setError('')
-                      setEditing({
-                        mode: 'edit',
-                        id: schedule.id,
-                        draft: draftFromSchedule(schedule)
-                      })
-                    }}
-                    onAction={act}
-                    onDelete={() => setPendingDelete(schedule)}
-                    onOpenConversation={onOpenConversation}
-                  />
-                ))}
+                {schedules.length > 0 && (
+                  <div className="schedules-list">
+                    {schedules.map((schedule) => (
+                      <ScheduleCard
+                        key={schedule.id}
+                        schedule={schedule}
+                        projectName={
+                          schedule.projectId
+                            ? (projects.find(({ id }) => id === schedule.projectId)?.name ??
+                              'Removed project')
+                            : 'Standalone chat'
+                        }
+                        modelName={
+                          models.find(({ id }) => id === schedule.modelId)?.name ??
+                          'Unavailable model'
+                        }
+                        onEdit={() => {
+                          setError('')
+                          setEditing({
+                            mode: 'edit',
+                            id: schedule.id,
+                            draft: draftFromSchedule(schedule)
+                          })
+                        }}
+                        onAction={act}
+                        onDelete={() => setPendingDelete(schedule)}
+                        onOpenConversation={onOpenConversation}
+                      />
+                    ))}
+                  </div>
+                )}
                 {templates.length > 0 && (
                   <section className="schedules-templates" aria-label="Suggested schedules">
                     <h3>Start from a suggestion</h3>
-                    <div className="schedules-template-grid">
+                    <div className="schedules-template-list">
                       {templates.map((template) => (
                         <button
                           type="button"
@@ -412,6 +422,23 @@ function ScheduleCard({
             )}
             {schedule.lastRunAt ? ` · Last run ${formatScheduleTime(schedule.lastRunAt)}` : ''}
           </span>
+          {schedule.createdBy && (
+            // The agent made it, so say in which chat; pausing and deleting are on this row.
+            <span className="schedule-card-origin">
+              Made by the agent in{' '}
+              {schedule.createdBy.conversationId ? (
+                <button
+                  type="button"
+                  className="schedule-link"
+                  onClick={() => onOpenConversation(schedule.createdBy!.conversationId!)}
+                >
+                  {schedule.createdBy.conversationTitle || 'its chat'}
+                </button>
+              ) : (
+                'a chat that was deleted'
+              )}
+            </span>
+          )}
           {schedule.pausedReason && (
             <span className="schedule-card-warning">{schedule.pausedReason}</span>
           )}
@@ -419,6 +446,7 @@ function ScheduleCard({
         <div className="schedule-card-actions">
           <button
             type="button"
+            className="settings-ghost-action is-small is-icon"
             disabled={busy}
             onClick={() =>
               void run(async () => {
@@ -436,6 +464,7 @@ function ScheduleCard({
           </button>
           <button
             type="button"
+            className="settings-ghost-action is-small is-icon"
             disabled={busy}
             onClick={() =>
               void run(() =>
@@ -449,12 +478,18 @@ function ScheduleCard({
           >
             {schedule.enabled ? <Pause size={14} /> : <Play size={14} />}
           </button>
-          <button type="button" onClick={onEdit} title="Edit" aria-label={`Edit ${schedule.name}`}>
+          <button
+            type="button"
+            className="settings-ghost-action is-small is-icon"
+            onClick={onEdit}
+            title="Edit"
+            aria-label={`Edit ${schedule.name}`}
+          >
             <Pencil size={14} />
           </button>
           <button
             type="button"
-            className="danger"
+            className="settings-ghost-action is-small is-icon danger"
             onClick={onDelete}
             title="Delete"
             aria-label={`Delete ${schedule.name}`}
@@ -730,47 +765,44 @@ function ScheduleEditor({
           </div>
           <p className="schedules-editor-hint">{CHAT_MODE_HINTS[draft.chatMode ?? 'new']}</p>
         </fieldset>
-        <label>
-          <span>Without asking, runs may</span>
-          <Select
-            value={ceiling ?? ''}
-            onChange={(event) =>
-              set('permissionCeiling', (event.target.value || null) as PermissionMode | null)
-            }
-          >
-            {!ceiling && <option value="">Follow my permission setting</option>}
-            {ceilings.map((mode) => (
-              <option key={mode} value={mode}>
-                {PERMISSION_MODE_LABELS[mode]}
-              </option>
-            ))}
-          </Select>
-        </label>
+        <div className="schedules-field">
+          <label>
+            <span>Without asking, runs may</span>
+            <Select
+              value={ceiling ?? ''}
+              onChange={(event) =>
+                set('permissionCeiling', (event.target.value || null) as PermissionMode | null)
+              }
+            >
+              {!ceiling && <option value="">Follow my permission setting</option>}
+              {ceilings.map((mode) => (
+                <option key={mode} value={mode}>
+                  {PERMISSION_MODE_LABELS[mode]}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <p className="schedules-editor-hint">
+            Never fewer approvals than your permission setting. Chats a run starts get the same
+            limit.
+          </p>
+        </div>
         <label className="schedules-checkbox">
-          <input
-            type="checkbox"
-            checked={draft.catchUp}
-            onChange={(event) => set('catchUp', event.target.checked)}
-          />
+          <Checkbox checked={draft.catchUp} onChange={(checked) => set('catchUp', checked)} />
           <span>
             Run once when SideKick starts or wakes, if it was closed or asleep at the scheduled time
           </span>
         </label>
         <p className="schedules-editor-note">
-          {summary}, in this computer&apos;s time zone.{' '}
-          {draft.chatMode === 'continue'
-            ? 'Each run continues the last run\u2019s chat'
-            : 'Each run opens a new chat'}{' '}
-          and asks for approval as this limit says, and never asks for less than your permission
-          setting. Chats a run starts get the same limit. A run that is waiting for you holds off
-          the next one.
+          {summary}, in this computer&apos;s time zone. A run that is waiting for you holds off the
+          next one.
         </p>
       </div>
       <footer>
-        <button type="button" className="schedules-secondary" onClick={onCancel}>
+        <button type="button" className="settings-secondary-action" onClick={onCancel}>
           Cancel
         </button>
-        <button type="submit" className="schedules-primary" disabled={!canSave}>
+        <button type="submit" className="settings-primary-action" disabled={!canSave}>
           {saving ? 'Saving…' : submitLabel}
         </button>
       </footer>

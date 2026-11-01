@@ -6,7 +6,7 @@ import type {
   WorkspaceInstructionSource,
   WorkspaceRulesResult
 } from '../../shared/workspaceInstructions'
-import { OutsideProjectError } from '../utils/workspacePaths'
+import { locateWorkspacePath, OutsideProjectError } from '../utils/workspacePaths'
 
 const AGENT_RULE_NAMES = ['AGENTS.override.md', 'AGENTS.md'] as const
 const PROJECT_RULE_PATHS = ['SIDEKICK.md', join('.sidekick', 'rules.md')]
@@ -50,11 +50,7 @@ function instructionDirectories(projectRoot: string, workingDirectory: string): 
   const normalizedRoot = resolve(projectRoot)
   const normalizedWorkingDirectory = resolve(workingDirectory)
   const pathFromRoot = relative(normalizedRoot, normalizedWorkingDirectory)
-  if (
-    pathFromRoot === '..' ||
-    pathFromRoot.startsWith(`..${sep}`) ||
-    isAbsolute(pathFromRoot)
-  ) {
+  if (pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`) || isAbsolute(pathFromRoot)) {
     throw new Error('Working directory must be inside the project folder')
   }
 
@@ -87,8 +83,15 @@ async function firstExistingFile(
 export async function loadWorkspaceRules(
   projectRoot: string,
   workingDirectory = projectRoot,
-  options: { includeGlobal?: boolean; homeDirectory?: string } = {}
+  options: {
+    includeGlobal?: boolean
+    homeDirectory?: string
+    /** For another folder of the project: its name, which its rules' paths start with. */
+    folderName?: string
+  } = {}
 ): Promise<WorkspaceRulesResult> {
+  const named = (path: string): string =>
+    options.folderName ? `${options.folderName}/${path}`.replace(/\/\.$/, '') : path
   const normalizedRoot = resolve(projectRoot)
   const candidates: InstructionCandidate[] = []
 
@@ -108,21 +111,21 @@ export async function loadWorkspaceRules(
   for (const customPath of PROJECT_RULE_PATHS) {
     candidates.push({
       path: join(normalizedRoot, customPath),
-      displayPath: customPath.replace(/\\/g, '/'),
+      displayPath: named(customPath.replace(/\\/g, '/')),
       kind: 'project',
-      scope: '.'
+      scope: named('.')
     })
   }
 
   for (const directory of instructionDirectories(normalizedRoot, workingDirectory)) {
     const ruleFile = await firstExistingFile(directory, AGENT_RULE_NAMES)
     if (ruleFile) {
-      const displayPath = relative(normalizedRoot, ruleFile).replace(/\\/g, '/')
+      const displayPath = named(relative(normalizedRoot, ruleFile).replace(/\\/g, '/'))
       candidates.push({
         path: ruleFile,
         displayPath,
         kind: 'project',
-        scope: relative(normalizedRoot, directory).replace(/\\/g, '/') || '.'
+        scope: named(relative(normalizedRoot, directory).replace(/\\/g, '/') || '.')
       })
     }
   }
@@ -254,22 +257,22 @@ export async function beginWorkspaceInstructionScope(
   return initial
 }
 
-function targetDirectory(projectRoot: string, targetPath: string, isDirectory: boolean): string {
-  const absolute = resolve(projectRoot, targetPath || '.')
-  const pathFromRoot = relative(projectRoot, absolute)
-  if (
-    pathFromRoot === '..' ||
-    pathFromRoot.startsWith(`..${sep}`) ||
-    isAbsolute(pathFromRoot)
-  ) {
+function targetDirectory(folderRoot: string, pathInFolder: string, isDirectory: boolean): string {
+  const absolute = resolve(folderRoot, pathInFolder || '.')
+  const pathFromRoot = relative(folderRoot, absolute)
+  if (pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`) || isAbsolute(pathFromRoot)) {
     // The model named this path for a read, edit or command; the instruction lookup is only the
     // first place that checks it.
-    throw new OutsideProjectError(`Path is outside the project: ${targetPath}`)
+    throw new OutsideProjectError(`Path is outside the project: ${pathInFolder}`)
   }
   return isDirectory ? absolute : dirname(absolute)
 }
 
-/** Resolve newly applicable instructions for one file/directory access. */
+/**
+ * Resolve newly applicable instructions for one file/directory access. The primary folder's root
+ * rules arrive with the run; another project folder's root rules arrive the first time the agent
+ * touches that folder, and nested ones as it reaches their directories.
+ */
 export async function resolveWorkspaceInstructionsForPath(
   scopeId: string,
   projectRoot: string,
@@ -284,9 +287,11 @@ export async function resolveWorkspaceInstructionsForPath(
     scope = instructionScopes.get(scopeId)!
   }
 
+  const located = locateWorkspacePath(normalizedRoot, targetPath)
   const loaded = await loadWorkspaceRules(
-    normalizedRoot,
-    targetDirectory(normalizedRoot, targetPath, isDirectory)
+    located.root,
+    targetDirectory(located.root, located.path, isDirectory),
+    located.folder ? { includeGlobal: false, folderName: located.folder } : {}
   )
   const newDetails = loaded.sourceDetails.filter(({ path }) => !scope!.claimedPaths.has(path))
   if (!newDetails.length) {

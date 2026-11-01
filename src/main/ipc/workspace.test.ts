@@ -16,6 +16,7 @@ const {
   clipboardWriteText,
   menuPopup,
   menuTemplates,
+  menuClosers,
   showOpenDialog,
   showMessageBox
 } = vi.hoisted(() => ({
@@ -29,6 +30,7 @@ const {
   menuPopup: vi.fn(),
   showOpenDialog: vi.fn(),
   showMessageBox: vi.fn(),
+  menuClosers: [] as Array<() => void>,
   menuTemplates: [] as Array<
     Array<{
       label?: string
@@ -63,11 +65,19 @@ vi.mock('electron', () => ({
 
 // SideKick draws these menus itself; the main process hands it the template.
 vi.mock('../services/appMenus', () => ({
-  showAppMenu: vi.fn((_contents: unknown, template: (typeof menuTemplates)[number]) => {
-    menuTemplates.push(template)
-    menuPopup()
-    return true
-  })
+  showAppMenu: vi.fn(
+    (
+      _contents: unknown,
+      template: (typeof menuTemplates)[number],
+      _position: unknown,
+      onClose?: () => void
+    ) => {
+      menuTemplates.push(template)
+      if (onClose) menuClosers.push(onClose)
+      menuPopup()
+      return true
+    }
+  )
 }))
 
 vi.mock('./state', () => ({
@@ -80,6 +90,8 @@ vi.mock('./state', () => ({
 vi.mock('./workspaceUtils', () => ({
   getStoredWorkspace: () => workspaceState.root,
   resolveKnownWorkspace: (passedRoot?: string) => passedRoot || workspaceState.root,
+  rememberPickedFolder: vi.fn(),
+  setStoredWorkspace: vi.fn(),
   assertInsideWorkspace: (target: string, root: string) => {
     const rel = relative(root, target)
     if (rel.startsWith('..')) throw new Error('Path escapes workspace')
@@ -161,18 +173,33 @@ describe('workspace file IPC', () => {
     expect(result.attachments).toMatchObject([{ kind: 'file', relativePath: 'src/main.ts' }])
   })
 
-  it('moves a user-selected workspace file to the system trash', async () => {
-    const filePath = 'notes/draft.md'
+  it('moves a folder to the trash but never the project folder or Git’s own', async () => {
     const handler = handlers.get('workspace:trashFile') as TrashFileHandler
+    const authorization = { requestedAccess: 'auto' as const, authorizationToken: 'authorized' }
 
-    const result = await handler({}, workspaceState.root, filePath, {
-      requestedAccess: 'auto',
-      authorizationToken: 'authorized'
-    })
+    expect(await handler({}, workspaceState.root, 'notes', authorization)).toEqual({ ok: true })
+    expect(trashItem).toHaveBeenLastCalledWith(join(workspaceState.root, 'notes'))
 
-    expect(result).toEqual({ ok: true })
-    expect(trashItem).toHaveBeenCalledWith(join(workspaceState.root, filePath))
-    expect(consume).toHaveBeenCalledOnce()
+    vi.mocked(trashItem).mockClear()
+    for (const refused of ['', '.', '.git', '.git/hooks', 'vendor/lib/.git']) {
+      const result = await handler({}, workspaceState.root, refused, authorization)
+      expect(result.ok, refused).toBe(false)
+    }
+    expect(trashItem).not.toHaveBeenCalled()
+  })
+
+  it('counts what a folder holds before it goes to the trash', async () => {
+    await mkdir(join(workspaceState.root, 'counted', 'inner'), { recursive: true })
+    await writeFile(join(workspaceState.root, 'counted', 'a.txt'), 'a', 'utf8')
+    await writeFile(join(workspaceState.root, 'counted', 'inner', 'b.txt'), 'b', 'utf8')
+    const handler = handlers.get('workspace:countPathItems') as (
+      event: unknown,
+      root: string,
+      folder: string
+    ) => Promise<{ count: number; more: boolean }>
+
+    expect(await handler({}, workspaceState.root, 'counted')).toEqual({ count: 3, more: false })
+    await expect(handler({}, workspaceState.root, '../outside')).rejects.toThrow()
   })
 
   it('uses the workspace supplied by the conversation instead of the visible workspace', async () => {
@@ -206,40 +233,41 @@ describe('workspace file IPC', () => {
       const result = await handler({}, workspaceState.root, 'outside-link/secret.txt')
 
       expect(result.ok).toBe(false)
-      expect(result.error).toContain('escapes the project root')
       expect(result.content).toBeNull()
     } finally {
       await rm(outside, { recursive: true, force: true })
     }
   })
 
-  it('shows secure native actions for a workspace file', async () => {
+  it('copies the project-relative path of a workspace file from its menu', async () => {
     const handler = handlers.get('workspace:showPathMenu') as RegisteredHandler
-    await handler({ sender: {} }, 'notes/draft.md', workspaceState.root, false)
-
-    const template = menuTemplates[0]
-    const revealLabel = process.platform === 'win32' ? 'Show in File Explorer' : 'Show in Folder'
-    expect(template.map((item) => item.label).filter(Boolean)).toEqual([
-      'Open in VS Code',
-      revealLabel,
-      'Open with',
-      'Copy Full Path',
-      'Copy Project-Relative Path'
-    ])
-    expect(
-      template
-        .find((item) => item.label === 'Open with')
-        ?.submenu?.map((item) => item.label)
-        .filter(Boolean)
-    ).toEqual([
-      'VS Code',
-      'Default app',
-      ...(process.platform === 'win32' ? ['Choose another app…'] : [])
-    ])
-    expect(template.find((item) => item.label === revealLabel)?.icon).toBe('file-manager-icon')
-    template.find((item) => item.label === 'Copy Project-Relative Path')?.click?.()
+    const shown = handler({ sender: {} }, 'notes/draft.md', workspaceState.root, false)
+    await vi.waitFor(() => expect(menuTemplates).toHaveLength(1))
+    menuClosers.at(-1)?.()
+    expect(await shown).toBeUndefined()
+    menuTemplates[0].find((item) => item.label === 'Copy Project-Relative Path')?.click?.()
     expect(clipboardWriteText).toHaveBeenCalledWith('notes/draft.md')
-    expect(menuPopup).toHaveBeenCalledOnce()
+  })
+
+  it('offers Move to the bin only where asked, and says when it was chosen', async () => {
+    const handler = handlers.get('workspace:showPathMenu') as RegisteredHandler
+    const binLabel = process.platform === 'win32' ? 'Move to Recycle Bin' : 'Move to Trash'
+
+    const shown = handler({ sender: {} }, 'notes', workspaceState.root, true, true)
+    await vi.waitFor(() => expect(menuTemplates).toHaveLength(1))
+    const choice = menuTemplates[0].find((item) => item.label === binLabel)
+    expect(choice).toBeDefined()
+    // A chosen item closes the menu first; the choice still wins.
+    menuClosers.at(-1)?.()
+    choice?.click?.()
+    expect(await shown).toBe('trash')
+
+    // The project folder itself is never offered.
+    const root = handler({ sender: {} }, '', workspaceState.root, true, true)
+    await vi.waitFor(() => expect(menuTemplates).toHaveLength(2))
+    expect(menuTemplates[1].some((item) => item.label === binLabel)).toBe(false)
+    menuClosers.at(-1)?.()
+    expect(await root).toBeUndefined()
   })
 
   it('opens a unique nested file when a message only references its basename', async () => {
@@ -284,23 +312,14 @@ describe('workspace:resolveFileReference', () => {
     await rm(workspaceState.root, { recursive: true, force: true })
   })
 
-  it('resolves a project-relative path directly', async () => {
+  it('resolves a project-relative path or a bare file name anywhere in the tree', async () => {
     const resolve = handlers.get('workspace:resolveFileReference') as RegisteredHandler
-    const result = (await resolve({}, './src/components/ChatPanel.tsx', workspaceState.root)) as {
-      ok: boolean
-      matches: string[]
+    for (const reference of ['./src/components/ChatPanel.tsx', 'ChatPanel.tsx']) {
+      expect(await resolve({}, reference, workspaceState.root)).toEqual({
+        ok: true,
+        matches: ['src/components/ChatPanel.tsx']
+      })
     }
-    expect(result).toEqual({ ok: true, matches: ['src/components/ChatPanel.tsx'] })
-  })
-
-  it('finds a bare file name anywhere in the tree', async () => {
-    const resolve = handlers.get('workspace:resolveFileReference') as RegisteredHandler
-    const result = (await resolve({}, 'ChatPanel.tsx', workspaceState.root)) as {
-      ok: boolean
-      matches: string[]
-    }
-    expect(result.ok).toBe(true)
-    expect(result.matches).toEqual(['src/components/ChatPanel.tsx'])
   })
 
   it('reports a mention the model imagined as unresolved so it stays plain text', async () => {

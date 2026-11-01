@@ -125,6 +125,25 @@ describe('WorkspaceReadService', () => {
     expect([...first.files, ...second.files].join(' ')).not.toContain('node_modules')
   })
 
+  it('matches files at the top of the folder with a leading **/', async () => {
+    // `read {"path": ".", "glob": "**/*"}` listed nothing in a project with its files at the top.
+    const root = await workspace()
+    await mkdir(join(root, 'src'))
+    await writeFile(join(root, 'index.html'), 'a')
+    await writeFile(join(root, 'src', 'a.ts'), 'a')
+    const service = new WorkspaceReadService()
+
+    expect((await service.listFiles(root, { glob: '**/*' })).files).toEqual([
+      'index.html',
+      'src/a.ts'
+    ])
+    expect((await service.listFiles(root, { glob: 'src/**/*.ts' })).files).toEqual(['src/a.ts'])
+    // `read {"path": "src", "glob": "*.ts"}` matched from the project root and listed nothing.
+    expect((await service.listFiles(root, { subPath: 'src', glob: '*.ts' })).files).toEqual([
+      'src/a.ts'
+    ])
+  })
+
   it('bounds regex search and honors cancellation', async () => {
     const root = await workspace()
     await writeFile(join(root, 'one.ts'), 'alpha\nbeta\nalpha')

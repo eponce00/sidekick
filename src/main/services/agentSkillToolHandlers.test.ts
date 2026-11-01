@@ -17,14 +17,7 @@ it('loads dependency declarations without claiming runtime availability or launc
     arguments: { skill_id: 'pdf' },
     context: { runId: 'skill-test', signal: new AbortController().signal }
   })
-  expect(result).toMatchObject({
-    data: {
-      dependencies: {
-        status: 'not_checked',
-        python: ['pypdf', 'pdfplumber', 'reportlab', 'pdf2image']
-      }
-    }
-  })
+  expect(result).toMatchObject({ data: { dependencies: { status: 'not_checked' } } })
   expect(result.modelContent).toContain('does not install or verify dependencies')
   expect(activeSkillIds.has('pdf')).toBe(true)
 })
@@ -102,11 +95,11 @@ describe('create_artifact', () => {
     // The model gets the failure, not its own code back.
     expect(result.modelContent).toContain("reading 'current'")
     expect(result.modelContent).not.toContain('xxxx')
-    expect(result.error?.recovery).toContain('call create_artifact again')
+    expect(result.error?.recovery).toContain('Fix it with edit_artifact')
     expect(result.data).toMatchObject({ artifact: { title: 'Clima en Reno' } })
   })
 
-  it('says when the artifact is taller than the chat frame the user scrolls', async () => {
+  it('says when the artifact is taller than the chat lets it grow', async () => {
     // Capturing only the frame hid the controls below it, and the model could
     // not tell whether they were broken or merely out of view.
     const { result } = await createArtifact({
@@ -114,14 +107,15 @@ describe('create_artifact', () => {
         status: 'rendered',
         errors: [],
         width: 720,
-        height: 1_100,
-        chatFrameHeight: 560,
+        height: 1_600,
+        chatFrameHeight: 1_600,
         image
       }
     })
 
-    expect(result.modelContent).toContain("taller than the chat's 560px artifact frame")
-    expect(result.modelContent).toContain('The screenshot shows all of it.')
+    expect(result.modelContent).toContain('taller than the 1600px an artifact grows to')
+    expect(result.modelContent).toContain('opens it full screen')
+    expect(result.modelContent).toContain('The screenshot shows that top part.')
   })
 
   it('does not send a screenshot to a model that cannot see images', async () => {
@@ -268,7 +262,7 @@ it('says loading a skill makes its tool ready, without telling the model to relo
     })
 
   const artifacts = (await load('web-artifacts')).modelContent
-  expect(artifacts).toContain('create_artifact is ready to use in this run')
+  expect(artifacts).toContain('create_artifact and edit_artifact are ready to use in this run')
   expect(artifacts).not.toContain('load it again')
   expect((await load('pdf')).modelContent).not.toContain('is ready to use')
 })

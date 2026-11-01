@@ -41,6 +41,7 @@ export default function ScheduledRunGroupRow({
     return next && (!strongest || STATUS_RANK[next] > STATUS_RANK[strongest]) ? next : strongest
   }, null)
   const count = group.conversations.length
+  const runs = `${count} ${count === 1 ? 'run' : 'runs'}`
   return (
     <div className="scheduled-run-group">
       <button
@@ -50,11 +51,15 @@ export default function ScheduledRunGroupRow({
         }`}
         onClick={() => setChoice(!expanded)}
         aria-expanded={expanded}
-        title={`${group.label}: ${count} scheduled ${count === 1 ? 'run' : 'runs'}`}
+        title={`${group.label} · ${runs}`}
       >
         {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         <CalendarClock size={14} className="scheduled-run-group-icon" />
-        <span className="conversation-title">{group.label}</span>
+        {/* The run count is inline meta after the title, which ellipsizes first. */}
+        <span className="conversation-main">
+          <span className="conversation-title">{group.label}</span>
+          <span className="scheduled-run-group-count">{runs}</span>
+        </span>
         {status && (
           <span
             className={`conversation-run-indicator ${status}`}
@@ -62,9 +67,6 @@ export default function ScheduledRunGroupRow({
             aria-label={CONVERSATION_RUN_STATUS_LABELS[status]}
           />
         )}
-        <span className="scheduled-run-group-count">
-          {count} {count === 1 ? 'run' : 'runs'}
-        </span>
       </button>
       {expanded && (
         <div className="scheduled-run-group-runs">

@@ -1,9 +1,9 @@
 import type Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
 import { mkdirSync } from 'fs'
-import { isAbsolute, join, relative, resolve, sep } from 'path'
+import { join } from 'path'
 import type { BackgroundTask, ShellCommandResult } from '../../shared/types'
-import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
+import { resolveSecureWorkspacePath, workspaceFolders } from '../utils/workspacePaths'
 import { CommandRunner } from './commandRunner'
 import { isolatedShellProcess } from './dockerShellIsolation'
 import { TerminalSessionStore } from './terminalSessions'
@@ -90,6 +90,13 @@ export function shellChildEnvironment(
   }
   safe.WORKSPACE_FOLDER = workspaceRoot
   safe.SIDEKICK_WORKSPACE = workspaceRoot
+  // The project's other folders, by name, as JSON; WORKSPACE_FOLDER stays the primary one.
+  const folders = workspaceFolders(workspaceRoot)
+  if (folders.length) {
+    safe.SIDEKICK_PROJECT_FOLDERS = JSON.stringify(
+      Object.fromEntries(folders.map(({ name, path }) => [name, path]))
+    )
+  } else delete safe.SIDEKICK_PROJECT_FOLDERS
   safe.SIDEKICK_SCRATCH = scratchDirectory
   if (skillAssetsPath) safe.SIDEKICK_SKILLS = skillAssetsPath
   return safe
@@ -110,6 +117,16 @@ function sessionState(
 }
 
 const MAX_RENDERED_OUTPUT = 256 * 1024
+/**
+ * Written at the end of a command whose shell exited while programs it started still ran, where
+ * the agent and the user read its output. Reported finished at once with exit code 0 and no
+ * output, an agent took its running benchmark for a failed one.
+ */
+const OUTLIVED_NOTE =
+  '[SideKick] The shell exited while programs it started were still running, so this command ' +
+  'ran until they ended. What they printed after that is not shown, and the exit code is the ' +
+  'shell’s. To see their output, run the program directly instead of with Start-Process, nohup ' +
+  'or &, or have it write to a file.'
 /** How long a command handed to the background may still run, unless its call asked for longer. */
 const BACKGROUND_COMMAND_LIMIT_SECONDS = 3_600
 /** Lines of a command's output handed back with it when it moves to the background. */
@@ -123,21 +140,6 @@ function compactResult(result: ShellCommandResult | undefined): ShellCommandResu
     stderr: result.stderr.slice(0, MAX_PERSISTED_OUTPUT),
     outputPath: undefined
   }
-}
-
-/**
- * Models occasionally echo the absolute project path shown in the system context back as cwd.
- * Accept that harmless form while keeping the secure project-relative resolver as the authority.
- */
-export function projectRelativeCommandCwd(workspaceRoot: string, cwd = ''): string {
-  if (!isAbsolute(cwd)) return cwd
-  const root = resolve(workspaceRoot)
-  const target = resolve(cwd)
-  const withinProject = relative(root, target)
-  if (withinProject === '..' || withinProject.startsWith(`..${sep}`) || isAbsolute(withinProject)) {
-    return cwd
-  }
-  return withinProject
 }
 
 /** How the agent is told background commands ended, kept apart from anything the user wrote. */
@@ -292,10 +294,9 @@ export class CommandService {
   async execute(input: CommandServiceRunInput): Promise<ShellCommandResult | OwnedBackgroundTask> {
     if (input.signal?.aborted) throw new Error('Command cancelled before execution')
     if (!input.command.trim()) throw new Error('Command is required')
-    const cwd = await resolveSecureWorkspacePath(
-      input.workspaceRoot,
-      projectRelativeCommandCwd(input.workspaceRoot, input.cwd)
-    )
+    // Relative to the primary folder; `<name>/...` or an absolute path starts in another project
+    // folder. Models often echo the absolute project path from the system context.
+    const cwd = await resolveSecureWorkspacePath(input.workspaceRoot, input.cwd ?? '')
     const id = randomUUID()
     const isolate = this.isolationEnabled()
     if (isolate && input.background)
@@ -312,6 +313,7 @@ export class CommandService {
           id,
           cwd,
           workspaceRoot: input.workspaceRoot,
+          folders: workspaceFolders(input.workspaceRoot),
           command: input.command,
           timeoutSecs: input.timeoutSecs,
           env,
@@ -338,6 +340,7 @@ export class CommandService {
       env,
       terminal: !sandbox && this.terminalEnabled(),
       onStart: ({ pty }) => this.openSession(id, cwd, input, false, pty),
+      followLeftovers: () => this.backgroundTasks.has(id),
       onOutput: (data) => {
         this.terminals.append(id, data.chunk)
         input.onOutput?.(data)
@@ -398,6 +401,7 @@ export class CommandService {
     result: ShellCommandResult
   ): Promise<ShellCommandResult> {
     const stoppedByUser = this.stoppedByUser.delete(id)
+    if (result.outlived) this.terminals.append(id, `\r\n${OUTLIVED_NOTE}\r\n`)
     await this.terminals.finish(id, { state: sessionState(result), exitCode: result.exitCode })
     let completed: ShellCommandResult = stoppedByUser
       ? {
@@ -408,11 +412,15 @@ export class CommandService {
       : result
     if (result.terminal) {
       const text = ((await this.terminals.lines(id)) ?? []).join('\n')
-      const truncated = text.length > MAX_RENDERED_OUTPUT
+      const cut = text.length > MAX_RENDERED_OUTPUT
+      // The raw stream's size says nothing here: a repainted progress bar is long and complete,
+      // while the terminal's history keeps only its last lines of a long output.
+      const truncated = cut || this.terminals.droppedLines(id)
       completed = {
         ...completed,
-        stdout: truncated ? text.slice(-MAX_RENDERED_OUTPUT) : text,
-        truncated: completed.truncated || truncated
+        stdout: cut ? text.slice(-MAX_RENDERED_OUTPUT) : text,
+        truncated,
+        outputPath: truncated ? this.outputPath(id) : undefined
       }
     }
     return completed
@@ -488,7 +496,11 @@ export class CommandService {
         id,
         command: input.command,
         cwd,
-        timeoutMs: Math.max(1, Math.min(86_400, input.timeoutSecs ?? 3_600)) * 1_000,
+        // Never shorter than the default: a model's `timeout: 30` meant waiting for a server to
+        // start, and it stopped the server half a minute in.
+        timeoutMs:
+          Math.min(86_400, Math.max(BACKGROUND_COMMAND_LIMIT_SECONDS, input.timeoutSecs ?? 0)) *
+          1_000,
         outputPath: this.outputPath(id),
         env: {
           ...this.shellEnvironment(input.runId, input.workspaceRoot),
@@ -496,6 +508,7 @@ export class CommandService {
         },
         terminal: this.terminalEnabled(),
         onStart: ({ pty }) => this.openSession(id, cwd, input, true, pty),
+        followLeftovers: () => true,
         onOutput: (data) => this.terminals.append(id, data.chunk)
       })
     )
@@ -562,7 +575,12 @@ export class CommandService {
   /** Whether a command, foreground or background, belongs to the conversation. */
   ownsCommand(id: string, scope: BackgroundTaskScope): boolean {
     const session = this.terminals.get(id)
-    if (!session) return false
+    // A background command's terminal opens once its shell has started, after its ID was handed
+    // back: a wait sent right after the shell call found no such command.
+    if (!session) {
+      const task = this.backgroundTasks.get(id)
+      return Boolean(task && inScope(task, scope))
+    }
     if (scope.conversationId) return session.conversationId === scope.conversationId
     return !scope.runId || session.runId === scope.runId
   }
@@ -586,7 +604,9 @@ export class CommandService {
 
   /** Types into a running command, as at its terminal. */
   write(id: string, data: string): boolean {
-    return this.runner.write(id, data)
+    const written = this.runner.write(id, data)
+    if (written) this.terminals.inputSent(id)
+    return written
   }
 
   cancelRun(runId: string): void {

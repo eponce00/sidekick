@@ -231,9 +231,8 @@ describe('browser activity projection', () => {
       label: 'Header overlaps the navigation'
     })
     expect(failed.timeline[0]).not.toHaveProperty('screenshot')
-  })
 
-  it('does not claim a criterion passed merely because visual evidence was captured', () => {
+    // Captured evidence is not a pass.
     const captured = applyBrowserActivityEvent(
       EMPTY_BROWSER_ACTIVITY,
       event(1, 'tool.completed', {

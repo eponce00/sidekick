@@ -17,10 +17,21 @@ import {
 import { validateMessageImages } from '../../shared/messageImages'
 import { validateMessageContextAttachments } from '../../shared/messageContextAttachments'
 import type { ForkConversationInput } from '../../shared/projects'
-import { setupCreatedWorktree } from './worktreeSetup'
 import { getManagedWorktrees } from './worktrees'
 import type { ManagedWorktreeSummary } from '../../shared/worktrees'
 import { refreshSessionStatuses, sessionStatusService } from './sessionStatus'
+import { existingAgentRuntimeCoordinator } from './agentRuns'
+import { isConversationModelId } from '../services/conversationModelStore'
+import { createConversation } from '../services/conversationCreation'
+import { deleteConversation, setConversationPinned } from '../services/conversationActions'
+import { copyChatFolder, removeOrphanChatFolders } from '../services/chatFolders'
+import { parseHistoryPoints } from '../../shared/workspaceHistory'
+
+/** A message's History points as stored: only well-formed ones, or nothing. */
+function checkpointsJson(value: unknown): string | null {
+  const points = parseHistoryPoints(value)
+  return points.length ? JSON.stringify(points.slice(0, 50)) : null
+}
 
 function validBackfillIdentity(input: unknown): input is ConversationTitleBackfillIdentity {
   if (!input || typeof input !== 'object') return false
@@ -79,61 +90,24 @@ export function registerDatabaseHandlers(): void {
 
   ipcMain.handle(
     'conversations:create',
-    async (_, title: string, projectId?: string | null, titleSource?: unknown) => {
-      const id = randomUUID()
-      const now = Date.now()
-      const source = isConversationTitleSource(titleSource) ? titleSource : 'placeholder'
-      const titleVersion = conversationTitleVersionForSource(source)
-      const normalizedProjectId = projectId ?? null
-      const project = normalizedProjectId
-        ? (db
-            .prepare('SELECT name, folder_path FROM projects WHERE id = ?')
-            .get(normalizedProjectId) as { name: string; folder_path: string } | undefined)
-        : undefined
-      if (normalizedProjectId && !project) throw new Error('Project not found')
-      const placement = db
-        .prepare(
-          `SELECT COALESCE(MIN(sidebar_order), 0) - 1 AS sidebar_order
-           FROM conversations WHERE project_id IS ?`
-        )
-        .get(normalizedProjectId) as { sidebar_order: number }
-      const stmt = db.prepare(
-        `INSERT INTO conversations
-         (id, title, created_at, updated_at, project_id, title_source, title_version,
-          sidebar_order, project_context_version, home_workspace_root, home_project_name)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
-      )
-      stmt.run(
-        id,
+    async (
+      _,
+      title: string,
+      projectId?: string | null,
+      titleSource?: unknown,
+      modelId?: unknown
+    ) => {
+      // A new chat starts on the model last chosen in any chat, and keeps it.
+      return createConversation(db, {
         title,
-        now,
-        now,
-        normalizedProjectId,
-        source,
-        titleVersion,
-        placement.sidebar_order,
-        project?.folder_path ?? null,
-        project?.name ?? null
-      )
-      return {
-        id,
-        title,
-        created_at: now,
-        updated_at: now,
-        project_id: normalizedProjectId,
-        is_pinned: 0,
-        title_source: source,
-        title_version: titleVersion,
-        sidebar_order: placement.sidebar_order,
-        project_context_version: 0,
-        home_workspace_root: project?.folder_path ?? null,
-        home_project_name: project?.name ?? null,
-        unread_completion_at: null
-      }
+        projectId: projectId ?? null,
+        titleSource: isConversationTitleSource(titleSource) ? titleSource : 'placeholder',
+        modelId: isConversationModelId(modelId) ? modelId : null
+      })
     }
   )
 
-  ipcMain.handle('conversations:fork', async (event, input: ForkConversationInput) => {
+  ipcMain.handle('conversations:fork', async (_event, input: ForkConversationInput) => {
     if (
       !input ||
       typeof input.sourceId !== 'string' ||
@@ -145,7 +119,7 @@ export function registerDatabaseHandlers(): void {
     const sourceId = input.sourceId
     const source = db
       .prepare(
-        `SELECT title, project_id, home_workspace_root, home_project_name, worktree_id
+        `SELECT title, project_id, home_workspace_root, home_project_name, worktree_id, model_id
          FROM conversations WHERE id = ?`
       )
       .get(sourceId) as
@@ -155,6 +129,7 @@ export function registerDatabaseHandlers(): void {
           home_workspace_root: string | null
           home_project_name: string | null
           worktree_id: string | null
+          model_id: string | null
         }
       | undefined
     if (!source) throw new Error('Conversation not found')
@@ -206,8 +181,8 @@ export function registerDatabaseHandlers(): void {
           `INSERT INTO conversations
          (id, title, created_at, updated_at, project_id, title_source, title_version,
           sidebar_order, project_context_version, home_workspace_root, home_project_name,
-          worktree_id, forked_from_conversation_id, forked_from_message_id)
-         VALUES (?, ?, ?, ?, ?, 'fork', ?, ?, 0, ?, ?, ?, ?, ?)`
+          worktree_id, forked_from_conversation_id, forked_from_message_id, model_id)
+         VALUES (?, ?, ?, ?, ?, 'fork', ?, ?, 0, ?, ?, ?, ?, ?, ?)`
         ).run(
           id,
           title,
@@ -220,13 +195,14 @@ export function registerDatabaseHandlers(): void {
           source.home_project_name,
           targetWorktreeId,
           sourceId,
-          boundary?.id ?? null
+          boundary?.id ?? null,
+          source.model_id
         )
         const insert = db.prepare(
           `INSERT INTO messages
          (id, conversation_id, role, content, thinking, segments, images, attachments, token_usage,
-          checkpoint_hash, checkpoint_workspace_root, run_mode, notice_tone, starts_goal, timestamp)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          checkpoints, run_mode, notice_tone, starts_goal, timestamp)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         const messageIdMap = new Map<string, string>()
         for (const row of rows) {
@@ -242,8 +218,7 @@ export function registerDatabaseHandlers(): void {
             row.images ?? null,
             row.attachments ?? null,
             row.token_usage ?? null,
-            row.checkpoint_hash ?? null,
-            row.checkpoint_workspace_root ?? null,
+            row.checkpoints ?? null,
             row.run_mode === 'research'
               ? 'research'
               : row.run_mode === 'plan'
@@ -260,22 +235,14 @@ export function registerDatabaseHandlers(): void {
       if (createdWorktree) await worktrees.discardFresh(createdWorktree.id)
       throw error
     }
-
-    if (createdWorktree && source.project_id) {
-      const sourceProject = db
-        .prepare('SELECT folder_path FROM projects WHERE id = ?')
-        .get(source.project_id) as { folder_path: string } | undefined
-      if (sourceProject) {
-        // The fork is already durable. Setup denial or failure must never undo it.
-        await setupCreatedWorktree(
-          event.sender,
-          sourceProject.folder_path,
-          createdWorktree.folderPath
-        ).catch(() => {
-          console.warn('[Worktrees] Setup could not finish; created fork preserved')
-        })
+    if (!targetProjectId && !targetWorktreeId) {
+      try {
+        copyChatFolder(sourceId, id)
+      } catch (error) {
+        console.warn('[Conversations] The fork could not copy its chat’s files:', error)
       }
     }
+
     return {
       id,
       title,
@@ -301,7 +268,8 @@ export function registerDatabaseHandlers(): void {
         : null,
       forked_from_conversation_id: sourceId,
       forked_from_message_id: boundary?.id ?? null,
-      unread_completion_at: null
+      unread_completion_at: null,
+      model_id: source.model_id
     }
   })
 
@@ -317,10 +285,7 @@ export function registerDatabaseHandlers(): void {
     if (typeof id !== 'string' || !id || typeof pinned !== 'boolean') {
       throw new Error('Invalid conversation pin request')
     }
-    const result = db
-      .prepare('UPDATE conversations SET is_pinned = ? WHERE id = ?')
-      .run(pinned ? 1 : 0, id)
-    return { success: result.changes > 0 }
+    return { success: setConversationPinned(db, id, pinned) }
   })
 
   ipcMain.handle(
@@ -404,13 +369,9 @@ export function registerDatabaseHandlers(): void {
   )
 
   ipcMain.handle('conversations:delete', async (_, id: string) => {
-    const worktreeId = worktrees.worktreeIdFor(id)
-    db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id)
-    db.prepare('DELETE FROM conversations WHERE id = ?').run(id)
+    const result = await deleteConversation(db, worktrees, id)
     refreshSessionStatuses([id])
-    // A worktree its last chat leaves behind goes too.
-    const worktreeCleanup = worktreeId ? await worktrees.removeIfUnused(worktreeId) : null
-    return { success: true, ...(worktreeCleanup ? { worktreeCleanup } : {}) }
+    return { success: true, ...result }
   })
 
   // A chat opened and left with nothing said in it does not stay behind in the sidebar. Only a
@@ -464,6 +425,7 @@ export function registerDatabaseHandlers(): void {
   ipcMain.handle('conversations:deleteAll', async () => {
     db.prepare('DELETE FROM messages').run()
     db.prepare('DELETE FROM conversations').run()
+    removeOrphanChatFolders(db)
     refreshSessionStatuses(
       sessionStatusService()
         ?.statuses()
@@ -483,8 +445,7 @@ export function registerDatabaseHandlers(): void {
         token_usage,
         images,
         attachments,
-        checkpoint_hash,
-        checkpoint_workspace_root,
+        checkpoints,
         run_mode,
         run_id,
         notice_tone,
@@ -505,9 +466,10 @@ export function registerDatabaseHandlers(): void {
           if (!persisted && !contextUsage) return undefined
           return { ...(persisted ?? {}), ...(contextUsage ?? {}) }
         })(),
-        checkpointHash: typeof checkpoint_hash === 'string' ? checkpoint_hash : undefined,
-        checkpointWorkspaceRoot:
-          typeof checkpoint_workspace_root === 'string' ? checkpoint_workspace_root : undefined,
+        checkpoints: (() => {
+          const points = parseHistoryPoints(checkpoints)
+          return points.length ? points : undefined
+        })(),
         runId: typeof run_id === 'string' ? run_id : undefined,
         runMode:
           run_mode === 'research' ? 'research' : run_mode === 'plan' ? 'plan' : 'conversation',
@@ -566,8 +528,8 @@ export function registerDatabaseHandlers(): void {
     const stmt = db.prepare(
       `INSERT INTO messages
        (id, conversation_id, role, content, thinking, segments, images, attachments, token_usage,
-        checkpoint_hash, checkpoint_workspace_root, run_mode, notice_tone, starts_goal, timestamp)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        checkpoints, run_mode, notice_tone, starts_goal, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     const segmentsJson = message.segments ? JSON.stringify(message.segments) : null
     const images = validateMessageImages(message.images)
@@ -585,8 +547,7 @@ export function registerDatabaseHandlers(): void {
       imagesJson,
       attachmentsJson,
       tokenUsageJson,
-      message.checkpointHash || null,
-      message.checkpointWorkspaceRoot || null,
+      checkpointsJson(message.checkpoints),
       message.runMode === 'research'
         ? 'research'
         : message.runMode === 'plan'
@@ -615,8 +576,8 @@ export function registerDatabaseHandlers(): void {
     if (!existing) throw new Error('Message not found in conversation')
     const stmt = db.prepare(
       `UPDATE messages
-       SET content = ?, thinking = ?, segments = ?, images = ?, attachments = ?, token_usage = ?, checkpoint_hash = ?,
-           checkpoint_workspace_root = ?, timestamp = ?,
+       SET content = ?, thinking = ?, segments = ?, images = ?, attachments = ?, token_usage = ?,
+           checkpoints = ?, timestamp = ?,
            run_mode = COALESCE(?, run_mode), starts_goal = COALESCE(?, starts_goal)
        WHERE id = ? AND conversation_id = ?`
     )
@@ -633,8 +594,7 @@ export function registerDatabaseHandlers(): void {
       imagesJson,
       attachmentsJson,
       tokenUsageJson,
-      message.checkpointHash || null,
-      message.checkpointWorkspaceRoot || null,
+      checkpointsJson(message.checkpoints),
       message.timestamp,
       // An edit may change the message's mode or whether it starts a goal; other updates keep them.
       message.runMode === 'plan' ||
@@ -660,6 +620,7 @@ export function registerDatabaseHandlers(): void {
       const stmt = db.prepare('DELETE FROM messages WHERE conversation_id = ? AND timestamp > ?')
       stmt.run(conversationId, timestamp)
       compactions.invalidateAfterTimestamp(conversationId, timestamp)
+      existingAgentRuntimeCoordinator()?.historyRewound(conversationId)
 
       const updateStmt = db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
       updateStmt.run(Date.now(), conversationId)

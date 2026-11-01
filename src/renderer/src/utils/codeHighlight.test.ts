@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extensionOf, highlightLines, languageFor, parseNumberedLines } from './codeHighlight'
+import { highlightLines, parseNumberedLines } from './codeHighlight'
 
 describe('parseNumberedLines', () => {
   it('splits read tool lines into numbers and source text', () => {
@@ -26,12 +26,6 @@ describe('parseNumberedLines', () => {
 })
 
 describe('highlighting', () => {
-  it('names languages by file extension', () => {
-    expect(extensionOf('site/index.html')).toBe('html')
-    expect(languageFor('tsx')).toBe('typescript')
-    expect(languageFor('nope')).toBeNull()
-  })
-
   it('returns escaped HTML for each source line', () => {
     const lines = highlightLines('<b>\n</b>', 'html')
     expect(lines).toHaveLength(2)

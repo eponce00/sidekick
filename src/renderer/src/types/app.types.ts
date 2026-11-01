@@ -37,4 +37,6 @@ export interface Conversation {
   session_handle?: string | null
   work_in?: import('../../../shared/sessions').SessionWorkIn | null
   archived_at?: number | null
+  /** The model this chat runs with; see `conversationModelChoice`. */
+  model_id?: string | null
 }

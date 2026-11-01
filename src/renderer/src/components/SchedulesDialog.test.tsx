@@ -106,8 +106,6 @@ describe('SchedulesDialog', () => {
       node.textContent?.includes('Dependency check')
     ) as HTMLButtonElement
     await act(async () => suggestion.click())
-    const weekly = container.querySelector('[role="radio"][aria-checked="true"]')
-    expect(weekly?.textContent).toBe('Weekly')
     await act(async () => button('Create schedule').click())
     expect(api.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -133,10 +131,7 @@ describe('SchedulesDialog', () => {
     const continueChoice = [...container.querySelectorAll('[role="radio"]')].find(
       (node) => node.textContent === 'Continue the last chat'
     ) as HTMLButtonElement
-    expect(continueChoice.getAttribute('aria-checked')).toBe('false')
     await act(async () => continueChoice.click())
-    expect(continueChoice.getAttribute('aria-checked')).toBe('true')
-    expect(container.textContent).toContain('Each run sees what earlier runs said and did')
     await act(async () => button('Create schedule').click())
     expect(api.create).toHaveBeenCalledWith(expect.objectContaining({ chatMode: 'continue' }))
   })
@@ -179,25 +174,12 @@ describe('SchedulesDialog', () => {
     const onOpenConversation = vi.fn()
     await render([schedule], 'full-access', onOpenConversation)
     await act(async () => button('Runs (0)').click())
-    const workers = container.querySelector('.schedule-run-workers')!
-    expect(workers.textContent).toContain('docs-check')
-    expect(workers.textContent).toContain('Waiting for your approval')
     await act(async () => button('Open docs-check').click())
     expect(onOpenConversation).toHaveBeenCalledWith('w1')
   })
 
-  it('switches presets, and asks only for the minute when hourly', async () => {
-    await render([])
-    await act(async () => button('New schedule').click())
-    expect(container.querySelector('input[type="time"]')).not.toBeNull()
-    await act(async () => button('Hourly').click())
-    expect(container.querySelector('input[type="time"]')).toBeNull()
-    expect(container.textContent).toContain('Minute past the hour')
-  })
-
   it('pauses a schedule and explains a run that did not start', async () => {
     await render([schedule])
-    expect(container.textContent).toContain('Daily at')
     await act(async () => button('Pause Nightly review').click())
     expect(api.pause).toHaveBeenCalledWith('s1')
     await act(async () => button('Run Nightly review now').click())

@@ -3,6 +3,7 @@ import { createHash } from 'crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import { applyDatabaseSchema, openApplicationDatabase } from './database'
 import { ConversationCompactionStore } from '../services/conversationCompactionStore'
+import { ConversationModelStore } from '../services/conversationModelStore'
 import { mkdtemp, readdir, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -95,6 +96,47 @@ describe('database schema migrations', () => {
         replyMessageId: 'reply',
         replyMessagesCovered: 3
       })
+    } finally {
+      if (disk?.open) disk.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('lets chats on an installed database keep their own model, starting from their last reply', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sidekick-db-chat-models-'))
+    let disk: Database.Database | undefined
+    try {
+      const path = join(root, 'app.db')
+      disk = openApplicationDatabase(path)
+      disk.exec('ALTER TABLE conversations DROP COLUMN model_id')
+      disk.exec(`
+        INSERT INTO conversations (id, title, created_at, updated_at)
+          VALUES ('older', 'Older chat', 1, 1), ('other', 'Other chat', 1, 1);
+        INSERT INTO agent_runs
+          (id, thread_id, surface, phase, provider, model, profile_json, started_at, updated_at)
+          VALUES ('run', 'older', 'conversation', 'completed', 'openrouter',
+                  'anthropic/claude-sonnet-4', '{}', 1, 1);
+      `)
+      disk.close()
+
+      disk = openApplicationDatabase(path)
+      const models = new ConversationModelStore(disk)
+      expect(models.get('older')).toBeNull()
+      const sonnet = {
+        id: 'openrouter:openrouter/anthropic/claude-sonnet-4',
+        name: 'Claude Sonnet 4',
+        provider: 'openrouter' as const,
+        providerModelId: 'anthropic/claude-sonnet-4'
+      }
+      const qwen = {
+        id: 'ollama:ollama-local/qwen3:8b',
+        name: 'Qwen 3 8B',
+        provider: 'ollama' as const,
+        providerModelId: 'qwen3:8b'
+      }
+      expect(models.adoptUnassigned([qwen, sonnet], qwen.id)).toBe(2)
+      expect(models.get('older')).toBe(sonnet.id)
+      expect(models.get('other')).toBe(qwen.id)
     } finally {
       if (disk?.open) disk.close()
       await rm(root, { recursive: true, force: true })
@@ -396,6 +438,59 @@ describe('database schema migrations', () => {
     }
   })
 
+  it('keeps existing projects as they are and turns each reply’s History point into a list of one', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sidekick-db-folders-'))
+    let disk: Database.Database | undefined
+    try {
+      const path = join(root, 'app.db')
+      disk = openApplicationDatabase(path)
+      // The schema as 0.24.0 left it: one History point per reply, in two columns.
+      disk.prepare("DELETE FROM schema_migrations WHERE id = '20261028_001_project_folders'").run()
+      disk.exec(`
+        DROP TABLE project_folders;
+        ALTER TABLE messages DROP COLUMN checkpoints;
+        ALTER TABLE messages ADD COLUMN checkpoint_hash TEXT;
+        ALTER TABLE messages ADD COLUMN checkpoint_workspace_root TEXT;
+        INSERT INTO projects (id, name, folder_path, is_pinned, created_at, updated_at)
+          VALUES ('p', 'App', '/work/app', 0, 1, 1);
+        INSERT INTO conversations (id, title, created_at, updated_at, project_id)
+          VALUES ('c', 'Chat', 1, 1, 'p');
+        INSERT INTO messages (id, conversation_id, role, content, timestamp,
+                              checkpoint_hash, checkpoint_workspace_root)
+          VALUES ('placed', 'c', 'agent', 'Changed', 1, 'abcdef1', '/work/app'),
+                 ('unplaced', 'c', 'agent', 'Old', 2, 'abcdef2', NULL),
+                 ('plain', 'c', 'agent', 'Read only', 3, NULL, NULL);
+      `)
+      disk.close()
+
+      disk = openApplicationDatabase(path)
+      expect(disk.prepare('SELECT id, checkpoints FROM messages ORDER BY timestamp').all()).toEqual(
+        [
+          {
+            id: 'placed',
+            checkpoints: JSON.stringify([{ workspaceRoot: '/work/app', hash: 'abcdef1' }])
+          },
+          { id: 'unplaced', checkpoints: null },
+          { id: 'plain', checkpoints: null }
+        ]
+      )
+      const columns = (
+        disk.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>
+      ).map(({ name }) => name)
+      expect(columns).not.toContain('checkpoint_hash')
+      expect(columns).not.toContain('checkpoint_workspace_root')
+      expect(disk.prepare('SELECT folder_path FROM projects').all()).toEqual([
+        { folder_path: '/work/app' }
+      ])
+      expect(disk.prepare('SELECT COUNT(*) AS count FROM project_folders').get()).toEqual({
+        count: 0
+      })
+    } finally {
+      if (disk?.open) disk.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('lets an installed database record worktrees with no branch, keeping existing ones', async () => {
     const root = await mkdtemp(join(tmpdir(), 'sidekick-db-detached-'))
     let disk: Database.Database | undefined
@@ -583,7 +678,7 @@ describe('database schema migrations', () => {
       disk = openApplicationDatabase(path)
       expect(disk.prepare('SELECT title FROM conversations').get()).toEqual({ title: 'Keep me' })
       expect(disk.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({
-        count: 17
+        count: 18
       })
       expect(disk.pragma('integrity_check', { simple: true })).toBe('ok')
     } finally {
@@ -671,77 +766,10 @@ describe('database schema migrations', () => {
     const compactionColumns = db
       .prepare('PRAGMA table_info(conversation_compactions)')
       .all() as Array<{ name: string }>
-    const conversationColumns = db.prepare('PRAGMA table_info(conversations)').all() as Array<{
-      name: string
-    }>
-    const messageColumns = db.prepare('PRAGMA table_info(messages)').all() as Array<{
-      name: string
-    }>
     expect(legacyRunColumns).toEqual([])
     expect(runColumns.map(({ name }) => name)).toContain('prompt_context_json')
     expect(compactionColumns.map(({ name }) => name)).toEqual(
       expect.arrayContaining(['strategy', 'prompt_version', 'provider', 'model'])
-    )
-    expect(conversationColumns.map(({ name }) => name)).toEqual(
-      expect.arrayContaining([
-        'title_source',
-        'title_version',
-        'title_backfill_attempted_at',
-        'title_backfill_attempted_version',
-        'title_backfill_error',
-        'unread_completion_at',
-        'forked_from_conversation_id',
-        'forked_from_message_id'
-      ])
-    )
-    expect(
-      db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'collaboration_%'").all()
-    ).toEqual([])
-    expect(messageColumns.map(({ name }) => name)).toEqual(
-      expect.arrayContaining(['run_mode', 'images', 'attachments', 'notice_tone', 'starts_goal'])
-    )
-    expect(
-      db.prepare('SELECT id, length(checksum) AS checksum_length FROM schema_migrations').all()
-    ).toEqual([
-      { id: '20260829_001_canonical_runtime', checksum_length: 64 },
-      { id: '20260829_002_prompt_admission', checksum_length: 64 },
-      { id: '20260829_003_journal_materializations', checksum_length: 64 },
-      { id: '20260830_001_managed_worktrees', checksum_length: 64 },
-      { id: '20260830_002_conversation_pins', checksum_length: 64 },
-      { id: '20260830_003_title_backfill_attempt_versions', checksum_length: 64 },
-      { id: '20260830_004_message_context_attachments', checksum_length: 64 },
-      { id: '20260923_001_message_notice_tone', checksum_length: 64 },
-      { id: '20260923_002_message_goal_origin', checksum_length: 64 },
-      { id: '20261016_001_schedules', checksum_length: 64 },
-      { id: '20261016_002_worktree_base_ref', checksum_length: 64 },
-      { id: '20261016_003_sessions', checksum_length: 64 },
-      { id: '20261016_004_group_chats_to_chats', checksum_length: 64 },
-      { id: '20261018_001_schedule_starters', checksum_length: 64 },
-      { id: '20261020_001_detached_worktrees', checksum_length: 64 },
-      { id: '20261020_002_set_aside_worktrees', checksum_length: 64 },
-      { id: '20261021_001_worktrees_belong_to_chats', checksum_length: 64 }
-    ])
-    expect(
-      db
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'managed_worktrees'"
-        )
-        .get()
-    ).toEqual({ name: 'managed_worktrees' })
-    const checkpointLabelColumns = db
-      .prepare('PRAGMA table_info(checkpoint_labels)')
-      .all() as Array<{
-      name: string
-    }>
-    expect(checkpointLabelColumns.map(({ name }) => name)).toEqual(
-      expect.arrayContaining([
-        'workspace_root',
-        'checkpoint_hash',
-        'label',
-        'label_source',
-        'label_version',
-        'backfill_attempted_at'
-      ])
     )
   })
 

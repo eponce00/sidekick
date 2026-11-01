@@ -17,6 +17,7 @@ import {
   registerArtifactScheme
 } from '../src/main/bootstrap/artifactProtocol'
 import { NativeBrowserSessionService } from '../src/main/services/nativeBrowserSessionService'
+import { runWebMcpSmoke, webMcpFixtureHtml } from './native-browser-webmcp'
 
 const RESULT_PREFIX = 'SIDEKICK_NATIVE_BROWSER_SMOKE='
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -42,6 +43,7 @@ interface SmokeResult {
   partitionIsolated: boolean
   localFileAllowed: boolean
   closeSessions: number
+  webMcpToolCalls: number
 }
 
 function progress(step: string): void {
@@ -270,6 +272,12 @@ async function runSmoke(): Promise<SmokeResult> {
         response.end(fillablePdfFixture())
         return
       }
+      if (requestUrl.pathname === '/webmcp' || requestUrl.pathname === '/webmcp-next') {
+        response.setHeader('content-type', 'text/html; charset=utf-8')
+        response.setHeader('cache-control', 'no-store')
+        response.end(webMcpFixtureHtml(requestUrl.pathname === '/webmcp' ? 'shop' : 'next'))
+        return
+      }
       if (requestUrl.pathname === '/drop') {
         request.socket.destroy()
         return
@@ -424,10 +432,9 @@ async function runSmoke(): Promise<SmokeResult> {
     )
     progress('Native beforeinput veto rejected without false-success or retry')
 
-    const embeddedTakeover = await service.beginHumanTakeover(shared.sessionId)
-    assert.equal(embeddedTakeover.active, true)
-    assert.equal(browserViewHost(identity), host, 'Takeover must stay embedded')
-    await service.completeHumanTakeover(shared.sessionId)
+    // A page with no human check lets the agent go on, and checking it keeps the page embedded.
+    assert.equal(await service.humanVerificationRequired(shared.sessionId), false)
+    assert.equal(browserViewHost(identity), host, 'The page must stay in the panel')
     unmountBrowserHost(host)
     assert.equal(browserViewHost(identity), undefined)
     const parked = await service.observe(shared.sessionId, { screenshot: 'viewport' })
@@ -435,7 +442,7 @@ async function runSmoke(): Promise<SmokeResult> {
     host.destroy()
     await service.close({ sessionId: shared.sessionId })
     progress(
-      `Embedded browser, same-tab input, takeover, and background recapture passed (${userInputs} input events)`
+      `Embedded browser, same-tab input, human check, and background recapture passed (${userInputs} input events)`
     )
 
     {
@@ -444,6 +451,17 @@ async function runSmoke(): Promise<SmokeResult> {
       // show the whole page scaled to fit, not its left part clipped.
       progress('Checking an agent viewport wider than the panel')
       const wide = await service.open({ runId: 'wide-view', url: `${baseUrl}/wide` })
+      type PageInput = { width: number; touch: number; fine: boolean; agent: string }
+      const page = async (): Promise<PageInput> =>
+        (
+          await service.evaluate({
+            sessionId: wide.sessionId,
+            expression:
+              '({ width: window.innerWidth, touch: navigator.maxTouchPoints, fine: matchMedia("(any-pointer: fine)").matches, agent: navigator.userAgent })'
+          })
+        ).value as PageInput
+      // Read before any emulation: a touchscreen gives the page its own touch points.
+      const native = await page()
       const narrowHost = new BrowserWindow({
         show: false,
         width: 900,
@@ -531,14 +549,6 @@ async function runSmoke(): Promise<SmokeResult> {
       // A phone preset lays out at its width as a touch, mobile page; responsive gives the page
       // back the panel's size with the browser's own user agent and input.
       mountBrowserView(wide.tab.webContentsId, narrowHost, panel, () => true, 1)
-      const page = async (): Promise<{ width: number; touch: number; agent: string }> =>
-        (
-          await service.evaluate({
-            sessionId: wide.sessionId,
-            expression:
-              '({ width: window.innerWidth, touch: navigator.maxTouchPoints, agent: navigator.userAgent })'
-          })
-        ).value as { width: number; touch: number; agent: string }
       await service.resize({
         sessionId: wide.sessionId,
         viewport: { width: 393, height: 852, deviceScaleFactor: 1 },
@@ -554,12 +564,20 @@ async function runSmoke(): Promise<SmokeResult> {
         'A phone keeps its exact height, centred in the panel'
       )
       assert.ok(phone.touch > 0, 'A phone has touch input')
+      // A touchscreen already has touch points, so the reset below only shows the phone's
+      // emulation was turned off if the phone's input differs from the page's own.
+      assert.notDeepEqual(
+        { touch: phone.touch, fine: phone.fine },
+        { touch: native.touch, fine: native.fine },
+        `A phone emulates touch input the page can tell apart (native ${JSON.stringify(native)})`
+      )
       assert.match(phone.agent, /Mobile/, 'A phone reports a mobile user agent')
       assert.equal(service.workspaceSnapshot(wide.sessionId).device?.id, 'iphone-14-pro')
       await service.resetViewport({ sessionId: wide.sessionId })
       const responsive = await page()
       assert.equal(responsive.width, panel.width, 'Responsive lays out at the panel width at 100%')
-      assert.equal(responsive.touch, 0, 'Responsive has no emulated touch')
+      assert.equal(responsive.touch, native.touch, 'Responsive restores the native touch points')
+      assert.equal(responsive.fine, native.fine, 'Responsive restores the native pointers')
       assert.doesNotMatch(responsive.agent, /Mobile/, 'Responsive has the browser user agent')
       assert.equal(service.workspaceSnapshot(wide.sessionId).device, null)
       unmountBrowserHost(narrowHost)
@@ -972,7 +990,7 @@ async function runSmoke(): Promise<SmokeResult> {
         sessionId,
         username: signInUser,
         password: signInPassword,
-        allowedOrigins: [origin],
+        site: origin,
         ...extra
       })
     // One session, navigated between fixtures: opening a session per fixture costs seconds each.
@@ -980,8 +998,8 @@ async function runSmoke(): Promise<SmokeResult> {
     const visit = (path: string) =>
       service!.navigate({ sessionId: login.sessionId, url: `${baseUrl}${path}` })
     await assert.rejects(
-      signIn(login.sessionId, { allowedOrigins: ['https://example.com'] }),
-      /only on/
+      signIn(login.sessionId, { site: 'https://example.com' }),
+      /approved for https:\/\/example\.com/
     )
     const signedIn = await signIn(login.sessionId)
     assert.deepEqual(signedIn.filled, ['username', 'password'])
@@ -1156,24 +1174,20 @@ async function runSmoke(): Promise<SmokeResult> {
     assert.equal(blockedPopupTabs.tabs.length, 1, 'Disallowed popup URL should remain blocked')
     progress('Disallowed popup stayed blocked')
 
-    const takeover = await service.beginHumanTakeover(opened.sessionId)
-    assert.equal(takeover.active, true, 'Human takeover should reveal the existing browser surface')
-    assert.equal(takeover.observation.tab.url, opened.tab.url)
-    await service.click({
-      sessionId: opened.sessionId,
-      target: { role: 'button', name: 'Open popup', exact: true }
-    })
-    const takeoverPopup = await waitFor(
-      () => service!.tabs({ sessionId: opened.sessionId, action: 'list' }),
-      (result) => result.tabs.length === 1 && result.tabs[0]?.url === `${baseUrl}/popup`,
-      'takeover popup in the visible tab'
+    assert.equal(
+      await service.humanVerificationRequired(opened.sessionId),
+      false,
+      'A page with no human check should not hold the agent'
     )
-    assert.equal(takeoverPopup.tabs[0]?.id, opened.tab.id)
-    const takeoverComplete = await service.completeHumanTakeover(opened.sessionId)
-    assert.equal(takeoverComplete.active, false)
-    assert.equal(takeoverComplete.observation.tab.url, `${baseUrl}/popup`)
-    assert.ok(takeoverComplete.observation.screenshot)
-    progress('Same-session human takeover reveal and recapture passed')
+    progress('Human check detection passed')
+
+    // localhost and 127.0.0.1 are different origins on the same fixture server.
+    const webMcp = await runWebMcpSmoke(
+      service,
+      `${baseUrl}/webmcp`,
+      `http://localhost:${port}/webmcp`,
+      progress
+    )
 
     const closeResult = await service.close({ sessionId: opened.sessionId })
     assert.deepEqual(closeResult.closedSessions, [opened.sessionId])
@@ -1196,10 +1210,11 @@ async function runSmoke(): Promise<SmokeResult> {
       networkFailures: networkResult.failures.length,
       popupTabs: popupTabs.tabs.length,
       blockedPopupTabs: blockedPopupTabs.tabs.length,
-      humanTakeover: true,
+      humanCheck: true,
       partitionIsolated: true,
       localFileAllowed: true,
-      closeSessions: closeResult.closedSessions.length
+      closeSessions: closeResult.closedSessions.length,
+      webMcpToolCalls: webMcp.toolCalls
     }
   } finally {
     await service?.dispose().catch(() => undefined)

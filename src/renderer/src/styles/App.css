@@ -6,28 +6,48 @@
   color-scheme: dark;
 
   /* — Color: Surfaces (layered elevation) — */
-  /* Graphite, neutral rather than blue, so the one accent carries all the colour. */
-  --app-bg: #0f0f0f;
-  --surface-0: #131313;
-  --surface-1: #171717;
-  --surface-2: #1d1d1d;
-  --surface-3: #252525;
+  /* Graphite, neutral rather than blue, so the one accent carries all the colour. Each step is
+     about 6 points of lightness, so a card, the composer and a chip read as different surfaces. */
+  --app-bg: #0c0c0c;
+  --surface-0: #151515;
+  --surface-1: #1a1a1a;
+  --surface-2: #202020;
+  --surface-3: #262626;
   --surface-4: #2f2f2f;
 
   /* Legacy aliases (backward compat) */
   --panel-bg: var(--surface-1);
   --surface: var(--surface-2);
   --surface-hover: var(--surface-3);
-  --panel-border: rgba(255, 255, 255, 0.075);
+  /* Floating surfaces (menus, popovers, the palette, dialogs): about #333 over a #1a1a1a card, so
+     a menu that shares the fill of the card under it still has an edge. */
+  --panel-border: rgba(255, 255, 255, 0.11);
+  /* The hairline between the chat and its rails (sidebar, side panel, Settings navigation). */
+  --rail-border: rgba(255, 255, 255, 0.075);
   --border-subtle: rgba(255, 255, 255, 0.055);
   --border-color: rgba(255, 255, 255, 0.09);
   --border-strong: rgba(255, 255, 255, 0.15);
+  /* The outer edge of a raised group on the canvas (a card, a settings group, a welcome row). */
+  --card-edge: var(--border-subtle);
   --input-bg: var(--surface-2);
+  /* A secondary button: a fill one surface up from its card, a step brighter on hover. */
+  --button-secondary-bg: var(--surface-2);
+  --button-secondary-hover-bg: var(--surface-3);
+  --button-secondary-active-bg: var(--surface-3);
+  /* The composer is a fill that steps down from the chat; its chips step one surface up from it,
+     and a disabled send's disc sits one step above the box so its arrow does not look loose. */
+  --composer-bg: var(--surface-2);
+  --composer-chip-bg: var(--surface-3);
+  --composer-chip-hover-bg: var(--surface-4);
+  --send-disabled-bg: var(--surface-4);
 
   /* — Color: Text — */
   --text-primary: #ececec;
   --text-secondary: #a9a9a9;
   --text-muted: #8d8d8d;
+  /* Reading text (chat prose, the file viewer's documents) a step under the headings and strong
+     text inside it, so long passages are not drawn at full brightness on the dark canvas. */
+  --content-color: #d6d6d6;
 
   /* — Color: Accent (Volt: the robot's LED colour) — */
   --accent: #86aee8;
@@ -43,28 +63,22 @@
   --color-success: #5fcf9f;
   --color-error: #f0717f;
   --color-warning: #e9a05f;
-  --color-info: var(--accent);
+  /* A warning drawn as a mark with no text (a dot, a fill): it needs only 3:1, so the light theme
+     can use a brighter orange than its text colour. */
+  --color-warning-mark: var(--color-warning);
+  /* The same for an error drawn with no text (a failed dot). */
+  --color-error-mark: var(--color-error);
   /* Filled destructive/positive controls carry white text, which needs a
      deeper shade than the text-on-surface colour above (4.6:1 vs 3.5:1). */
   --color-error-fill: #c8475a;
   --color-success-fill: #1f7a58;
+  --color-warning-fill: #a85a14;
   --on-semantic: #ffffff;
-  /* Short aliases used throughout component styles. Kept in sync here so a
-     theme change reaches every rule instead of falling through to a fallback. */
-  --error: var(--color-error);
-  --danger: var(--color-error);
-  --success: var(--color-success);
-  --warning: var(--color-warning);
-  --color-error-subtle: color-mix(in srgb, var(--color-error) 12%, transparent);
-  --color-success-subtle: color-mix(in srgb, var(--color-success) 12%, transparent);
-  --color-warning-subtle: color-mix(in srgb, var(--color-warning) 12%, transparent);
-  --error-bg: var(--color-error-subtle);
-  --color-folder: #cfae5c;
   /* GitHub's merged and merge-queue purple. */
   --color-merged: #ab98e8;
 
   /* — Color: Messages — */
-  --message-user-bg: var(--surface-3);
+  --message-user-bg: var(--surface-2);
   --message-user-text: var(--text-primary);
   --message-agent-bg: transparent;
   --message-agent-text: var(--text-primary);
@@ -75,6 +89,8 @@
   --shadow-lg: rgba(0, 0, 0, 0.5);
   --shadow-panel: 0 20px 60px rgba(0, 0, 0, 0.38), 0 2px 12px rgba(0, 0, 0, 0.22);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.28);
+  /* Windows' own caption close red, the same in both themes, under --on-semantic text. */
+  --window-close-bg: #c42b1c;
 
   /* — Spacing Scale — */
   --space-1: 4px;
@@ -110,12 +126,48 @@
   --text-xl: 18px;
   --text-2xl: 20px;
   --text-3xl: 24px;
-  /* Chat body sits one step above the 12px chrome, not two: 14px read as a
-     different scale next to the sidebar and menus. */
-  --content-text: 13px;
-  --content-text-secondary: 12px;
-  --content-leading: 1.55;
+  /* Chat body is reading text, so it sits on the base step with an open leading; the
+     sidebar and menus stay on the 12–13px chrome steps. */
+  --content-text: var(--text-base);
+  --content-text-secondary: var(--text-md);
+  --content-leading: 1.6;
   --leading: 1.5;
+  /* Commands, their output, code blocks and paths: one size a step under the prose, so code
+     reads beside 14px text instead of shrinking to the chrome's floor. */
+  --code-text: var(--text-sm);
+  --code-leading: 1.5;
+
+  /* — The conversation column — messages, the composer and the bars around it share these
+     edges. The gutter follows the chat pane's width (cqi against .chat-panel), not the
+     window's, so an open side panel does not leave it sized for a wider chat. — */
+  /* About 90 characters of 14px prose; a wider pane becomes gutter, not longer lines. */
+  --chat-content-max: 760px;
+  --chat-gutter: clamp(16px, 4cqi, 40px);
+  /* The composer's box reaches past the column by its padding, its border and the textarea's own
+     inset, so its text lines up with the prose. */
+  --composer-bleed: calc(var(--space-4) + var(--space-1) + 1px);
+  /* The band at the foot of the message list that fades into the composer. It covers the jump
+     button, whose top sits 32px above the list's foot, so what scrolls beside or under the button
+     is drawn at a quarter or less, and not at all from its middle down. The room kept under the
+     last item lets it scroll clear of the whole band. */
+  --chat-fade: 40px;
+  --chat-jump-size: 36px;
+  --chat-end-room: calc(var(--chat-fade) + var(--space-3));
+  /* Between the items of one reply: prose, work, cards, a steer and a question. */
+  --turn-item-gap: var(--space-4);
+  /* A step in a reply's work block: tool, thought and patch rows, and the summary above them. */
+  --work-row-height: 28px;
+  /* The longest a thought's one-line preview runs, so its chevron stays near the tool rows'. */
+  --work-thought-max: 40ch;
+  /* A level of the sidebar's tree: workers under their manager, runs under their schedule. */
+  --tree-indent: 16px;
+  /* The sidebar's width, which the Settings navigation shares so its edge stays put. */
+  --sidebar-width: 276px;
+  /* The side panel's second row under its tabs: the Files folder header and the file viewer's. */
+  --panel-header-height: 36px;
+  /* Where a step's detail (live output, a command's result, the thought itself) starts: on its
+     label's edge, past the row's padding, its 16px icon column and the gap after it. */
+  --work-indent: calc(2px + 16px + 7px);
 
   /* — Motion — */
   --duration-fast: 0.12s;
@@ -139,9 +191,10 @@
   /* — Focus ring — */
   --focus-ring: 0 0 0 3px rgba(134, 174, 232, 0.26);
 
-  /* — The robot: neutral greys, its LEDs in the accent palette’s bright shade — */
-  --brand-helmet: #e6e6e6;
-  --brand-shade: #b3b3b3;
+  /* — The robot: neutral greys, its LEDs in the accent palette’s bright shade. The helmet sits a
+     step under white, so the LEDs stay the one bright thing. — */
+  --brand-helmet: #dcdcdc;
+  --brand-shade: #ababab;
   --brand-visor: #0f0f0f;
   --brand-glint: #2a2a2a;
   --brand-led: #60a5fa;
@@ -150,30 +203,74 @@
   --brand-cape-lining: #b5303a;
 }
 
-body[data-theme='light'] {
+/* Tokens computed from other tokens. A custom property's var() resolves on the element that
+   declares it, so these are declared again on the body, where the light theme and the accent
+   palette (accentPalettes.ts) set their sources; declared only on :root they kept the dark,
+   default-palette values everywhere. */
+:root,
+body,
+.app-loading {
+  --color-info: var(--accent);
+  /* Short aliases used throughout component styles. */
+  --error: var(--color-error);
+  --danger: var(--color-error);
+  --success: var(--color-success);
+  --warning: var(--color-warning);
+  --color-error-subtle: color-mix(in srgb, var(--color-error) 12%, transparent);
+  --color-success-subtle: color-mix(in srgb, var(--color-success) 12%, transparent);
+  --color-warning-subtle: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  --error-bg: var(--color-error-subtle);
+  /* A rounded field with focus: its edge leans toward the accent with a faint halo, quieter than
+     the ring a button gets, since the caret already says where typing goes. */
+  --field-focus-border: color-mix(in srgb, var(--accent) 38%, var(--border-color));
+  --field-focus-glow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+body[data-theme='light'],
+.app-loading[data-theme='light'] {
   color-scheme: light;
 
-  --app-bg: #efefef;
-  --surface-0: #f6f6f6;
+  /* The chat is a near-white canvas; the sidebar, side panel and title bar sit on a rail a few
+     percent darker. Cards step up to white and wells and fills step down, so each pairing the
+     dark ladder draws as one surface up is a visible step here too. Fills sit a notch under the
+     rail, so a chip or a hover on the rail still shows. --text-muted holds 5.0:1 on --surface-3. */
+  --app-bg: #f8f8f8;
+  --surface-0: #efefef;
   --surface-1: #ffffff;
-  --surface-2: #eeeeee;
-  --surface-3: #e3e3e3;
-  --surface-4: #d6d6d6;
+  --surface-2: #e8e8e8;
+  --surface-3: #dedede;
+  --surface-4: #d2d2d2;
 
   --panel-bg: var(--surface-1);
   --surface: var(--surface-2);
   --surface-hover: var(--surface-3);
   --panel-border: rgba(0, 0, 0, 0.1);
+  --rail-border: rgba(0, 0, 0, 0.1);
   --border-subtle: rgba(0, 0, 0, 0.07);
   --border-color: rgba(0, 0, 0, 0.12);
   --border-strong: rgba(0, 0, 0, 0.2);
+  /* --border-subtle all but vanishes between white and the near-white canvas, so a card's own
+     edge takes --border-color; the hairlines between its rows stay --border-subtle. */
+  --card-edge: var(--border-color);
   --input-bg: var(--surface-1);
+  /* On a white card a grey fill reads as pressed or disabled, so a secondary button is a raised
+     white control at rest and darkens as it is hovered and pressed. */
+  --button-secondary-bg: var(--surface-1);
+  --button-secondary-hover-bg: var(--surface-2);
+  --button-secondary-active-bg: var(--surface-3);
+  /* A grey composer on the near-white canvas read as disabled, so here it is a raised white
+     control like a secondary button, and its chips and send disc step down to grey. */
+  --composer-bg: var(--surface-1);
+  --composer-chip-bg: var(--surface-2);
+  --composer-chip-hover-bg: var(--surface-3);
+  --send-disabled-bg: var(--surface-3);
 
   --text-primary: #161616;
   --text-secondary: #4c4c4c;
   --text-muted: #5c5c5c;
+  --content-color: var(--text-primary);
 
-  /* Volt deepened until it carries white text (5.7:1) and reads as text on --surface-2 (5.0:1). */
+  /* Volt deepened until it carries white text (5.7:1) and reads as text on --surface-2 (5.9:1). */
   --accent: #2850b8;
   --accent-color: var(--accent);
   --accent-strong: #1f419a;
@@ -184,20 +281,28 @@ body[data-theme='light'] {
 
   --color-success: #036a4c;
   --color-error: #b4233f;
-  --color-warning: #a23d0e;
+  /* A clear orange (hue 29°), well clear of the error rose (348°) at 6px; 4.9:1 on --surface-0
+     and 4.6:1 on --surface-2. */
+  --color-warning: #a35000;
+  /* 3.2:1 on the rail (--surface-0) and 3.4:1 on the canvas: enough for a dot, not for text. */
+  --color-warning-mark: #d06a0a;
+  /* A brighter rose for a failed dot, 3.5:1 on the rail: the text colour's dark crimson read
+     close to the near-black unread dot at 6px. */
+  --color-error-mark: #e0445f;
   --color-error-fill: #b3123a;
   --color-success-fill: #04704f;
-  --color-folder: #9c7a1c;
+  --color-warning-fill: #a35000;
   --color-merged: #6248c0;
 
-  --message-user-bg: var(--surface-3);
+  --message-user-bg: var(--surface-2);
   --message-user-text: var(--text-primary);
   --message-agent-bg: transparent;
   --message-agent-text: var(--text-primary);
 
   --modal-overlay: rgba(0, 0, 0, 0.35);
   --focus-ring: 0 0 0 3px rgba(40, 80, 184, 0.26);
-  --brand-helmet: #d6d6d6;
+  /* A step darker than the dark theme's, so the helmet keeps its shape on the pale canvas. */
+  --brand-helmet: #c8c8c8;
   --brand-shade: #a6a6a6;
   --shadow: rgba(0, 0, 0, 0.08);
   --shadow-lg: rgba(0, 0, 0, 0.12);
@@ -259,7 +364,8 @@ select {
    icon: the rounded container shows focus, and the bare input inside it
    draws no square ring of its own. */
 .field-shell:focus-within {
-  box-shadow: var(--focus-ring);
+  border-color: var(--field-focus-border);
+  box-shadow: var(--field-focus-glow);
 }
 
 .field-shell :is(input, textarea):focus-visible {
@@ -284,6 +390,47 @@ select {
   display: inline-flex;
   vertical-align: middle;
   flex-shrink: 0;
+}
+
+/* A small heading over a group of rows: the sidebar's Projects and Chats, menu groups, the side
+   panel's folder name, the settings navigation. One look for the role, in sentence case, so a
+   name such as a project folder reads as it is written. */
+.section-heading {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* One count badge for the rails, the header and the side panel's tabs: on the button's top-right
+   corner, cut out of the glyph by a ring in the host's surface (--badge-ring, which a host whose
+   fill changes on hover sets to that fill). A total is grey; a count of chats waiting on you takes
+   the waiting dot's hue. */
+.count-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  min-width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  padding: 0 4px;
+  border-radius: var(--radius-full);
+  box-shadow: 0 0 0 1.5px var(--badge-ring, var(--surface-0));
+  color: var(--text-primary);
+  background: var(--surface-4);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.count-badge.is-attention {
+  color: var(--on-semantic);
+  background: var(--color-warning-fill);
 }
 
 /* ============================================
@@ -349,12 +496,34 @@ select {
   opacity: 0.9;
 }
 
+/* "project / title": the project is muted and ellipsizes first, so the title keeps its words. */
+.title-bar-crumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.title-bar-project {
+  flex: 0 1000 auto;
+  min-width: 0;
+  max-width: min(14vw, 200px);
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+}
+
 .title-bar-divider {
+  flex: none;
   color: var(--text-muted);
   opacity: 0.55;
 }
 
 .title-bar-context {
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: min(34vw, 420px);
   overflow: hidden;
   color: var(--text-secondary);
@@ -384,15 +553,10 @@ select {
   -webkit-app-region: no-drag;
 }
 
+/* Settings opens under the app's own title bar, which stays on top with its crumb and actions. */
 .app.settings-open .title-bar {
   position: relative;
   z-index: 1001;
-  background: var(--app-bg);
-}
-
-.app.settings-open .title-bar-left,
-.app.settings-open .title-bar-actions {
-  visibility: hidden;
 }
 
 .app.settings-open .settings-overlay {
@@ -424,13 +588,13 @@ select {
 }
 
 .window-control:hover {
-  background-color: var(--surface-3);
+  background-color: var(--surface-2);
   color: var(--text-primary);
 }
 
 .window-control.close:hover {
-  background-color: #c44;
-  color: white;
+  background-color: var(--window-close-bg);
+  color: var(--on-semantic);
 }
 
 .theme-toggle-button,
@@ -439,7 +603,9 @@ select {
   background: transparent;
   border: none;
   cursor: pointer;
-  padding: var(--space-2);
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   transition: var(--transition-ui);
@@ -457,13 +623,19 @@ select {
 
 .theme-toggle-button:hover,
 .settings-button:hover {
-  background-color: var(--surface-3);
+  background-color: var(--surface-2);
   color: var(--text-primary);
 }
 
 .theme-toggle-button:active,
-.settings-button:active {
-  opacity: 0.8;
+.settings-button:active,
+.settings-button.active {
+  background-color: var(--surface-3);
+}
+
+/* Settings is the view shown, as a toolbar's active button. */
+.settings-button.active {
+  color: var(--text-primary);
 }
 
 /* The sun sets and the moon rises as the theme switches. */
@@ -476,14 +648,6 @@ select {
     opacity: 0;
     transform: rotate(-90deg) scale(0.5);
   }
-}
-
-.settings-button svg {
-  transition: transform var(--duration-slow) var(--ease-out);
-}
-
-.settings-button:hover svg {
-  transform: rotate(60deg);
 }
 
 /* Sections that slide open (Reveal.tsx) animate to their natural height, whatever it becomes. */
@@ -562,20 +726,16 @@ select {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--app-bg, #0f0f0f);
-}
-
-[data-theme='light'] .app-loading {
-  background: #f5f5f5;
+  background: var(--app-bg);
 }
 
 .app-loading-content {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-4);
   opacity: 0;
-  animation: splash-fade-in 120ms ease forwards;
+  animation: splash-fade-in var(--duration-fast) ease forwards;
   animation-delay: 40ms;
 }
 
@@ -588,13 +748,7 @@ select {
 .app-loading-name {
   font-size: var(--text-lg);
   font-weight: 600;
-  letter-spacing: 0.3px;
-  color: var(--text-primary, #e8e8e8);
-  opacity: 0.7;
-}
-
-[data-theme='light'] .app-loading-name {
-  color: #1a1a1a;
+  color: var(--text-secondary);
 }
 
 @keyframes splash-fade-in {
@@ -648,8 +802,8 @@ select {
     box-shadow: var(--shadow-panel);
   }
 
-  .title-bar-context,
-  .title-bar-divider {
+  /* Settings keeps its crumb, which is all its title bar says. */
+  .app:not(.settings-open) .title-bar-crumb {
     display: none;
   }
 }

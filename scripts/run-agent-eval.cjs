@@ -9,13 +9,15 @@ const {
 warnAboutLocalEnvironment(loadAgentEvalEnvironment())
 const evaluation = resolveAgentEvalEnvironment()
 
-const suite = process.argv.includes('--verification')
-  ? 'verification'
-  : process.argv.includes('--visual')
-    ? 'visual'
-    : process.argv.includes('--quick')
-      ? 'quick'
-      : process.env.SIDEKICK_AGENT_EVAL_SUITE || 'full'
+const suite = process.argv.includes('--replay')
+  ? 'replay'
+  : process.argv.includes('--verification')
+    ? 'verification'
+    : process.argv.includes('--visual')
+      ? 'visual'
+      : process.argv.includes('--quick')
+        ? 'quick'
+        : process.env.SIDEKICK_AGENT_EVAL_SUITE || 'full'
 
 if (!evaluation.apiKey) {
   console.error(
@@ -26,8 +28,20 @@ if (!evaluation.apiKey) {
 
 console.info(`[agent-eval] using ${evaluation.credentialSource}`)
 
+function revision() {
+  const git = (...args) =>
+    spawnSync('git', args, { cwd: join(__dirname, '..'), encoding: 'utf8' }).stdout?.trim() || ''
+  const head = git('rev-parse', '--short=8', 'HEAD')
+  return head && git('status', '--porcelain') ? `${head}+changes` : head || 'local'
+}
+
 const runner = join(__dirname, 'run-vitest.cjs')
-const vitestArgs = [runner, 'src/main/evals/agentHarness.live.test.ts']
+const vitestArgs = [
+  runner,
+  suite === 'replay'
+    ? 'src/main/evals/replay.live.test.ts'
+    : 'src/main/evals/agentHarness.live.test.ts'
+]
 if (suite === 'verification') vitestArgs.push('-t', 'production completion guard')
 if (suite === 'visual') vitestArgs.push('-t', 'self-contained SVG visual')
 const result = spawnSync(process.execPath, vitestArgs, {
@@ -39,7 +53,9 @@ const result = spawnSync(process.execPath, vitestArgs, {
     SIDEKICK_AGENT_EVAL_API_KEY: evaluation.apiKey,
     SIDEKICK_AGENT_EVAL_PROVIDER_KIND: evaluation.providerKind,
     SIDEKICK_AGENT_EVAL_URL: evaluation.url,
-    SIDEKICK_AGENT_EVAL_MODEL: evaluation.model
+    SIDEKICK_AGENT_EVAL_MODEL: evaluation.model,
+    // Reports from two branches name the revision each one measured.
+    SIDEKICK_AGENT_EVAL_REVISION: revision()
   }
 })
 

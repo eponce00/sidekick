@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useMemo,
   useState,
   useEffect,
   useRef,
@@ -8,41 +9,19 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  AlertTriangle,
-  ArrowUp,
-  Loader2,
-  MoreHorizontal,
-  ChevronRight,
-  File,
-  Folder,
   Columns2,
   Maximize2,
   PanelRight,
   PanelRightClose,
-  X,
-  History,
   FolderTree,
-  MonitorUp,
-  RefreshCw,
-  RotateCcw,
+  Globe,
   SquareTerminal,
-  Trash2,
   Workflow
 } from 'lucide-react'
-import ConfirmDialog from './ConfirmDialog'
 import { TerminalPanel } from './TerminalPanel'
 import { subscribeTerminalView, useTerminalSessions } from '../utils/terminalSessionStore'
 import { terminalSessionIsLive } from '../../../shared/terminalSessions'
 import type { TodoItem } from '../../../shared/types'
-import type { PinnedModel } from '../types/models.types'
-import {
-  CHECKPOINT_TITLE_VERSION,
-  type CheckpointHistoryItem,
-  type HistoryConflict
-} from '../../../shared/checkpointTitles'
-import { workspacePermissionOperation } from '../../../shared/permissions'
-import { authorizeCheckpointMutation } from '../utils/checkpointAuthorization'
-import { useCheckpointTitleBackfill } from '../hooks/useCheckpointTitleBackfill'
 import BrowserActivityPanel from './BrowserActivityPanel'
 import { EMPTY_BROWSER_ACTIVITY, type BrowserActivityState } from '../utils/browserActivity'
 import {
@@ -56,25 +35,37 @@ import {
   clampActivityPanelWidth,
   snapActivityPanelWidth
 } from '../utils/activityPanelLayout'
-import { WorkspaceFileViewer } from './WorkspaceFileViewer'
+import { FilesPanel } from './FilesPanel'
 import {
   subscribeWorkspaceFileView,
   type WorkspaceFileViewRequest
 } from '../utils/workspaceFileViewer'
 import { ChatsTab } from './ChatsPanel'
 import { useSessionFamily } from '../hooks/useSessionFamily'
+import { PanelSections, type PanelAppInfo } from './sidePanel/PanelSections'
+import { isPanelWindowApp, type PanelWindowEntry } from '../../../shared/panelWindows'
+import {
+  findApp,
+  openApp,
+  removeApp,
+  shownApps,
+  storePanelLayout,
+  storedPanelLayout,
+  type PanelApp,
+  type PanelLayout,
+  type PanelTabKind
+} from './sidePanel/panelLayout'
 import './ActivityPanel.css'
 
-type ActivityTab = 'checkpoints' | 'files' | 'browser' | 'terminal' | 'chats'
+type ActivityTab = PanelApp
 
 /** Where a dragged edge would leave the panel if let go now. */
 type PanelLanding = 'fold' | 'full' | 'narrow' | 'split' | 'free'
 
+/** The tab an older SideKick left showing, for the first layout. */
 function storedActivityTab(): ActivityTab {
   const value = window.localStorage.getItem('activityPanelTab')
-  return value === 'checkpoints' || value === 'browser' || value === 'terminal' || value === 'chats'
-    ? value
-    : 'files'
+  return value === 'browser' || value === 'terminal' || value === 'chats' ? value : 'files'
 }
 
 interface ActivityPanelProps {
@@ -83,20 +74,13 @@ interface ActivityPanelProps {
   conversationId?: string | null
   focusChainTodos: TodoItem[]
   workspaceFolder: string | null
-  historyWorkspaceFolder?: string | null
-  historyReadOnly?: boolean
-  /** Increment this whenever a new checkpoint is created to trigger auto-refresh */
-  checkpointVersion?: number
-  /** When set, marks this hash as HEAD in the timeline (e.g. after a rewind restore) */
-  restoredHash?: string
-  /** Called after a goto/hard-reset action — rolls back chat conversation to this checkpoint */
-  onGoToCheckpoint?: (hash: string) => void
-  titleModel?: PinnedModel
-  fastModelName?: string
+  /** The folder is the chat's own, as it has no project. */
+  chatFolder?: boolean
   isAgentBusy?: boolean
   /** Shows a tab when `at` changes, as when the command palette asks for the browser. */
   tabRequest?: { tab: ActivityTab; at: number } | null
-  onActiveTabChange?: (tab: ActivityTab) => void
+  /** The app on screen: the browser while it shows anywhere, else the last section used's. */
+  onActiveTabChange?: (tab: PanelTabKind) => void
   /** The widest the panel may render now; its preferred width is kept for later. */
   maxWidth?: number
   /** The width the user left it at; the layout keeps it and makes room for it. */
@@ -118,6 +102,12 @@ interface ActivityPanelProps {
   onSettle?: () => void
   /** Opens another chat, from the Chats tab. */
   onOpenConversation?: (conversationId: string) => void
+  /** Opens a project folder for the chat, from the Files tab while it has none. */
+  onOpenProject?: () => void
+  /** Opens Settings where the browser's own settings are. */
+  onOpenBrowserSettings?: () => void
+  /** Whether what the panel shows needs its width, or only the narrow column. */
+  onNeedsRoomChange?: (needsRoom: boolean) => void
 }
 
 function ActivityPanel({
@@ -125,13 +115,7 @@ function ActivityPanel({
   onTogglePin,
   conversationId = null,
   workspaceFolder,
-  historyWorkspaceFolder = workspaceFolder,
-  historyReadOnly = false,
-  checkpointVersion = 0,
-  restoredHash,
-  onGoToCheckpoint,
-  titleModel,
-  fastModelName,
+  chatFolder = false,
   isAgentBusy = false,
   tabRequest = null,
   onActiveTabChange,
@@ -143,22 +127,95 @@ function ActivityPanel({
   sideBySideMaxWidth,
   snapWidths = [ACTIVITY_PANEL_NARROW_WIDTH],
   onSettle,
-  onOpenConversation
+  onOpenConversation,
+  onOpenProject,
+  onOpenBrowserSettings,
+  onNeedsRoomChange
 }: ActivityPanelProps): React.JSX.Element {
-  const systemTrashName = window.api.app.platform === 'windows' ? 'Recycle Bin' : 'Trash'
-  const [activeTab, setActiveTab] = useState<ActivityTab>(storedActivityTab)
+  const [layout, setLayout] = useState<PanelLayout>(() => storedPanelLayout(storedActivityTab()))
+  useEffect(() => storePanelLayout(layout), [layout])
+  // This chat's apps dragged out into windows of their own.
+  const [panelWindows, setPanelWindows] = useState<PanelWindowEntry[]>([])
+  useEffect(() => {
+    const api = window.api.panelWindows
+    if (!api) return
+    void api.list().then(setPanelWindows)
+    return api.onChanged(setPanelWindows)
+  }, [])
+  const detached = useMemo(
+    () =>
+      new Set<ActivityTab>(
+        panelWindows
+          .filter((entry) => entry.conversationId === conversationId)
+          .map((entry) => entry.app)
+      ),
+    [panelWindows, conversationId]
+  )
+  const detachedRef = useRef(detached)
+  useEffect(() => {
+    detachedRef.current = detached
+  }, [detached])
+  /**
+   * Shows an app: its window when it has one of its own, else its tab, else a new tab in the
+   * section last used. Says whether it shows in the panel.
+   */
+  const showApp = useCallback(
+    (app: ActivityTab): boolean => {
+      if (conversationId && isPanelWindowApp(app) && detachedRef.current.has(app)) {
+        void window.api.panelWindows.focus({ app, conversationId })
+        return false
+      }
+      setLayout((current) => openApp(current, app))
+      return true
+    },
+    [conversationId]
+  )
+  // A window put back: its app shows in the panel again, its tab lighting up as it lands.
+  const [arriving, setArriving] = useState<ActivityTab | null>(null)
+  const isPinnedRef = useRef(isPinned)
+  useEffect(() => {
+    isPinnedRef.current = isPinned
+  }, [isPinned])
+  useEffect(
+    () =>
+      window.api.panelWindows?.onDocked((entry) => {
+        if (entry.conversationId !== conversationId) return
+        setLayout((current) => openApp(current, entry.app))
+        setArriving(entry.app)
+        window.setTimeout(
+          () => setArriving((current) => (current === entry.app ? null : current)),
+          800
+        )
+        if (!isPinnedRef.current) onTogglePin()
+      }),
+    [conversationId, onTogglePin]
+  )
+  const tearOut = (app: ActivityTab, point: { x: number; y: number }): void => {
+    if (!conversationId || !isPanelWindowApp(app)) return
+    void window.api.panelWindows
+      .open({ app, conversationId, ...point })
+      .then((opened) => opened && setLayout((current) => removeApp(current, app)))
+  }
   const sessionFamily = useSessionFamily(conversationId)
   const familyRole = sessionFamily.role
-  // The Chats tab exists only for a chat with a family; elsewhere a remembered choice of it
-  // shows Files instead.
-  const shownTab: ActivityTab = activeTab === 'chats' && !familyRole ? 'files' : activeTab
+  // The Chats app exists only for a chat with a family; elsewhere its tab closes.
+  if (!familyRole && findApp(layout, 'chats')) setLayout((current) => removeApp(current, 'chats'))
+  const shown = shownApps(layout)
+  const filesShown = isPinned && shown.includes('files')
   const [handledTabRequestAt, setHandledTabRequestAt] = useState(tabRequest?.at)
   if (tabRequest && tabRequest.at !== handledTabRequestAt) {
     setHandledTabRequestAt(tabRequest.at)
-    setActiveTab(tabRequest.tab)
+    setLayout((current) => openApp(current, tabRequest.tab))
   }
   const [browserActivity, setBrowserActivity] =
     useState<BrowserActivityState>(EMPTY_BROWSER_ACTIVITY)
+  // An empty browser tab, or a new tab's launcher, needs no room: the panel keeps the narrow
+  // column until a page shows, instead of taking the chat's width for nothing.
+  const [browserPageShown, setBrowserPageShown] = useState(false)
+  const needsRoom =
+    !isPinned || shown.some((app) => app !== 'launcher' && (app !== 'browser' || browserPageShown))
+  const needsRoomRef = useRef(needsRoom)
+  const autoOpenedWaitRef = useRef<string | null>(null)
   const autoOpenedBrowserRunRef = useRef<string | null>(null)
   // While the edge is dragged nothing else moves: a phantom shows where the panel will land and
   // what letting go will do. Let go, the panel glides there once (is-gliding), so the chat and the
@@ -179,6 +236,15 @@ function ActivityPanel({
     glideTimerRef.current = window.setTimeout(() => setIsGliding(false), PANEL_GLIDE_MS + 40)
   }
   useEffect(() => () => window.clearTimeout(glideTimerRef.current), [])
+  // When a page opens in an empty browser, or the panel goes back to showing nothing that needs
+  // room, it glides between the narrow column and its width.
+  useEffect(() => {
+    if (needsRoomRef.current === needsRoom) return
+    needsRoomRef.current = needsRoom
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the width it glides to is the app's
+    glide()
+    onNeedsRoomChange?.(needsRoom)
+  })
   const resizeStartRef = useRef({ x: 0, width, landing: 'free' as PanelLanding })
   // The drag reads the latest layout and callbacks without restarting.
   const dragContextRef = useRef({
@@ -205,27 +271,13 @@ function ActivityPanel({
       onSettle
     }
   })
-  const [checkpoints, setCheckpoints] = useState<CheckpointHistoryItem[]>([])
-  const [checkpointsLoading, setCheckpointsLoading] = useState(false)
-  const [historyActionError, setHistoryActionError] = useState<{
-    message: string
-    conflicts?: HistoryConflict[]
-  } | null>(null)
-  const [restoringHash, setRestoringHash] = useState<string | null>(null)
-  // null = none, 'goto' | 'reset' = type of confirm
-  const [pendingAction, setPendingAction] = useState<{
-    hash: string
-    type: 'goto' | 'reset'
-    message: string
-  } | null>(null)
-  // Track the "HEAD" — the most-recently-restored hash (null = tip/latest)
-  const [headHash, setHeadHash] = useState<string | null>(null)
-  const headItemRef = useRef<HTMLDivElement>(null)
-
+  // The app the user is looking at; the browser counts as long as it is on screen.
+  const focusedApp =
+    shown[layout.sections.findIndex((section) => section.id === layout.focusedSectionId)] ?? 'files'
+  const reportedTab = shown.includes('browser') ? 'browser' : focusedApp
   useEffect(() => {
-    window.localStorage.setItem('activityPanelTab', activeTab)
-    onActiveTabChange?.(activeTab)
-  }, [activeTab, onActiveTabChange])
+    onActiveTabChange?.(reportedTab)
+  }, [reportedTab, onActiveTabChange])
 
   useEffect(() => {
     if (!isResizing) return
@@ -342,12 +394,19 @@ function ActivityPanel({
       setBrowserActivity(state)
       const latest = state.timeline[state.timeline.length - 1]
       const isLive = latest?.status === 'running' || latest?.status === 'pending'
-      if (!state.runId || !isLive || autoOpenedBrowserRunRef.current === state.runId) return
+      if (!state.runId || !isLive) return
+      // The agent waits for the user to clear a check on the page: show it to them.
+      const waitsForUser =
+        latest.name === 'browser_request_human' && autoOpenedWaitRef.current !== latest.callId
+      if (autoOpenedBrowserRunRef.current === state.runId && !waitsForUser) return
       autoOpenedBrowserRunRef.current = state.runId
-      setActiveTab('browser')
-      if (!isPinned) onTogglePin()
+      if (waitsForUser) autoOpenedWaitRef.current = latest.callId
+      // A browser in its own window is in view already; it comes forward only for the user's check.
+      if (detachedRef.current.has('browser') && !waitsForUser) return
+      if (showApp('browser') && !isPinned) onTogglePin()
     },
-    [isPinned, onTogglePin]
+    // The stable setter is listed because the React Compiler cannot prove it stable here.
+    [isPinned, onTogglePin, showApp, setBrowserActivity]
   )
 
   const beginResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
@@ -399,67 +458,34 @@ function ActivityPanel({
     onWidthChange?.(Math.min(clampActivityPanelWidth(next, window.innerWidth), sideBySideMax))
   }
 
-  // The tab already showing folds the panel to its rail, as VS Code's side bar does.
-  const selectTab = (tab: ActivityTab): void => {
-    if (isPinned && shownTab === tab) onTogglePin()
-    else setActiveTab(tab)
-  }
-
   const openCollapsedTab = (tab: ActivityTab): void => {
-    setActiveTab(tab)
-    onTogglePin()
+    if (showApp(tab)) onTogglePin()
   }
 
   const latestBrowserItem = browserActivity.timeline[browserActivity.timeline.length - 1]
   const browserIsLive =
     latestBrowserItem?.status === 'running' || latestBrowserItem?.status === 'pending'
 
-  useCheckpointTitleBackfill({
-    enabled: activeTab === 'checkpoints' && !checkpointsLoading && !historyReadOnly,
-    workspaceFolder: historyWorkspaceFolder,
-    checkpoints,
-    model: titleModel,
-    fastModelName,
-    isAgentBusy,
-    onTitleApplied: (hash, title) => {
-      setCheckpoints((current) =>
-        current.map((checkpoint) =>
-          checkpoint.hash === hash
-            ? {
-                ...checkpoint,
-                message: title,
-                titleSource: 'generated',
-                titleVersion: CHECKPOINT_TITLE_VERSION
-              }
-            : checkpoint
-        )
-      )
-    }
-  })
-
-  // File explorer state
-  const [fileMap, setFileMap] = useState<Map<string, string[]>>(new Map())
-  const [fileTreeLoading, setFileTreeLoading] = useState(false)
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
-  const [fileRootName, setFileRootName] = useState<string>('')
-  const [fileRefreshKey, setFileRefreshKey] = useState(0)
-  const [viewedFile, setViewedFile] = useState<WorkspaceFileViewRequest | null>(null)
+  const [fileRequest, setFileRequest] = useState<{
+    request: WorkspaceFileViewRequest
+    at: number
+  } | null>(null)
   const [terminalRequest, setTerminalRequest] = useState<{ id: string; at: number } | null>(null)
   const terminalSessions = useTerminalSessions(conversationId)
   const terminalIsLive = terminalSessions.some((session) => terminalSessionIsLive(session.state))
-  const terminalIsWaiting = terminalSessions.some(
+  const terminalWaitingCount = terminalSessions.filter(
     (session) => session.state === 'waiting_for_input'
-  )
+  ).length
+  const terminalIsWaiting = terminalWaitingCount > 0
 
   // "Open in Terminal" on a command in the chat shows it here.
   useEffect(
     () =>
       subscribeTerminalView((id) => {
         setTerminalRequest({ id, at: Date.now() })
-        setActiveTab('terminal')
-        if (!isPinned) onTogglePin()
+        if (showApp('terminal') && !isPinned) onTogglePin()
       }),
-    [isPinned, onTogglePin]
+    [isPinned, onTogglePin, showApp]
   )
 
   // A file reference clicked anywhere in the app opens here, over the tree,
@@ -467,296 +493,112 @@ function ActivityPanel({
   useEffect(
     () =>
       subscribeWorkspaceFileView((request) => {
-        setViewedFile(request)
-        setActiveTab('files')
-        if (!isPinned) onTogglePin()
+        setFileRequest({ request, at: Date.now() })
+        if (showApp('files') && !isPinned) onTogglePin()
       }),
-    [isPinned, onTogglePin]
+    [isPinned, onTogglePin, showApp]
   )
-
-  // The viewer is per-workspace; a project switch closes it.
-  useEffect(() => {
-    setViewedFile(null)
-  }, [workspaceFolder])
-  const [pendingFileDelete, setPendingFileDelete] = useState<string | null>(null)
-  const [deletingFile, setDeletingFile] = useState<string | null>(null)
-  const [fileActionError, setFileActionError] = useState<string | null>(null)
-
-  const loadCheckpoints = useCallback(async (): Promise<void> => {
-    if (!historyWorkspaceFolder) {
-      setCheckpoints([])
-      return
-    }
-    const result = await window.api.workspace.listCheckpoints(historyWorkspaceFolder)
-    setCheckpoints(result.ok ? result.checkpoints : [])
-    if (result.ok) setHeadHash(result.status?.appliedHash ?? result.checkpoints[0]?.hash ?? null)
-    else setHistoryActionError({ message: result.error || 'History could not be loaded.' })
-  }, [historyWorkspaceFolder])
-
-  useEffect(() => {
-    setPendingAction(null)
-    setHeadHash(null)
-    setHistoryActionError(null)
-  }, [historyReadOnly, historyWorkspaceFolder])
-
-  // Load checkpoints when switching to that tab OR when a new checkpoint is created
-  useEffect(() => {
-    if (activeTab !== 'checkpoints') return
-    setCheckpointsLoading(true)
-    loadCheckpoints()
-      .catch(() => setCheckpoints([]))
-      .finally(() => setCheckpointsLoading(false))
-  }, [activeTab, checkpointVersion, loadCheckpoints])
-
-  // When a new checkpoint is created, reset HEAD to tip so the latest entry shows as HEAD.
-  // When an external restore happens (rewind), set HEAD to the restored hash.
-  useEffect(() => {
-    if (restoredHash) setHeadHash(restoredHash)
-  }, [checkpointVersion, restoredHash])
-
-  // Scroll the HEAD item into view when checkpoints load
-  useEffect(() => {
-    if (activeTab === 'checkpoints' && !checkpointsLoading && headItemRef.current) {
-      headItemRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    }
-  }, [checkpointsLoading, activeTab])
-
-  // Load file tree when switching to files tab or on refresh
-  useEffect(() => {
-    if (activeTab !== 'files') return
-    let cancelled = false
-    setFileTreeLoading(true)
-    const load = async (): Promise<void> => {
-      if (!workspaceFolder || cancelled) {
-        setFileMap(new Map())
-        setFileRootName('')
-        setFileTreeLoading(false)
-        return
-      }
-      const rootName = workspaceFolder.replace(/\\/g, '/').split('/').pop() || workspaceFolder
-      if (!cancelled) setFileRootName(rootName)
-      const result = await window.api.workspace.listFiles(workspaceFolder)
-      if (!result.ok || cancelled) {
-        setFileTreeLoading(false)
-        return
-      }
-      const normalize = (p: string): string => p.replace(/\\/g, '/')
-      const map = new Map<string, string[]>()
-      map.set('', [])
-      for (const rawFile of result.files) {
-        const f = normalize(rawFile)
-        const isDir = f.endsWith('/')
-        const fClean = isDir ? f.slice(0, -1) : f
-        const lastSlash = fClean.lastIndexOf('/')
-        const parent = lastSlash >= 0 ? fClean.slice(0, lastSlash + 1) : ''
-        if (!map.has(parent)) map.set(parent, [])
-        map.get(parent)!.push(f)
-        if (isDir && !map.has(f)) map.set(f, [])
-      }
-      if (!cancelled) {
-        setFileMap(map)
-        setFileTreeLoading(false)
-      }
-    }
-    load().catch(() => {
-      if (!cancelled) setFileTreeLoading(false)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [activeTab, fileRefreshKey, workspaceFolder])
-
-  // The tree follows the folder on disk, so it never needs a manual refresh.
-  useEffect(() => {
-    if (!workspaceFolder) return
-    return window.api.workspace.watchFiles(workspaceFolder, () => {
-      setFileRefreshKey((k) => k + 1)
-    })
-  }, [workspaceFolder])
-
-  useEffect(() => {
-    setPendingFileDelete(null)
-    setDeletingFile(null)
-    setFileActionError(null)
-  }, [workspaceFolder])
-
-  const moveFileToTrash = async (filePath: string): Promise<void> => {
-    if (!workspaceFolder || deletingFile || isAgentBusy) return
-    setDeletingFile(filePath)
-    setFileActionError(null)
-    try {
-      // The in-app confirmation is the explicit approval for this user-initiated action.
-      // Always Ask mode may still require the global native approval dialog.
-      const requestedAccess = 'auto' as const
-      const authorization = await window.api.permissions.authorize(
-        workspacePermissionOperation('delete', filePath, undefined, requestedAccess)
-      )
-      if (!authorization.approved || !authorization.token) return
-
-      const result = await window.api.workspace.trashFile(workspaceFolder, filePath, {
-        requestedAccess,
-        authorizationToken: authorization.token
-      })
-      if (!result.ok)
-        throw new Error(result.error || `Could not move the file to ${systemTrashName}`)
-      setFileRefreshKey((key) => key + 1)
-    } catch (error) {
-      setFileActionError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setDeletingFile(null)
-    }
+  // Files takes the request while it is on screen; it is let go when Files hides, so showing
+  // Files again later starts at the tree, not at a file the user already closed.
+  const [filesWereShown, setFilesWereShown] = useState(filesShown)
+  if (filesShown !== filesWereShown) {
+    setFilesWereShown(filesShown)
+    if (!filesShown) setFileRequest(null)
   }
 
-  const showPathMenu = (filePath: string, isDirectory: boolean): void => {
-    if (!workspaceFolder) return
-    setFileActionError(null)
-    void window.api.workspace
-      .showPathMenu(filePath, workspaceFolder, isDirectory)
-      .catch((error) => setFileActionError(error instanceof Error ? error.message : String(error)))
-  }
-
-  const executeAction = async (): Promise<void> => {
-    if (!pendingAction || historyReadOnly || isAgentBusy) return
-    const { hash, type } = pendingAction
-    setPendingAction(null)
-    setHistoryActionError(null)
-    if (!workspaceFolder) return
-    setRestoringHash(hash)
-    try {
-      const authorization = await authorizeCheckpointMutation(
-        type === 'goto' ? 'restore' : 'hard-reset',
-        hash
-      )
-      if (!authorization) return
-      if (type === 'goto') {
-        const result = await window.api.workspace.restoreCheckpoint(
-          workspaceFolder,
-          hash,
-          authorization
-        )
-        if (!result.ok) {
-          setHistoryActionError({
-            message: result.error ?? 'This history point could not be restored.',
-            conflicts: result.conflicts
-          })
-          return
+  const familyWaitingCount = sessionFamily.family
+    ? [sessionFamily.family.manager, ...sessionFamily.family.workers].filter(
+        (member) =>
+          (sessionFamily.statuses.get(member.conversationId)?.state ?? member.state) === 'waiting'
+      ).length
+    : 0
+  const familyWaiting = familyWaitingCount > 0
+  const panelApps: Partial<Record<PanelApp, PanelAppInfo>> = {
+    ...(familyRole
+      ? {
+          chats: {
+            label: familyRole === 'manager' ? 'Chats' : 'Details',
+            description:
+              familyRole === 'manager' ? 'The chats started here' : 'This chat and its family',
+            icon: <Workflow size={15} />,
+            ...(familyWaiting
+              ? { badge: 'waiting' as const, waitingCount: familyWaitingCount }
+              : {})
+          }
         }
-        setHeadHash(hash)
-        onGoToCheckpoint?.(hash)
-      } else {
-        const result = await window.api.workspace.hardResetCheckpoint(
-          workspaceFolder,
-          hash,
-          authorization
-        )
-        if (!result.ok) {
-          setHistoryActionError({
-            message: result.error ?? 'The newer history could not be removed.',
-            conflicts: result.conflicts
-          })
-          return
-        }
-        setHeadHash(hash)
-        onGoToCheckpoint?.(hash)
-      }
-      await loadCheckpoints()
-    } catch (error) {
-      setHistoryActionError({
-        message: error instanceof Error ? error.message : 'History action failed.'
-      })
-    } finally {
-      setRestoringHash(null)
+      : {}),
+    files: {
+      label: 'Files',
+      description: "The project's files",
+      icon: <FolderTree size={15} />
+    },
+    browser: {
+      label: 'Browser',
+      description: 'The browser you share with the agent',
+      icon: <Globe size={15} />,
+      ...(browserIsLive ? { badge: 'live' as const } : {})
+    },
+    terminal: {
+      label: 'Terminal',
+      description: "Your terminals and the agent's commands",
+      icon: <SquareTerminal size={15} />,
+      ...(terminalIsLive
+        ? terminalIsWaiting
+          ? { badge: 'waiting' as const, waitingCount: terminalWaitingCount }
+          : { badge: 'live' as const }
+        : {})
     }
   }
-
-  const renderFileTreeLevel = (parentPath: string, depth: number): React.ReactNode => {
-    const children = fileMap.get(parentPath) || []
-    const sorted = [...children].sort((a, b) => {
-      const aDir = a.endsWith('/')
-      const bDir = b.endsWith('/')
-      if (aDir && !bDir) return -1
-      if (!aDir && bDir) return 1
-      return a.localeCompare(b)
-    })
-    return sorted.map((child) => {
-      const isDir = child.endsWith('/')
-      const withoutTrailing = isDir ? child.slice(0, -1) : child
-      const name = withoutTrailing.split('/').pop() || withoutTrailing
-      const isExpanded = expandedFolders.has(child)
+  const browserPlaced = isPinned && Boolean(findApp(layout, 'browser')) && !detached.has('browser')
+  const renderApp = (kind: PanelApp, active: boolean): React.ReactNode => {
+    // In a window of its own, an app is not shown here too: its tab says where it is.
+    if (detached.has(kind))
       return (
-        <div key={child}>
-          <div
-            className="file-node-row"
-            onContextMenu={(event) => {
-              event.preventDefault()
-              showPathMenu(withoutTrailing, isDir)
-            }}
-          >
+        active && (
+          <div className="activity-empty">
+            <p>{panelApps[kind]?.label ?? 'This app'} is in a window of its own</p>
             <button
-              className={`file-node${isDir ? ' file-node-dir' : ' file-node-file'}`}
-              style={{ paddingLeft: `${depth * 14 + 10}px` }}
-              onClick={() => {
-                if (isDir) {
-                  setExpandedFolders((prev) => {
-                    const next = new Set(prev)
-                    next.has(child) ? next.delete(child) : next.add(child)
-                    return next
-                  })
-                } else if (workspaceFolder) {
-                  setViewedFile({ workspaceRoot: workspaceFolder, filePath: withoutTrailing })
-                }
-              }}
-              onDoubleClick={() => {
-                if (!isDir && workspaceFolder) {
-                  void window.api.workspace.openFile(child, workspaceFolder)
-                }
-              }}
-              title={`${child} — double-click to open externally, right-click for file actions`}
+              type="button"
+              className="settings-secondary-action is-small activity-detached-focus"
+              onClick={() => showApp(kind)}
             >
-              <span className="file-node-chevron">
-                {isDir && (
-                  <ChevronRight
-                    size={10}
-                    style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
-                  />
-                )}
-              </span>
-              <span className="file-node-icon">
-                {isDir ? <Folder size={13} /> : <File size={13} />}
-              </span>
-              <span className="file-node-name">{name}</span>
+              Go to it
             </button>
-            <button
-              className="file-node-action"
-              onClick={() => showPathMenu(withoutTrailing, isDir)}
-              title={`More actions for ${name}`}
-              aria-label={`More actions for ${child}`}
-            >
-              <MoreHorizontal size={13} />
-            </button>
-            {!isDir && (
-              <button
-                className="file-node-delete"
-                onClick={() => {
-                  setFileActionError(null)
-                  setPendingFileDelete(child)
-                }}
-                disabled={deletingFile !== null || isAgentBusy}
-                title={`Delete ${name}`}
-                aria-label={`Delete ${child}`}
-              >
-                {deletingFile === child ? (
-                  <Loader2 size={12} className="icon-spin" />
-                ) : (
-                  <Trash2 size={12} />
-                )}
-              </button>
-            )}
           </div>
-          {isDir && isExpanded && renderFileTreeLevel(child, depth + 1)}
+        )
+      )
+    // The browser stays mounted while hidden, so it keeps following the agent's activity.
+    if (kind === 'browser')
+      return (
+        <div className="activity-browser-wrap" hidden={!active}>
+          <BrowserActivityPanel
+            conversationId={conversationId}
+            onActivityChange={handleBrowserActivityChange}
+            onOpenSettings={onOpenBrowserSettings}
+            onPageShownChange={setBrowserPageShown}
+          />
         </div>
       )
-    })
+    if (!active) return null
+    if (kind === 'files')
+      return (
+        <FilesPanel
+          workspaceFolder={workspaceFolder}
+          chatFolder={chatFolder}
+          isAgentBusy={isAgentBusy}
+          fileRequest={fileRequest}
+          onOpenProject={onOpenProject}
+        />
+      )
+    if (kind === 'terminal')
+      return <TerminalPanel conversationId={conversationId} requestedSessionId={terminalRequest} />
+    return conversationId ? (
+      <ChatsTab
+        conversationId={conversationId}
+        view={sessionFamily}
+        onOpenChat={(id) => onOpenConversation?.(id)}
+      />
+    ) : null
   }
 
   return (
@@ -810,7 +652,7 @@ function ActivityPanel({
               data-landing={landing}
               aria-hidden="true"
             >
-              {/* Remounted on each landing, so the edge and the icon pop as it settles. */}
+              {/* Remounted on each landing, so the icon fades in as it settles. */}
               <span key={`edge-${landing}`} className="activity-panel-phantom-edge" />
               {(landing !== 'fold' || isPinned) && landing !== 'free' && (
                 <span key={landing} className="activity-panel-phantom-icon">
@@ -828,384 +670,39 @@ function ActivityPanel({
             </div>,
             document.body
           )}
-        <div className="activity-header">
-          <div className={`activity-tabs${familyRole ? ' has-chats' : ''}`}>
-            {familyRole && (
-              <button
-                className={`activity-tab-button ${shownTab === 'chats' ? 'active' : ''}`}
-                onClick={() => selectTab('chats')}
-                title={familyRole === 'manager' ? 'Chats started here' : 'This chat and its family'}
-              >
-                <span className="activity-tab-icon-wrap">
-                  <Workflow size={16} />
-                  {sessionFamily.family &&
-                    [sessionFamily.family.manager, ...sessionFamily.family.workers].some(
-                      (member) =>
-                        (sessionFamily.statuses.get(member.conversationId)?.state ??
-                          member.state) === 'waiting'
-                    ) && (
-                      <span className="browser-live-dot is-waiting" aria-label="A chat needs you" />
-                    )}
-                </span>
-                <span className="tab-label">{familyRole === 'manager' ? 'Chats' : 'Details'}</span>
-              </button>
-            )}
-            <button
-              className={`activity-tab-button ${shownTab === 'files' ? 'active' : ''}`}
-              onClick={() => selectTab('files')}
-              title="Files"
-            >
-              <span className="activity-tab-icon-wrap">
-                <FolderTree size={16} />
-              </span>
-              <span className="tab-label">Files</span>
-            </button>
-            <button
-              className={`activity-tab-button ${shownTab === 'checkpoints' ? 'active' : ''}`}
-              onClick={() => selectTab('checkpoints')}
-              title="Advanced recovery"
-              aria-label="Open advanced recovery"
-            >
-              <span className="activity-tab-icon-wrap">
-                <History size={16} />
-              </span>
-              <span className="tab-label">Recovery</span>
-            </button>
-            <button
-              className={`activity-tab-button ${shownTab === 'browser' ? 'active' : ''}`}
-              onClick={() => selectTab('browser')}
-              title="Browser activity"
-              aria-label="Open browser activity"
-            >
-              <span className="activity-tab-icon-wrap">
-                <MonitorUp size={16} />
-                {browserIsLive && (
-                  <span className="browser-live-dot" aria-label="Browser is active" />
-                )}
-              </span>
-              <span className="tab-label">Browser</span>
-            </button>
-            <button
-              className={`activity-tab-button ${shownTab === 'terminal' ? 'active' : ''}`}
-              onClick={() => selectTab('terminal')}
-              title="Agent commands"
-              aria-label="Open the agent's terminal"
-            >
-              <span className="activity-tab-icon-wrap">
-                <SquareTerminal size={16} />
-                {terminalIsLive && (
-                  <span
-                    className={`browser-live-dot${terminalIsWaiting ? ' is-waiting' : ''}`}
-                    aria-label={
-                      terminalIsWaiting ? 'A command is waiting for input' : 'A command is running'
-                    }
-                  />
-                )}
-              </span>
-              <span className="tab-label">Terminal</span>
-            </button>
-          </div>
-          <button
-            type="button"
-            className="activity-panel-fold"
-            onClick={onTogglePin}
-            title="Fold the panel to its rail"
-            aria-label="Fold the panel to its rail"
-          >
-            <PanelRightClose size={16} />
-          </button>
-        </div>
-
         {isPinned ? (
           <div className="activity-content">
-            {shownTab === 'files' && viewedFile && (
-              <WorkspaceFileViewer
-                key={`${viewedFile.workspaceRoot}
-${viewedFile.filePath}`}
-                request={viewedFile}
-                onBack={() => setViewedFile(null)}
-              />
-            )}
-
-            {shownTab === 'files' && !viewedFile && (
-              <div className="file-explorer-wrap">
-                <div
-                  className="file-explorer-header"
-                  onContextMenu={(event) => {
-                    if (!workspaceFolder) return
-                    event.preventDefault()
-                    showPathMenu('', true)
-                  }}
-                >
-                  <span className="file-explorer-root-name">{fileRootName || 'Workspace'}</span>
-                  <button
-                    className="file-explorer-action"
-                    onClick={() => setFileRefreshKey((k) => k + 1)}
-                    title="Refresh file tree"
-                  >
-                    <RefreshCw size={13} />
-                  </button>
-                  {workspaceFolder && (
-                    <button
-                      className="file-explorer-action"
-                      onClick={() => showPathMenu('', true)}
-                      title="More actions for the project folder"
-                      aria-label="More actions for the project folder"
-                    >
-                      <MoreHorizontal size={13} />
-                    </button>
-                  )}
-                </div>
-                {fileActionError && (
-                  <div className="file-explorer-error" role="alert">
-                    <AlertTriangle size={12} />
-                    <span>{fileActionError}</span>
-                    <button
-                      onClick={() => setFileActionError(null)}
-                      title="Dismiss error"
-                      aria-label="Dismiss file error"
-                    >
-                      <X size={11} />
-                    </button>
-                  </div>
-                )}
-                {fileTreeLoading ? (
-                  <div className="activity-empty">
-                    <Loader2 size={16} className="icon-spin" />
-                    <p>Loading files...</p>
-                  </div>
-                ) : fileMap.size === 0 ? (
-                  <div className="activity-empty">
-                    <p>No project folder</p>
-                    <p className="hint">Open a project or move this chat into one</p>
-                  </div>
-                ) : (
-                  <div className="file-tree">{renderFileTreeLevel('', 0)}</div>
-                )}
-              </div>
-            )}
-
-            {shownTab === 'checkpoints' && (
-              <div className="checkpoints-timeline-wrap">
-                {historyReadOnly && (
-                  <div className="cp-readonly-banner">
-                    <History size={13} />
-                    <span>
-                      Detached from {historyWorkspaceFolder?.replace(/\\/g, '/').split('/').pop()} —
-                      history is read-only. Reattach this chat to restore files.
-                    </span>
-                  </div>
-                )}
-                {historyActionError && (
-                  <div className="cp-error-banner" role="alert">
-                    <AlertTriangle size={13} />
-                    <div>
-                      <span>{historyActionError.message}</span>
-                      {historyActionError.conflicts?.length ? (
-                        <ul>
-                          {historyActionError.conflicts.slice(0, 5).map((conflict) => (
-                            <li key={`${conflict.path}:${conflict.reason}`}>
-                              {conflict.path} —{' '}
-                              {conflict.reason === 'staged-in-git'
-                                ? 'saved for a commit in another Git tool'
-                                : conflict.reason === 'unsupported-file'
-                                  ? 'is no longer a regular file'
-                                  : 'was changed after this point was saved'}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : null}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setHistoryActionError(null)}
-                      aria-label="Dismiss history error"
-                    >
-                      <X size={11} />
-                    </button>
-                  </div>
-                )}
-                {checkpointsLoading ? (
-                  <div className="activity-empty">
-                    <Loader2 size={16} className="icon-spin" />
-                    <p>Loading history...</p>
-                  </div>
-                ) : checkpoints.length === 0 ? (
-                  <div className="activity-empty">
-                    <p>No checkpoints yet</p>
-                    <p className="hint">
-                      Checkpoints are created automatically when the agent changes project files.
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    {/* Back-to-latest bar — shown when the applied state is not at tip */}
-                    {headHash && checkpoints.length > 0 && headHash !== checkpoints[0].hash && (
-                      <div className="cp-back-banner">
-                        <span>Viewing an older state</span>
-                        <button
-                          className="cp-back-btn"
-                          disabled={restoringHash !== null || historyReadOnly || isAgentBusy}
-                          title={
-                            historyReadOnly
-                              ? 'Reattach this chat to restore project files'
-                              : 'Restore the latest project state'
-                          }
-                          onClick={() =>
-                            setPendingAction({
-                              hash: checkpoints[0].hash,
-                              type: 'goto',
-                              message: checkpoints[0].message
-                            })
-                          }
-                        >
-                          {restoringHash ? (
-                            <Loader2 size={11} className="icon-spin" />
-                          ) : (
-                            <ArrowUp size={11} />
-                          )}
-                          Back to latest
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Inline confirm banner */}
-                    {pendingAction && !historyReadOnly && (
-                      <div className={`cp-confirm-banner cp-confirm-${pendingAction.type}`}>
-                        <div className="cp-confirm-text">
-                          {pendingAction.type === 'goto' ? (
-                            <>
-                              Undo SideKick changes after <strong>{pendingAction.message}</strong>?
-                              Unrelated manual edits stay untouched. If an affected file changed
-                              later, SideKick stops instead of overwriting it.
-                            </>
-                          ) : (
-                            <>
-                              <AlertTriangle size={13} /> Remove all newer SideKick history after{' '}
-                              <strong>{pendingAction.message}</strong>? The removed timeline cannot
-                              be recovered.
-                            </>
-                          )}
-                        </div>
-                        <div className="cp-confirm-actions">
-                          <button className="cp-confirm-yes" onClick={() => void executeAction()}>
-                            {restoringHash ? (
-                              <Loader2 size={11} className="icon-spin" />
-                            ) : (
-                              'Confirm'
-                            )}
-                          </button>
-                          <button className="cp-confirm-no" onClick={() => setPendingAction(null)}>
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="checkpoints-timeline">
-                      {checkpoints.map((cp, idx) => {
-                        const isHead = headHash ? cp.hash === headHash : idx === 0
-                        const isTip = idx === 0
-                        const isBusy = restoringHash !== null || isAgentBusy
-                        return (
-                          <div
-                            key={cp.hash}
-                            className={`cp-node ${isHead ? 'cp-node-head' : ''}`}
-                            ref={isHead ? headItemRef : undefined}
-                          >
-                            {/* Timeline spine */}
-                            <div className="cp-spine">
-                              <div className={`cp-dot ${isHead ? 'cp-dot-head' : ''}`} />
-                              {idx < checkpoints.length - 1 && <div className="cp-line" />}
-                            </div>
-
-                            {/* Content */}
-                            <div className="cp-body">
-                              <div className="cp-labels">
-                                {isHead && <span className="cp-head-badge">Current</span>}
-                                {isTip && !isHead && <span className="cp-tip-badge">Latest</span>}
-                                <span className="cp-msg">{cp.message}</span>
-                              </div>
-                              <span className="cp-time">
-                                {new Date(cp.timestamp).toLocaleString()}
-                                {cp.changeCount !== undefined
-                                  ? ` · ${cp.changeCount} ${cp.changeCount === 1 ? 'file' : 'files'}`
-                                  : ''}
-                              </span>
-                              <div className="cp-actions">
-                                <button
-                                  className="cp-btn cp-btn-goto"
-                                  disabled={isBusy || isHead || historyReadOnly}
-                                  title={
-                                    historyReadOnly
-                                      ? 'Reattach this chat to restore project files'
-                                      : 'Restore files to this point (keep history)'
-                                  }
-                                  onClick={() =>
-                                    setPendingAction({
-                                      hash: cp.hash,
-                                      type: 'goto',
-                                      message: cp.message
-                                    })
-                                  }
-                                >
-                                  <RotateCcw size={11} /> Restore
-                                </button>
-                                <button
-                                  className="cp-btn cp-btn-reset cp-btn-reset-hidden"
-                                  disabled={isBusy || isHead || historyReadOnly}
-                                  title={
-                                    historyReadOnly
-                                      ? 'Reattach this chat to change project history'
-                                      : 'Remove all newer SideKick history and restore this point'
-                                  }
-                                  onClick={() =>
-                                    setPendingAction({
-                                      hash: cp.hash,
-                                      type: 'reset',
-                                      message: cp.message
-                                    })
-                                  }
-                                >
-                                  <X size={11} /> Remove newer
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-            {shownTab === 'chats' && conversationId && (
-              <ChatsTab
-                conversationId={conversationId}
-                view={sessionFamily}
-                onOpenChat={(id) => onOpenConversation?.(id)}
-              />
-            )}
-            {shownTab === 'terminal' && (
-              <TerminalPanel conversationId={conversationId} requestedSessionId={terminalRequest} />
-            )}
-            <div className="activity-browser-wrap" hidden={shownTab !== 'browser'}>
-              <BrowserActivityPanel
-                conversationId={conversationId}
-                onActivityChange={handleBrowserActivityChange}
-              />
-            </div>
+            <PanelSections
+              layout={layout}
+              apps={panelApps}
+              onChange={setLayout}
+              renderApp={renderApp}
+              onFold={onTogglePin}
+              onTearOut={tearOut}
+              arriving={arriving}
+              elsewhere={Object.fromEntries(
+                [...detached].map((app) => [app, () => void showApp(app)])
+              )}
+            />
           </div>
         ) : (
+          // An app waiting on the user carries the shared count badge, as its tab does.
           <div className="activity-collapsed-tabs">
             {familyRole && (
               <button
                 className="activity-tab-vertical"
                 onClick={() => openCollapsedTab('chats')}
                 title={familyRole === 'manager' ? 'Open Chats' : 'Open Details'}
-                aria-label={familyRole === 'manager' ? 'Open Chats' : 'Open Details'}
+                aria-label={`${familyRole === 'manager' ? 'Open Chats' : 'Open Details'}${
+                  familyWaiting ? `, ${familyWaitingCount} waiting for you` : ''
+                }`}
               >
                 <Workflow size={16} />
+                {familyWaiting && (
+                  <span className="count-badge is-attention" aria-hidden="true">
+                    {familyWaitingCount}
+                  </span>
+                )}
               </button>
             )}
             <button
@@ -1218,56 +715,46 @@ ${viewedFile.filePath}`}
             </button>
             <button
               className="activity-tab-vertical"
-              onClick={() => openCollapsedTab('checkpoints')}
-              title="Open Recovery"
-              aria-label="Open Recovery"
-            >
-              <History size={16} />
-            </button>
-            <button
-              className="activity-tab-vertical"
               onClick={() => openCollapsedTab('browser')}
-              title="Open Browser activity"
+              title={browserIsLive ? 'Open Browser activity · Working' : 'Open Browser activity'}
               aria-label="Open Browser activity"
             >
-              <MonitorUp size={16} />
-              {browserIsLive && <span className="collapsed-tab-badge">Live</span>}
+              <Globe size={16} />
+              {browserIsLive && <span className="browser-live-dot" aria-hidden="true" />}
             </button>
             <button
               className="activity-tab-vertical"
               onClick={() => openCollapsedTab('terminal')}
-              title="Open the agent's terminal"
-              aria-label="Open the agent's terminal"
+              title={
+                terminalIsLive
+                  ? `Open Terminal · ${terminalIsWaiting ? 'Waiting for input' : 'Running'}`
+                  : 'Open Terminal'
+              }
+              aria-label={`Open Terminal${
+                terminalIsWaiting ? `, ${terminalWaitingCount} waiting for you` : ''
+              }`}
             >
               <SquareTerminal size={16} />
-              {terminalIsLive && (
-                <span className="collapsed-tab-badge">{terminalIsWaiting ? 'Input' : 'Live'}</span>
+              {terminalIsWaiting ? (
+                <span className="count-badge is-attention" aria-hidden="true">
+                  {terminalWaitingCount}
+                </span>
+              ) : (
+                terminalIsLive && <span className="browser-live-dot" aria-hidden="true" />
               )}
             </button>
           </div>
         )}
-        {!isPinned && (
+        {!browserPlaced && (
           <div hidden aria-hidden="true">
             <BrowserActivityPanel
               conversationId={conversationId}
               onActivityChange={handleBrowserActivityChange}
+              onOpenSettings={onOpenBrowserSettings}
+              onPageShownChange={setBrowserPageShown}
             />
           </div>
         )}
-        <ConfirmDialog
-          isOpen={pendingFileDelete !== null}
-          title="Delete file?"
-          message={`Move “${pendingFileDelete || ''}” to the ${systemTrashName}? You can restore it from there.`}
-          confirmText={`Move to ${systemTrashName}`}
-          cancelText="Cancel"
-          variant="danger"
-          onConfirm={() => {
-            const filePath = pendingFileDelete
-            setPendingFileDelete(null)
-            if (filePath) void moveFileToTrash(filePath)
-          }}
-          onCancel={() => setPendingFileDelete(null)}
-        />
       </aside>
     </>
   )

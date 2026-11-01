@@ -109,7 +109,7 @@ async function main() {
         {
           name: 'absolute-native-dependencies',
           setup(build) {
-            build.onResolve({ filter: /^(?:better-sqlite3|jsdom)$/ }, (args) => ({
+            build.onResolve({ filter: /^(?:better-sqlite3|jsdom|@napi-rs\/canvas)$/ }, (args) => ({
               path: require.resolve(args.path),
               external: true
             }))

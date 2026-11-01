@@ -1,8 +1,12 @@
-import { resolveReasoningLevel, type ReasoningLevel } from '../../shared/reasoning'
+import { sandboxFolderMounts } from './dockerShellIsolation'
+import {
+  reasoningOptions,
+  resolveReasoningLevel,
+  type ReasoningLevel
+} from '../../shared/reasoning'
 import type Database from 'better-sqlite3'
 import { agentRunProfile, getAgentToolDefinitions } from '../../shared/agentToolCatalog'
 import { normalizeToolCallLimit } from '../../shared/agentLimits'
-import { projectStartCommands } from './projectHooks'
 import { imageContentType } from '../../shared/imageContent'
 import type { StartConversationAgentRunInput } from '../../shared/agentRunApi'
 import { effectivePermissionMode } from '../../shared/permissions'
@@ -28,7 +32,7 @@ import type { ProviderSettings } from '../../shared/settings'
 import { refreshProviderTargetMetadata } from '../../shared/providerInstances'
 import { resolveProviderContext } from '../providers/providerRuntime'
 import { editingDialectForTarget, isWorkspaceMutationTool } from '../../shared/workspaceMutations'
-import { beginWorkspaceInstructionScope } from './workspaceRules'
+import { beginWorkspaceInstructionScope, clearWorkspaceInstructionScope } from './workspaceRules'
 import { ProjectStore } from './projectStore'
 import { ConversationCompactionStore } from './conversationCompactionStore'
 import { AgentContextManager, type AgentCompactionRecord } from './agentContextManager'
@@ -42,12 +46,16 @@ import { ConversationGoalStore, executeGoalUpdate } from './conversationGoalStor
 import type { ConversationGoal } from '../../shared/conversationGoals'
 import { loadContextUsageByOutputMessage } from './agentRunContextUsage'
 import { AgentPlanService } from './agentPlanService'
+import { ensureChatFolder } from './chatFolders'
 import type { AgentKernelRuntimeTransition } from './agentRunKernel'
 import { parseMessageImages } from '../../shared/messageImages'
+import { providerImageProfile } from '../../shared/imagePreparation'
 import {
   formatMessageContextAttachments,
   formatPastedTextAttachments,
   formatReviewCommentAttachments,
+  formatBrowserAnnotationAttachments,
+  browserAnnotationImages,
   isProjectContextAttachment,
   parseMessageContextAttachments
 } from '../../shared/messageContextAttachments'
@@ -74,8 +82,10 @@ export interface PreparedConversationAgentRun {
   toolSession: AgentToolRuntimeSession
   workspaceRoot: string | null
   latestUserMessage: MessageRow | null
-  onWorkspaceWillMutate: () => Promise<void>
+  onWorkspaceWillMutate: (folderRoots?: readonly string[]) => Promise<void>
   goalId?: string
+  /** The least reasoning the run's model offers, for work that needs little, such as an artifact's review. */
+  lightestReasoningLevel?: ReasoningLevel
 }
 
 function parseJson<T>(value: string | null, fallback: T): T {
@@ -88,12 +98,15 @@ function parseJson<T>(value: string | null, fallback: T): T {
 }
 
 export function providerMessage(row: MessageRow): ProviderChatMessage {
-  const images = parseMessageImages(row.images).map((image) => image.dataUrl)
+  const attached = parseMessageImages(row.images).map((image) => image.dataUrl)
   const attachments = parseMessageContextAttachments(row.attachments)
+  // Pictures of marked browser areas follow the user's own images, numbered in that order.
+  const images = [...attached, ...browserAnnotationImages(attachments)]
   const content = [
     formatPastedTextAttachments(attachments),
     row.content.trim(),
     formatReviewCommentAttachments(attachments),
+    formatBrowserAnnotationAttachments(attachments, attached.length + 1),
     formatMessageContextAttachments(attachments)
   ]
     .filter(Boolean)
@@ -374,7 +387,7 @@ function ledgerReplies(
           )
         : []
       for (const call of calls) {
-        if (call.function.name === 'create_artifact') artifactCalls.push({ call, outputMessageId })
+        if (ARTIFACT_TOOLS.has(call.function.name)) artifactCalls.push({ call, outputMessageId })
         if (isWorkspaceMutationTool(call.function.name)) {
           call.function.arguments = historicalEditArguments(
             call.function.arguments as Record<string, unknown>
@@ -401,10 +414,29 @@ function ledgerReplies(
           ? (payload.result as Record<string, unknown>)
           : {}
       const name = String(payload.name || '')
+      // A project hook or an attached file's read: no model turn announced the call.
+      if (payload.calledBySideKick === true) {
+        history.push({
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: String(payload.toolCallId || ''),
+              function: {
+                name,
+                arguments:
+                  payload.arguments && typeof payload.arguments === 'object'
+                    ? (payload.arguments as Record<string, unknown>)
+                    : {}
+              }
+            }
+          ]
+        })
+      }
       const artifact = (
         result.data as { artifact?: { title?: unknown; code?: unknown } } | undefined
       )?.artifact
-      if (name === 'create_artifact' && typeof artifact?.code === 'string') {
+      if (ARTIFACT_TOOLS.has(name) && typeof artifact?.code === 'string') {
         artifactResults.set(String(payload.toolCallId || ''), {
           title: typeof artifact.title === 'string' ? artifact.title : '',
           code: artifact.code
@@ -424,7 +456,7 @@ function ledgerReplies(
         ...(media.length ? { media } : {})
       }
       history.push(toolMessage)
-      if (name === 'create_artifact') {
+      if (ARTIFACT_TOOLS.has(name)) {
         artifactResultMessages.set(String(payload.toolCallId || ''), toolMessage)
       }
     }
@@ -514,7 +546,40 @@ export function replyCoveredByCompaction(
   return covered
 }
 
-/** Whether the conversation's latest reply created an artifact the next turn may be asked to change. */
+/** The tools whose results hold a version of an artifact. */
+const ARTIFACT_TOOLS = new Set(['create_artifact', 'edit_artifact'])
+
+/** The current version of each artifact this conversation's replies made, by title, oldest first. */
+export function conversationArtifacts(
+  db: Database.Database,
+  conversationId: string
+): Map<string, { type: 'react' | 'html' | 'svg'; title: string; code: string }> {
+  const rows = db
+    .prepare(
+      `SELECT json_extract(e.payload_json, '$.result.data.artifact') AS artifact
+       FROM messages m
+       JOIN agent_run_events e ON e.run_id = m.run_id
+       WHERE m.conversation_id = ? AND m.role = 'agent'
+         AND e.type = 'tool.completed'
+         AND json_extract(e.payload_json, '$.name') IN ('create_artifact', 'edit_artifact')
+       ORDER BY m.timestamp ASC, e.sequence ASC`
+    )
+    .all(conversationId) as Array<{ artifact: string | null }>
+  const versions = new Map<
+    string,
+    { type: 'react' | 'html' | 'svg'; title: string; code: string }
+  >()
+  for (const row of rows) {
+    const artifact = parseJson<Record<string, unknown>>(row.artifact ?? '', {})
+    if (typeof artifact.title !== 'string' || typeof artifact.code !== 'string') continue
+    const type = artifact.type === 'html' || artifact.type === 'svg' ? artifact.type : 'react'
+    versions.delete(artifact.title)
+    versions.set(artifact.title, { type, title: artifact.title, code: artifact.code })
+  }
+  return versions
+}
+
+/** Whether the conversation's latest reply made or changed an artifact the next turn may be asked to change. */
 export function previousReplyMadeArtifact(db: Database.Database, conversationId: string): boolean {
   const row = db
     .prepare(
@@ -525,7 +590,7 @@ export function previousReplyMadeArtifact(db: Database.Database, conversationId:
          ORDER BY timestamp DESC LIMIT 1
        )
        AND type = 'tool.completed'
-       AND json_extract(payload_json, '$.name') = 'create_artifact'
+       AND json_extract(payload_json, '$.name') IN ('create_artifact', 'edit_artifact')
        LIMIT 1`
     )
     .get(conversationId)
@@ -562,10 +627,12 @@ function historicalEditArguments(args: Record<string, unknown>): Record<string, 
  * and the render failed on it.
  *
  * The current version of each artifact is the document being edited, so it is
- * restored whole from its result and its result says so. Versions it replaced
- * point to it instead of repeating their code; a note that merely called them
- * omitted led a model to conclude the artifact's code had been removed. A call
- * that never ran has no code worth showing.
+ * restored whole and its result says so: in the arguments of the create_artifact
+ * call that made it, or in the result of the edit_artifact call that made it,
+ * whose arguments hold only the edits. Versions it replaced point to it instead
+ * of repeating their code; a note that merely called them omitted led a model to
+ * conclude the artifact's code had been removed. A call that never ran has no
+ * code worth showing.
  */
 function restoreArtifactCode(
   calls: readonly ProviderToolCall[],
@@ -580,23 +647,30 @@ function restoreArtifactCode(
   for (const call of calls) {
     const result = call.id ? results.get(call.id) : undefined
     const args = call.function.arguments as Record<string, unknown>
+    const created = call.function.name === 'create_artifact'
     if (!result) {
-      call.function.arguments = {
-        ...args,
-        code: '[This call did not run, so its code was not kept.]'
+      if (created) {
+        call.function.arguments = {
+          ...args,
+          code: '[This call did not run, so its code was not kept.]'
+        }
       }
       continue
     }
     const current = latestByTitle.get(result.title) === call.id
-    call.function.arguments = {
-      ...args,
-      code: current
-        ? result.code
-        : `[Superseded version of "${result.title}", not repeated here. The complete current code of "${result.title}" is in its latest create_artifact call.]`
+    if (created) {
+      call.function.arguments = {
+        ...args,
+        code: current
+          ? result.code
+          : `[Superseded version of "${result.title}", not repeated here. The complete current code of "${result.title}" is with its latest version below.]`
+      }
     }
     const message = call.id ? resultMessages.get(call.id) : undefined
     if (current && message && typeof message.content === 'string') {
-      message.content = `${message.content}\nThis is the current version of "${result.title}". The create_artifact call above holds its complete code; start from it to change the artifact.`
+      message.content = created
+        ? `${message.content}\nThis is the current version of "${result.title}". The create_artifact call above holds its complete code; change it with edit_artifact.`
+        : `${message.content}\nThis is the current version of "${result.title}"; change it with edit_artifact. Its complete code:\n\`\`\`\n${result.code}\n\`\`\``
     }
   }
 }
@@ -724,9 +798,38 @@ export class ConversationRunPreparer {
     private readonly sessionTools?: ConversationSessionTools
   ) {}
 
+  /**
+   * Summarizes an idle chat the way its next run would, saving the summary that run starts from,
+   * when the chat is already within `pressure` of the point where that run would compact. Returns
+   * whether a summary was saved.
+   */
+  async compactAhead(
+    input: StartConversationAgentRunInput,
+    pressure: number,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    try {
+      const prepared = await this.prepare(input, async () => undefined, signal)
+      const { contextManager, messages } = prepared.kernelInput
+      const tools =
+        input.model.supportsTools === false
+          ? []
+          : getAgentToolDefinitions(prepared.toolSession.catalog())
+      if (
+        !(contextManager instanceof AgentContextManager) ||
+        contextManager.compactionPressure(messages, tools) < pressure
+      )
+        return false
+      const result = await contextManager.compact(messages, tools, signal)
+      return result.compacted && typeof result.details?.summary === 'string'
+    } finally {
+      clearWorkspaceInstructionScope(input.id)
+    }
+  }
+
   async prepare(
     input: StartConversationAgentRunInput,
-    onWorkspaceWillMutate: () => Promise<void>,
+    onWorkspaceWillMutate: (folderRoots?: readonly string[]) => Promise<void>,
     signal?: AbortSignal
   ): Promise<PreparedConversationAgentRun> {
     signal?.throwIfAborted()
@@ -750,6 +853,7 @@ export class ConversationRunPreparer {
     const currentSettings = this.settings()
     const project = new ProjectStore(this.db).getConversationContext(input.conversationId)
     const workspaceRoot = project.workspaceRoot
+    if (project.chatFolder && workspaceRoot) ensureChatFolder(workspaceRoot)
     const rules = workspaceRoot
       ? await beginWorkspaceInstructionScope(input.id, workspaceRoot)
       : { content: '', sources: [], truncated: false }
@@ -795,18 +899,35 @@ export class ConversationRunPreparer {
       surface === 'conversation' && input.model.supportsTools !== false
         ? (this.sessionTools?.(input.conversationId, input.id) ?? null)
         : null
+    // Never in a scheduled chat: nobody may be there to approve an app or press Esc.
+    const computerUse =
+      process.platform === 'win32' &&
+      surface === 'conversation' &&
+      currentSettings.computerUseEnabled === true &&
+      !conversation.permission_ceiling
+        ? (await import('./computerUseHost')).computerUseService()
+        : null
     const toolSession = await this.tools.createSession({
       permissionMode,
       runId: input.id,
+      conversationId: input.conversationId,
       surface,
       // The model that executes the work edits files with the contract it was trained on.
       editingDialect: editingDialectForTarget(executionTarget),
       workspaceRoot: workspaceRoot ?? undefined,
       webSearchEnabled: currentSettings.webSearchEnabled !== false,
       browserEnabled: input.model.supportsVision !== false,
+      ...(computerUse
+        ? { computer: { service: computerUse, vision: input.model.supportsVision !== false } }
+        : {}),
+      pageImages:
+        input.model.supportsVision !== false
+          ? providerImageProfile(executionTarget.providerKind).maxImages
+          : 0,
       // "Add a chart to it" right after an artifact is the same work: the
       // web-artifacts guidance is already in history and need not be reloaded.
       artifactContinuation: previousReplyMadeArtifact(this.db, input.conversationId),
+      conversationArtifacts: () => conversationArtifacts(this.db, input.conversationId),
       capabilities: input.model.supportsTools === false ? [] : sessions?.capabilities,
       sessions: sessions?.handler,
       persistentSkillIds: activeSkillIds,
@@ -851,13 +972,16 @@ export class ConversationRunPreparer {
         model: createPromptModelProfile(model),
         project: {
           workspaceRoot,
+          folders: project.folders,
           instructions: rules.content,
           instructionSources: rules.sources,
           memory,
           latestTransition: project.latestTransition,
           homeWorkspaceRoot: project.homeWorkspaceRoot,
           homeProjectName: project.homeProjectName,
-          isDetached: project.isDetached
+          isDetached: project.isDetached,
+          chatFolder: project.chatFolder,
+          worktree: project.worktree
         },
         currentDate: new Intl.DateTimeFormat('en-US', {
           weekday: 'long',
@@ -870,10 +994,17 @@ export class ConversationRunPreparer {
         activeSkillIds: runtimeCatalog.activeSkillIds ?? activeSkillIds,
         skillAssetsPath: this.skillAssetsPath()
       })
+      const mounts =
+        workspaceRoot && project.folders.length
+          ? sandboxFolderMounts(workspaceRoot, project.folders)
+          : []
+      const mounted = mounts.length
+        ? `project folders mounted at ${mounts.map(({ target }) => target).join(', ')} (commands start in ${mounts[0].target}, the workspace root)`
+        : 'project mounted at /workspace'
       return currentSettings.shellIsolation === 'docker'
         ? {
             ...composed,
-            content: `${composed.content}\nShell isolation is enabled. Shell commands run in Linux /bin/sh with Node.js, project mounted at /workspace, no network, read-only container root, and writable /tmp. Use POSIX syntax and project-relative paths, not host Windows paths. Background commands are unavailable. If required host tools or network are missing, explain the limitation; do not attempt to escape the sandbox. File/browser tools retain their own policies.`
+            content: `${composed.content}\nShell isolation is enabled. Shell commands run in Linux /bin/sh with Node.js, ${mounted}, no network, read-only container root, and writable /tmp. Use POSIX syntax and project-relative paths, not host Windows paths. Background commands are unavailable. If required host tools or network are missing, explain the limitation; do not attempt to escape the sandbox. File/browser tools retain their own policies.`
           }
         : composed
     }
@@ -994,20 +1125,20 @@ export class ConversationRunPreparer {
         console.warn('[Compaction] Could not save the summary:', error)
       }
     }
+    const reasoningModel = (target: ProviderTarget, model: PinnedModel) => ({
+      id: model.id,
+      providerKind: target.providerKind,
+      model: target.model,
+      supportsReasoning: model.supportsReasoning,
+      reasoningLevels: model.reasoningLevels,
+      reasoningDefault: model.reasoningDefault
+    })
     // The level chosen for this model, or its starting level.
     const reasoningLevel = (
       target: ProviderTarget,
       model: PinnedModel
     ): ReasoningLevel | undefined =>
-      resolveReasoningLevel(
-        {
-          id: model.id,
-          providerKind: target.providerKind,
-          model: target.model,
-          supportsReasoning: model.supportsReasoning
-        },
-        currentSettings
-      )
+      resolveReasoningLevel(reasoningModel(target, model), currentSettings)
     const createRuntime = (
       target: ProviderTarget,
       model: PinnedModel,
@@ -1069,16 +1200,11 @@ export class ConversationRunPreparer {
       latestUserMessage,
       onWorkspaceWillMutate,
       ...(goal ? { goalId: goal.id } : {}),
+      // Levels run from the least reasoning to the most.
+      lightestReasoningLevel: reasoningOptions(reasoningModel(executionTarget, input.model))
+        ?.levels[0],
       toolSession,
       kernelInput: {
-        projectStartCommands: projectStartCommands(
-          currentSettings.projectStartHooks,
-          workspaceRoot
-        ),
-        projectCompletionCommands: projectStartCommands(
-          currentSettings.projectCompletionHooks,
-          workspaceRoot
-        ),
         preloadReads: parseMessageContextAttachments(latestUserMessage?.attachments)
           .filter(isProjectContextAttachment)
           .filter((attachment) => attachment.kind === 'file')

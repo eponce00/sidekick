@@ -108,7 +108,7 @@ export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
   {
     // Ctrl+Space switches input sources on macOS, so it is Option+Space there.
     id: 'toggle-voice',
-    description: 'Turn voice on or off',
+    description: 'Start or stop dictation',
     scope: 'app',
     keys: { macos: { alt: true, code: 'Space' }, other: { ctrl: true, code: 'Space' } },
     handledBy: 'voice'

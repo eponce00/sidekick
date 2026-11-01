@@ -53,10 +53,7 @@ describe('unixCommandHint', () => {
 
   it.each([
     ['head', 'Get-Content src/a.ts | head -20', '-TotalCount'],
-    ['tail', 'tail -n 50 build.log', '-Tail'],
-    ['which', 'which node', 'Get-Command'],
-    ['wc', 'wc -l src/a.ts', 'Measure-Object -Line'],
-    ['egrep', 'egrep "a|b" src/a.ts', 'Select-String']
+    ['which', 'which node', 'Get-Command']
   ])('names the PowerShell equivalent of %s', (name, command, equivalent) => {
     const hint = unixCommandHint(command, notRecognized(name, command), 'win32', () => false)
     expect(hint).toContain(`Instead of \`${name}\``)

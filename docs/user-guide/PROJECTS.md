@@ -11,7 +11,12 @@ standalone chats for work that does not belong to a folder.
 - A project conversation inherits the project folder, file tools, command working directory,
   checkpoints, project memory, and instruction files.
 - A standalone conversation has no project folder and therefore does not silently inherit file or
-  command context from the last project that happened to be open.
+  command context from the last project that happened to be open. It works in a folder of its own
+  inside SideKick's data instead, so its file and command tools, browser downloads, Terminal and
+  History work there. The Files panel shows it as **Chat files**. Paths outside it are refused as
+  they are outside a project. A fork starts with a copy of its files, moving the chat into a
+  project switches it to the project's folder, and deleting the chat deletes its folder. A chat
+  detached from its project works in a folder of its own the same way until it is reattached.
 - The global New Chat action creates a standalone chat. The plus action beside a project creates a
   chat inside that project. A new chat left before anything is sent in it goes away rather than
   waiting in the sidebar, unless something was typed in its message box; a worktree made for it
@@ -23,13 +28,60 @@ standalone chats for work that does not belong to a folder.
   detached chats with project History visible but read-only until the original folder is reopened
   and the chat is reattached.
 
+## Several folders in one project
+
+A project can work across several folders, such as an app and the library it uses, or two
+repositories that change together. One folder is the **primary** one: chats start in it, commands
+run there unless told otherwise, and its Git branch, pull request status, instructions, memory and
+worktrees are the project's. The other folders are added beside it, each under a short name.
+
+Open **Edit project…** from a project's **⋯** menu in the sidebar, or from the command palette:
+
+- **Add folder** picks a folder in the folder picker. Its name is the folder's own name, with a
+  number added when the project already has one of that name or the primary folder holds a file or
+  folder of that name. A folder inside one of the project's folders, or around one, is refused: add
+  folders that sit side by side.
+- **Make primary** (the star) swaps that folder with the primary one. The project's chats, memory
+  and folder list stay with the project.
+- **Remove** (the cross) takes a folder out of the project. Its files stay where they are. The
+  primary folder cannot be removed; make another folder primary first.
+
+Removing a folder or changing the primary one waits until none of the project's chats is working.
+
+How the agent uses the folders:
+
+- A relative path means the primary folder. A path in another folder starts with its name, as
+  `api/src/index.ts`, and an absolute path inside a folder works too. The system prompt lists every
+  folder by name and path. Should the primary folder have a folder of the same name as another
+  folder, `./api/...` names the primary's own.
+- Reading, searching, editing, writing, deleting and patching work in every folder the same way,
+  with the same read-before-edit rule, change review and checks. One patch may change files in
+  several folders; it is checked whole before anything is written.
+- Commands start in the primary folder. The agent sets a command's working folder to another
+  folder's name to run it there.
+- Each folder's own instructions (`AGENTS.md`, `SIDEKICK.md`, `.sidekick/rules.md`) reach the agent
+  the first time it uses that folder in a run, as nested instructions do.
+- History keeps each folder's changes in that folder's own private history, and Undo, Retry, Edit
+  and Rewind put every folder back together; see
+  [Private workspace History](WORKSPACE_HISTORY.md).
+- Every folder is a boundary of its own. Paths that climb out of one, and links that lead from one
+  folder into another or outside the project, are refused, as for a single folder.
+
+The Files panel shows one node for each folder, the primary one marked, and `@` in the composer
+finds files in every folder. An attached file from another folder keeps its folder's name in its
+path.
+
 ## Persistence and activation
 
-`projects` stores the project identity and canonical folder path. `conversations.project_id` is the
-source of truth for membership; `NULL` means standalone.
+`projects` stores the project identity and canonical primary folder path, and `project_folders` its
+other folders with their names. `conversations.project_id` is the source of truth for membership;
+`NULL` means standalone.
 
 When a conversation is activated, the renderer resolves its project and updates the trusted
-main-process workspace before rendering the conversation as active. File tools, shell commands,
+main-process workspace before rendering the conversation as active. The main process accepts only a
+folder it already knows (a project's folders, a chat's own folder or worktree) as that workspace,
+and makes a project, or adds a folder to one, only from a folder chosen in its folder picker. File
+tools, shell commands,
 memory, checkpoints, and the file explorer continue to use the main-process workspace boundary, but
 that boundary is now derived from the active conversation instead of being an unrelated global UI
 preference.
@@ -53,7 +105,10 @@ Discovery follows the Codex/OpenCode directory-scope model within the project bo
 5. Bound individual and combined instruction sizes, cache unchanged files by metadata, and show
    source/truncation diagnostics in the composer.
 
-The initial block contains global and project-root rules. During an agent run, file reads, recursive
+The initial block contains global and project-root rules, the project root being the primary
+folder. Another folder of the project is a root of its own: its root rules arrive the first time
+the agent touches it in a run, without the user-wide file again. During an agent run, file reads,
+recursive
 search matches, commands with a deeper `cwd`, and file mutations resolve newly applicable nested
 rules once per scope. A mutation is never performed in the same tool call that first discovers a
 nested rule; the model receives the rule and retries after reviewing it. Direct chats, independent
@@ -61,54 +116,6 @@ group agents, and sub-agents use this same resolver and preserve the current use
 higher-priority task.
 
 ## Interface
-
-### Project hooks
-
-Agent settings include one **Project hooks** card for commands SideKick runs at
-set moments in an exact absolute project folder: when a run starts, before the
-final answer, or after creating a worktree. Choose the moment, the folder and
-the command, add the hook, switch it on in the list and save settings. New hooks
-are added switched off.
-
-#### When a run starts
-
-Start hooks run setup commands before the agent begins. SideKick does not search repositories for
-executable hook files, and hooks do not automatically apply to subprojects or
-new worktree paths.
-
-Each matching hook requires approval before every agent run, including follow-up
-messages and full-access mode. Commands run in listed order through the normal
-command service, with output visible in the conversation. Denial or failure stops
-before model sampling; inspect any partial side effects before starting again.
-Plan mode and profiles without shell access do not run hooks. Commands use the
-selected host or Docker shell environment; only approve trusted commands.
-
-#### Before the final answer
-
-Completion hooks use the same exact-folder matching, switched-off default,
-ordered execution, and per-command approval. They run once before the final answer
-of an ordinary Act conversation, not Plan or goal-driven runs. The preliminary
-answer remains provisional while hooks run. Afterwards the agent receives the
-results and the workspace verification gate runs again before completion.
-Denial or failure stops the run rather than publishing a successful final answer.
-Interrupted commands are not automatically replayed; inspect their actual effects
-before retrying.
-
-#### After creating a worktree
-
-Worktree hooks are also added switched off. They match the
-original project's exact folder and run when a chat forks into a new worktree or
-starts in one, after the chat is saved there and before its first run.
-Commands execute inside the new worktree, in
-order, with a separate approval for each command in every permission mode.
-Skipping is the default. No repository Git hooks are discovered or enabled.
-
-Each command has a two-minute limit and uses the selected host or Docker shell;
-Docker failure never falls back to the host. Closing the requesting window or
-quitting the app cancels active setup. Completion or failure is reported with
-private output-log paths. Failure, denial, or interrupted setup preserves the
-fork and any files already changed. Inspect those files before manually retrying;
-commands are never automatically replayed. There are no automatic removal hooks.
 
 ### Worktrees
 
@@ -138,27 +145,36 @@ earlier versions stay where they are and keep working there.
 
 Before the first message of a project chat, the bar above the composer offers **Work in: This
 folder** or **New worktree**. A new worktree starts **from** the branch the project folder is on,
-or another branch you choose, as a copy of that branch with no branch of its own: Git lets a branch
-be checked out in only one folder, and the project folder already has it. Sending the first message
+or another branch you choose, on a new branch of its own named after its folder, such as
+`sidekick/fix-cards-3f9a1c`. It cannot use the branch it starts from: Git lets a branch be checked
+out in only one folder, and the project folder already has it. Sending the first message
 creates the chat's worktree and then starts the agent there. SideKick remembers your
 last choice for the next new chat. Worktrees need a project inside a Git repository; for any other
 folder the bar says so and the chat works in the folder. A new chat outside any project shows
 **Work in: No project** instead; choosing a project there moves the chat into it and offers both
 choices.
 
+A worktree copies the primary folder's repository. In a project of several folders, a folder in
+that same repository is the worktree's copy of it; every other folder stays as it is and is shared
+with the project's other chats. When another chat is already changing files in such a folder, the
+agent is told so the first time it tries to change one there, and that change waits.
+
 Every new chat in a project gets the same choice, so two chats never share a worktree by accident.
 A chat that already has messages keeps its folder. To move its work aside, fork it into a new
 worktree. Uncommitted files stay in the original folder and are not copied into a new worktree.
 
 Once a chat works in a worktree, the Work in bar goes away. A small branch label in the
-composer's bottom row shows its branch, or "detached from main" until it has one.
+composer's bottom row shows the branch checked out in it. A worktree made by an earlier version
+may read "detached from main" until the agent creates a branch there.
 
 #### Finishing the work
 
-A worktree's work never has to come back through the project folder. In the worktree, the agent
-creates a branch when the work needs one, commits, and then merges into the base or pushes the
-branch and opens a pull request. Once the work is merged, remove the worktree or delete its chat.
-Each chat can have its own worktree, so several agents can each finish their own change this way.
+A worktree's work never has to come back through the project folder. The agent knows it works in
+a worktree and on which branch. It commits there, may rename the branch, create others or switch
+between them, and runs whatever Git commands the work needs, as your permission mode allows. It
+then merges into the base where the base is checked out, or pushes the branch and opens a pull
+request. Once the work is merged, remove the worktree or delete its chat. Each chat can have its
+own worktree, so several agents can each finish their own change this way.
 
 #### When another agent is already working in the folder
 
@@ -193,9 +209,10 @@ last used, marked **Working**, **Set aside**, or with its number of changed file
 - **Open its chat** switches to the chat, or starts one in the worktree.
 - **Show the folder** opens it in your file manager. A set-aside worktree has no folder until its
   chat continues.
-- **Remove** asks once, then deletes the folder with any uncommitted changes. Branches made in it
-  stay in the repository with their commits. Its chats keep their history as chats outside any
-  project.
+- **Remove** asks once, then deletes the folder with any uncommitted changes. Branches with
+  commits stay in the repository. The branch SideKick made for it is deleted too when it holds
+  nothing its base lacks, because it was never committed on or is already merged. Its chats keep
+  their history as chats outside any project.
 
 Deleting a worktree's chat removes the worktree too. SideKick never removes a worktree while an agent works in it, or one it
 cannot prove it created: the folder must sit directly inside the repository's `.worktrees` folder or
@@ -236,8 +253,8 @@ the line appears shortly after you install or sign in to `gh`.
 The sidebar has two sections. Each heading folds its section away with its arrow, showing how many
 items it holds while closed, and offers its own create action when you point at it:
 
-- **Projects:** compact folder rows with collapsible nested conversations, new-chat, pin, rename, and
-  remove actions; **+** opens a folder as a project.
+- **Projects:** compact folder rows with collapsible nested conversations, new-chat, pin, rename,
+  edit, and remove actions; **+** opens a folder as a project.
 - **Chats:** standalone conversations only; the pen starts one.
 
 The layout button beside the SideKick name switches between two layouts. It shows a folder while

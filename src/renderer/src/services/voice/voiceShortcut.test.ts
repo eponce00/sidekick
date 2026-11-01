@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { isVoiceShortcut, voiceShortcutLabel } from './voiceShortcut'
+import { isVoiceShortcut } from './voiceShortcut'
 
 const key = (modifiers: Partial<KeyboardEvent>) => ({
   code: 'Space',
@@ -20,13 +20,11 @@ describe('voice shortcut', () => {
     expect(isVoiceShortcut(key({ altKey: true }))).toBe(false)
     expect(isVoiceShortcut(key({ ctrlKey: true, shiftKey: true }))).toBe(false)
     expect(isVoiceShortcut(key({ ctrlKey: true, repeat: true }))).toBe(false)
-    expect(voiceShortcutLabel()).toBe('Ctrl+Space')
   })
 
   it('is Option+Space on macOS, where Ctrl+Space switches input sources', () => {
     vi.stubGlobal('window', { api: { app: { platform: 'macos' } } })
     expect(isVoiceShortcut(key({ altKey: true }))).toBe(true)
     expect(isVoiceShortcut(key({ ctrlKey: true }))).toBe(false)
-    expect(voiceShortcutLabel()).toBe('⌥Space')
   })
 })

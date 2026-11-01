@@ -116,6 +116,12 @@ test(
   }
 )
 
+// A window under about 964px folds the sidebar to its rail; open it to reach the chat list.
+async function openSidebar(page) {
+  const expand = page.getByRole('button', { name: /^Expand sidebar/ })
+  if (await expand.isVisible()) await expand.click()
+}
+
 async function launchSideKick(profile) {
   const executablePath = process.env.SIDEKICK_E2E_EXECUTABLE
   assert.ok(
@@ -180,10 +186,18 @@ test(
       const page = await application.firstWindow()
       await page.getByRole('button', { name: 'More', exact: true }).click()
       await page.getByRole('menuitem', { name: 'New chat' }).click()
+      // A folded panel opens on the Browser from its rail; an open one shows it from its tab, or
+      // from a new tab's launcher when it has none.
       const expand = page.getByRole('button', { name: 'Open Browser activity', exact: true })
       if (await expand.isVisible()) await expand.click()
-      else await page.getByRole('button', { name: 'Open browser activity', exact: true }).click()
-      const address = page.getByRole('textbox', { name: 'Browser address' })
+      else if (await page.getByRole('tab', { name: 'Browser', exact: true }).isVisible())
+        await page.getByRole('tab', { name: 'Browser', exact: true }).click()
+      else {
+        await page.getByRole('button', { name: 'New tab', exact: true }).first().click()
+        await page.getByRole('button', { name: 'Browser', exact: true }).click()
+      }
+      // The address field offers matching bookmarks and history, so it is a combobox.
+      const address = page.getByRole('combobox', { name: 'Browser address' })
       await address.fill(`http://127.0.0.1:${server.address().port}/`)
       // The new chat focuses its composer a moment after it opens; that must not take the
       // address bar's keystrokes.
@@ -344,30 +358,6 @@ test(
         })
       }
 
-      await page.getByRole('button', { name: /^Agent/ }).click()
-      const projectHooks = page.locator('section.settings-card').filter({
-        has: page.getByRole('heading', { name: 'Project hooks', exact: true })
-      })
-      for (const moment of ['Before the final answer', 'After creating a worktree']) {
-        // SideKick's dropdown opens a list of options instead of a native select.
-        await projectHooks.getByRole('combobox', { name: 'When' }).click()
-        await page.getByRole('option', { name: moment, exact: true }).click()
-        await projectHooks.getByRole('textbox', { name: 'Hook project folder' }).fill(profile)
-        await projectHooks.getByRole('textbox', { name: 'Hook command' }).fill('echo fixture-only')
-        await projectHooks.getByRole('button', { name: 'Add hook', exact: true }).click()
-        const hook = projectHooks.locator('li.project-hook')
-        assert.equal(await hook.count(), 1)
-        // Adding a hook never runs anything until it is switched on.
-        assert.equal(await hook.getByRole('checkbox').isChecked(), false)
-        assert.equal(
-          await hook.locator('.project-hook-stage').textContent(),
-          moment,
-          `${moment} hook is listed under its moment`
-        )
-        await hook.getByRole('button', { name: 'Remove hook' }).click()
-        assert.equal(await projectHooks.locator('li.project-hook').count(), 0)
-      }
-
       await page.getByRole('button', { name: /^Providers/ }).click()
       await waitForVisible(page.getByRole('heading', { name: 'Providers' }), 'provider settings')
       await waitForVisible(page.getByRole('heading', { name: 'Add a provider' }), 'provider picker')
@@ -387,6 +377,7 @@ test(
       }
       await page.getByRole('button', { name: 'Back to app' }).click()
 
+      await openSidebar(page)
       await page.getByRole('textbox', { name: 'Search conversations' }).fill('New Conversation')
       await waitForVisible(
         page.getByText('New Conversation', { exact: true }).first(),
@@ -405,7 +396,11 @@ test(
         'persisted chat after restart'
       )
 
-      const persistedChat = page.getByText('New Conversation', { exact: true }).first()
+      await openSidebar(page)
+      const persistedChat = page
+        .locator('aside.sidebar')
+        .getByText('New Conversation', { exact: true })
+        .first()
       await persistedChat.click()
       await page.waitForFunction(
         (text) => [...document.querySelectorAll('textarea')].some((field) => field.value === text),

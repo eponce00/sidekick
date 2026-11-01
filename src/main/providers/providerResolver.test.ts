@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ProviderInstance } from '../../shared/settings'
 import { ProviderSetupError } from '../../shared/providerErrors'
-import { assertProviderModelAllowed, resolveProviderInstance } from './providerResolver'
+import {
+  assertProviderModelAllowed,
+  resolveProviderDraft,
+  resolveProviderInstance
+} from './providerResolver'
 
 const settings = vi.hoisted(() => ({ current: {} as Record<string, unknown> }))
 vi.mock('../ipc/settings', () => ({ loadStoredSettings: () => settings.current }))
@@ -115,5 +119,29 @@ describe('provider instance resolution', () => {
     expect(
       resolveProviderInstance({ providerKind: 'openai-compatible', model: 'enabled' })
     ).toMatchObject({ id: 'provider-1', baseUrl: 'https://provider.test/v1' })
+  })
+})
+
+describe('provider draft resolution', () => {
+  const saved = { ...instance([]), apiKey: 'saved-key' }
+  const draft = (baseUrl: string): ProviderInstance => ({
+    ...instance([]),
+    baseUrl,
+    apiKeyConfigured: true
+  })
+
+  it('uses the saved key for a draft at the address it was saved with', () => {
+    settings.current = { providerInstances: [saved] }
+    expect(resolveProviderDraft(draft('https://provider.test/v1/')).apiKey).toBe('saved-key')
+  })
+
+  it('asks for the key again instead of sending the saved one to a different address', () => {
+    settings.current = { providerInstances: [saved] }
+    expect(() => resolveProviderDraft(draft('https://elsewhere.test/v1'))).toThrow(
+      ProviderSetupError
+    )
+    expect(
+      resolveProviderDraft({ ...draft('https://elsewhere.test/v1'), apiKey: 'typed-key' }).apiKey
+    ).toBe('typed-key')
   })
 })

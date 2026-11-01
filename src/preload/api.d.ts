@@ -1,3 +1,4 @@
+import type { ComputerRememberedApp } from '../shared/computerUse'
 import type { PinnedModel } from '../shared/models'
 import type { ProviderSettings, PublicProviderSettings } from '../shared/settings'
 import type {
@@ -10,6 +11,11 @@ import type {
   ProviderHealthChangedEvent,
   ProviderTarget
 } from '../shared/providerRuntime'
+
+interface ComputerUseAPI {
+  rememberedApps: () => Promise<ComputerRememberedApp[]>
+  forgetApp: (path: string) => Promise<void>
+}
 
 interface SettingsAPI {
   selectOfficeInterpreter: () => Promise<{ canceled: boolean; path?: string; error?: string }>
@@ -58,11 +64,22 @@ interface MemoryAPI {
 
 interface ConversationsAPI {
   list: () => Promise<import('../shared/projects').ProjectConversation[]>
+  /** A chat's saved messages changed outside this window, such as from the user's phone. */
+  onMessagesChanged: (callback: (conversationId: string) => void) => () => void
+  /**
+   * A chat was pinned, renamed, moved, archived or deleted outside this window, such as from the
+   * user's phone; `removed` when it left the list.
+   */
+  onListChanged: (
+    callback: (change: { conversationId: string; removed: boolean }) => void
+  ) => () => void
   search: (query: string) => Promise<import('../shared/projects').ProjectConversation[]>
   create: (
     title: string,
     projectId?: string | null,
-    titleSource?: import('../shared/conversationTitles').ConversationTitleSource
+    titleSource?: import('../shared/conversationTitles').ConversationTitleSource,
+    /** The model the new chat starts on and keeps. */
+    modelId?: string
   ) => Promise<
     import('../shared/projects').ProjectConversation & {
       title_source: import('../shared/conversationTitles').ConversationTitleSource
@@ -78,6 +95,8 @@ interface ConversationsAPI {
     options?: import('../shared/conversationTitles').ConversationTitleUpdateOptions
   ) => Promise<{ success: boolean; updatedAt?: number }>
   setPinned: (id: string, pinned: boolean) => Promise<{ success: boolean }>
+  /** Changes the model of this chat only. */
+  setModel: (id: string, modelId: string) => Promise<{ success: boolean }>
   listTitleBackfillCandidates: (
     limit?: number
   ) => Promise<import('../shared/conversationTitles').ConversationTitleBackfillCandidate[]>
@@ -126,6 +145,10 @@ interface ProjectsAPI {
     id: string,
     input: { name?: string; isPinned?: boolean }
   ) => Promise<import('../shared/projects').Project>
+  /** Adds folders picked in the folder picker, removes folders, or swaps the primary folder. */
+  updateFolders: (
+    input: import('../shared/projects').UpdateProjectFoldersInput
+  ) => Promise<import('../shared/projects').Project>
   remove: (id: string) => Promise<{ success: boolean }>
   getConversationContext: (
     conversationId: string
@@ -139,6 +162,19 @@ interface AgentRunsAPI {
   browserWorkspace: (
     input: import('../shared/browserWorkspace').BrowserWorkspaceRequest
   ) => Promise<import('../shared/browserWorkspace').BrowserWorkspaceState | null>
+  /** The marks made on this conversation's pages; `take` hands them to a message being sent. */
+  browserAnnotations: (
+    input:
+      | { conversationId: string; action: 'list' }
+      | {
+          conversationId: string
+          action: 'take'
+          ids: string[]
+        }
+  ) => Promise<import('../shared/messageContextAttachments').BrowserAnnotationAttachment[]>
+  onBrowserAnnotationsChanged: (
+    callback: (change: import('../shared/browserWorkspace').BrowserAnnotationsChange) => void
+  ) => () => void
   startConversation: (
     input: import('../shared/agentRunApi').StartConversationAgentRunInput
   ) => Promise<import('../shared/agentRunApi').StartConversationAgentRunResult>
@@ -152,12 +188,6 @@ interface AgentRunsAPI {
     afterSequence?: number
   ) => Promise<import('../shared/agentRunApi').AgentRunEventsResult>
   latest: (threadId: string) => Promise<import('../shared/agentRunApi').AgentRunEventsResult>
-  beginBrowserHumanTakeover: (
-    interactionId: string
-  ) => Promise<import('../shared/agentRunApi').BrowserHumanTakeoverSnapshot>
-  completeBrowserHumanTakeover: (
-    interactionId: string
-  ) => Promise<import('../shared/agentRunApi').BrowserHumanTakeoverSnapshot>
   resolveInteraction: (
     input: import('../shared/agentRunApi').ResolveAgentInteractionInput
   ) => Promise<{ success: boolean }>
@@ -173,8 +203,14 @@ interface AgentRunsAPI {
   admissionsTakeNext: (
     conversationId: string
   ) => Promise<import('../shared/agentRunApi').PromptAdmissionItem | null>
+  /** A chat's queued messages changed outside this window, such as from the user's phone. */
+  onAdmissionsChanged: (callback: (conversationId: string) => void) => () => void
   onEvent: (
     callback: (change: import('../shared/agentRunApi').AgentRunChangedEvent) => void
+  ) => () => void
+  /** An artifact's code so far, while the model writes it; never stored. */
+  onArtifactDraft: (
+    callback: (draft: import('../shared/agentRunApi').AgentArtifactDraft) => void
   ) => () => void
 }
 
@@ -190,7 +226,6 @@ interface PermissionsAPI {
   authorize: (
     operation: import('../shared/permissions').PermissionOperation
   ) => Promise<import('../shared/permissions').PermissionAuthorization>
-  listAudit: () => Promise<import('../shared/permissions').PermissionAuditRecord[]>
 }
 
 interface WindowAPI {
@@ -238,6 +273,17 @@ interface WorkspaceAPI {
     attachments: import('../shared/messageContextAttachments').ProjectContextAttachment[]
     error?: string
   }>
+  /** Attaches dropped or pasted files: a project file by its path, anything else as a copy of its bytes. */
+  attachFiles: (
+    workspaceRoot: string,
+    files: Array<{ name: string; path?: string; bytes?: Uint8Array }>
+  ) => Promise<{
+    ok: boolean
+    attachments: import('../shared/messageContextAttachments').ProjectContextAttachment[]
+    error?: string
+  }>
+  /** Where a dropped file is on disk, or an empty string for one that is not a file there. */
+  pathForFile: (file: File) => string
   getPath: () => Promise<string | null>
   getRules: (
     workspaceRoot?: string,
@@ -270,6 +316,16 @@ interface WorkspaceAPI {
     subPath?: string,
     glob?: string
   ) => Promise<{ ok: boolean; files: string[]; error?: string }>
+  /**
+   * Every folder of the project the root is the primary folder of, and their files: the primary's
+   * by their own paths, another folder's starting with its name.
+   */
+  listProjectFiles: (workspaceRoot: string) => Promise<{
+    ok: boolean
+    folders: import('../shared/projects').WorkspaceFolder[]
+    files: string[]
+    error?: string
+  }>
   /** Saved prompts from the project's and your own prompt folders, offered as `/` commands. */
   listPrompts: (workspaceRoot: string | null) => Promise<{
     ok: boolean
@@ -313,7 +369,7 @@ interface WorkspaceAPI {
     workspaceRoot: string,
     conversationId: string,
     agentMessageId: string
-  ) => Promise<import('../shared/checkpointTitles').HistoryCaptureResult>
+  ) => Promise<import('../shared/workspaceHistory').HistoryCaptureResult>
   discardHistoryCapture: (captureId: string) => Promise<{ ok: boolean }>
   createCheckpoint: (
     workspaceRoot: string,
@@ -326,50 +382,11 @@ interface WorkspaceAPI {
     captureVersion?: number
     error?: string
   }>
-  restoreCheckpoint: (
-    workspaceRoot: string,
-    hash: string,
+  /** Puts project folders back to History points together: all of them, or none. */
+  restoreHistory: (
+    targets: import('../shared/workspaceHistory').HistoryRestoreTarget[],
     authorization: import('../shared/types').CheckpointMutationAuthorization
-  ) => Promise<import('../shared/checkpointTitles').HistoryMutationResult>
-  hardResetCheckpoint: (
-    workspaceRoot: string,
-    hash: string,
-    authorization: import('../shared/types').CheckpointMutationAuthorization
-  ) => Promise<import('../shared/checkpointTitles').HistoryMutationResult>
-  rewindToBeforeCheckpoint: (
-    workspaceRoot: string,
-    hash: string,
-    authorization: import('../shared/types').CheckpointMutationAuthorization
-  ) => Promise<
-    import('../shared/checkpointTitles').HistoryMutationResult & { parentHash: string | null }
-  >
-  listCheckpoints: (
-    workspaceRoot: string
-  ) => Promise<import('../shared/checkpointTitles').CheckpointListResult>
-  getCheckpointDiff: (
-    workspaceRoot: string,
-    hash: string
-  ) => Promise<{ ok: boolean; diff: string; error?: string }>
-  renameCheckpoint: (
-    workspaceRoot: string,
-    hash: string,
-    newMessage: string,
-    source?: import('../shared/checkpointTitles').CheckpointTitleSource
-  ) => Promise<{ ok: boolean; error?: string }>
-  claimCheckpointTitleBackfill: (
-    input: import('../shared/checkpointTitles').CheckpointTitleIdentity
-  ) => Promise<{ claimed: boolean }>
-  completeCheckpointTitleBackfill: (
-    input: import('../shared/checkpointTitles').CompleteCheckpointTitleBackfillInput
-  ) => Promise<{ applied: boolean }>
-  failCheckpointTitleBackfill: (
-    input: import('../shared/checkpointTitles').FailCheckpointTitleBackfillInput
-  ) => Promise<{ recorded: boolean }>
-  getCheckpointTitleContext: (
-    workspaceRoot: string,
-    hash: string,
-    timestamp: number
-  ) => Promise<import('../shared/checkpointTitles').CheckpointTitleContext | null>
+  ) => Promise<import('../shared/workspaceHistory').HistoryMutationResult>
   openFolder: (folderPath: string, workspaceRoot?: string) => Promise<void>
   openFile: (filePath: string, workspaceRoot?: string) => Promise<void>
   openFileReference: (
@@ -383,13 +400,25 @@ interface WorkspaceAPI {
     error?: string
   }>
   revealFile: (filePath: string, workspaceRoot?: string) => Promise<void>
-  showPathMenu: (filePath: string, workspaceRoot?: string, isDirectory?: boolean) => Promise<void>
+  /** Resolves with `trash` when Move to Recycle Bin was chosen, which `offerTrash` adds. */
+  showPathMenu: (
+    filePath: string,
+    workspaceRoot?: string,
+    isDirectory?: boolean,
+    offerTrash?: boolean
+  ) => Promise<'trash' | undefined>
+  /** How many files and folders a folder holds, at any depth; `more` past 10,000. */
+  countPathItems: (
+    workspaceRoot: string,
+    folderPath: string
+  ) => Promise<{ count: number; more: boolean }>
   /** Calls back when files under the folder change; returns the function that stops watching. */
   watchFiles: (workspaceRoot: string, callback: () => void) => () => void
 }
 
 export interface DesktopApi {
   providers: ProvidersAPI
+  computerUse: ComputerUseAPI
   settings: SettingsAPI
   commandLine: CommandLineAPI
   memory: MemoryAPI
@@ -401,14 +430,19 @@ export interface DesktopApi {
   agentRuns: AgentRunsAPI
   conversationGoals: import('../shared/conversationGoals').ConversationGoalsAPI
   schedules: import('../shared/schedules').SchedulesAPI
+  companion: import('../shared/companion').CompanionAPI
   sessions: import('../shared/sessions').SessionsAPI
   terminal: import('../shared/terminalSessions').TerminalAPI
+  /** The user's own shells; no agent tool can reach them. */
+  userTerminal: import('../shared/userTerminals').UserTerminalAPI
   mcp: McpAPI
   permissions: PermissionsAPI
   browserNetwork: import('../shared/browserNetwork').BrowserNetworkAPI
+  browserLibrary: import('../shared/browserLibrary').BrowserLibraryAPI
   credentials: import('../shared/credentials').CredentialsAPI
   pullRequests: import('../shared/pullRequests').PullRequestsAPI
   window: WindowAPI
+  panelWindows: import('../shared/panelWindows').PanelWindowsAPI
   notification: NotificationAPI
   siteIcons: SiteIconsAPI
   app: AppAPI

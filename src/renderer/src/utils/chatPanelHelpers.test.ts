@@ -13,15 +13,9 @@ import {
 describe('queued message keyboard submission', () => {
   const queuedMessages = [{ id: 'oldest' }, { id: 'newest' }]
 
-  it('selects the oldest queued message when an empty composer is submitted during a run', () => {
+  it('promotes the oldest queued message only for an empty submit during a run', () => {
     expect(getQueuedMessageIdForEmptySubmit(true, false, queuedMessages)).toBe('oldest')
-  })
-
-  it('does not promote a queued message when the composer has new content', () => {
     expect(getQueuedMessageIdForEmptySubmit(true, true, queuedMessages)).toBeNull()
-  })
-
-  it('does not promote a queued message outside an active run or with an empty queue', () => {
     expect(getQueuedMessageIdForEmptySubmit(false, false, queuedMessages)).toBeNull()
     expect(getQueuedMessageIdForEmptySubmit(true, false, [])).toBeNull()
   })
@@ -67,21 +61,10 @@ describe('conversation titles', () => {
     )
   })
 
-  it('builds a concise local fallback from the first user message', () => {
-    expect(
-      createFallbackConversationTitle(
-        '¿Cómo puedo mejorar el sistema de títulos automáticos en SideKick hoy?'
-      )
-    ).toBe('¿Cómo puedo mejorar el sistema de títulos')
-  })
-
-  it('strips meta narration from the deterministic fallback too', () => {
+  it('builds a fallback without meta narration or a dangling connector word', () => {
     expect(
       createFallbackConversationTitle('The user wants me to fix the Windows installer flow')
     ).toBe('Fix the Windows installer flow')
-  })
-
-  it('does not leave deterministic fallback titles on dangling connector words', () => {
     expect(
       createFallbackConversationTitle(
         'find a good quality tts engine we can use for local narration'

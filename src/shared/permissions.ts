@@ -1,3 +1,5 @@
+import type { HistoryRestoreTarget } from './workspaceHistory'
+
 export type PermissionMode = 'full-access' | 'sensitive-only' | 'always-ask'
 export type RequestedAccess = 'auto' | 'confirm'
 export type PermissionOperationKind = 'command' | 'workspace' | 'mcp' | 'checkpoint' | 'browser'
@@ -52,8 +54,6 @@ export interface PermissionAuditRecord {
   reason?: string
 }
 
-export type CheckpointMutationAction = 'restore' | 'hard-reset' | 'rewind'
-
 export function commandPermissionOperation(request: {
   id: string
   title: string
@@ -91,21 +91,22 @@ export function workspacePermissionOperation(
   }
 }
 
-export function checkpointPermissionOperation(
-  action: CheckpointMutationAction,
-  hash: string,
+/** Putting project folders' files back to History points, as one approval for all of them. */
+export function historyRestorePermissionOperation(
+  targets: readonly HistoryRestoreTarget[],
   requestedAccess: RequestedAccess = 'confirm'
 ): PermissionOperation {
-  const labels: Record<CheckpointMutationAction, string> = {
-    restore: 'Restore workspace checkpoint',
-    'hard-reset': 'Permanently reset workspace checkpoint history',
-    rewind: 'Rewind workspace before checkpoint'
-  }
   return {
     kind: 'checkpoint',
-    title: `${labels[action]}: ${hash.slice(0, 12)}`,
+    title: `Rewind workspace history: ${targets
+      .map(({ hashes }) => hashes[0]?.slice(0, 12))
+      .join(', ')}`,
     requestedAccess,
-    details: { action, hash }
+    details: {
+      points: targets
+        .map(({ workspaceRoot, hashes }) => `before ${hashes.join(', ')} in ${workspaceRoot}`)
+        .join('\n')
+    }
   }
 }
 

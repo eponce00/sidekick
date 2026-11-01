@@ -1,0 +1,17 @@
+/* In the surrounding sans, with tabular figures so counts line up; only paths, commands and the
+   terminal are mono. */
+.diff-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.diff-count.is-add {
+  color: var(--color-success);
+}
+
+.diff-count.is-delete {
+  color: var(--color-error);
+}
+
+.diff-count.is-zero {
+  color: var(--text-muted);
+}

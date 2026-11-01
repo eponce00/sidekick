@@ -1,5 +1,5 @@
 import { useId, useState } from 'react'
-import { ChevronRight, CircleStop, Workflow } from 'lucide-react'
+import { ChevronRight, Inbox, Workflow } from 'lucide-react'
 import {
   sessionIsActive,
   type SessionFamilyMember,
@@ -10,6 +10,7 @@ import {
 import { familyProjectTag, memberName, memberState } from '../hooks/useSessionFamily'
 import { sessionStateLabel } from '../utils/sessionLabels'
 import { SessionChip, SessionStateDot } from './SessionChip'
+import { StopGlyph } from './StopGlyph'
 import './ChatFamily.css'
 
 interface FamilyContext {
@@ -115,14 +116,18 @@ export function ReceivedMessagesRow({
         aria-controls={expanded ? listId : undefined}
         onClick={() => setExpanded((current) => !current)}
       >
+        {/* The icon takes a work step's 16px column, so the label starts where a step's does. */}
+        <span className="family-received-icon" aria-hidden="true">
+          <Inbox size={14} />
+        </span>
+        <span>{count}</span>
         <span className="family-initials" aria-hidden="true">
           {initials.map(({ id, letter }) => (
             <span key={id}>{letter}</span>
           ))}
         </span>
-        <span>{count}</span>
         <ChevronRight
-          size={14}
+          size={12}
           className={`family-chevron${expanded ? ' is-expanded' : ''}`}
           aria-hidden="true"
         />
@@ -216,7 +221,7 @@ export function FamilyStrip({
             </span>
             <button
               type="button"
-              className="family-strip-stop"
+              className="settings-ghost-action is-small family-strip-stop"
               onClick={() => {
                 setConfirming(false)
                 void onStopAll(active.map(({ worker }) => worker.conversationId))
@@ -224,13 +229,21 @@ export function FamilyStrip({
             >
               Stop
             </button>
-            <button type="button" onClick={() => setConfirming(false)}>
+            <button
+              type="button"
+              className="settings-ghost-action is-small"
+              onClick={() => setConfirming(false)}
+            >
               Keep running
             </button>
           </span>
         ) : (
-          <button type="button" className="family-strip-stop" onClick={() => setConfirming(true)}>
-            <CircleStop size={13} aria-hidden="true" /> Stop all
+          <button
+            type="button"
+            className="settings-ghost-action is-small family-strip-stop"
+            onClick={() => setConfirming(true)}
+          >
+            <StopGlyph /> Stop all
           </button>
         ))}
     </div>

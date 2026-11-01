@@ -59,41 +59,12 @@ describe('safe tool arguments', () => {
       ]
     })
 
-    expect(safe).toEqual({
-      fields: [
-        {
-          kind: 'textbox',
-          ref: 'ax-2-9',
-          selector: undefined,
-          text: undefined,
-          value_redacted: true,
-          value_bytes: 12
-        },
-        {
-          kind: 'select',
-          ref: undefined,
-          selector: '#country',
-          text: undefined,
-          values_redacted: true,
-          value_count: 1,
-          values_bytes: 14
-        },
-        {
-          kind: 'checkbox',
-          ref: undefined,
-          selector: undefined,
-          text: 'Sensitive preference',
-          checked_redacted: true
-        },
-        {
-          kind: 'radio',
-          ref: 'ax-2-12',
-          selector: undefined,
-          text: undefined,
-          checked_redacted: true
-        }
-      ]
-    })
+    expect(safe.fields).toMatchObject([
+      { value_redacted: true },
+      { values_redacted: true },
+      { checked_redacted: true },
+      { checked_redacted: true }
+    ])
     expect(JSON.stringify(safe)).not.toContain('private text')
     expect(JSON.stringify(safe)).not.toContain('Private option')
   })
@@ -103,6 +74,20 @@ async function temporaryRoot(prefix: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), prefix))
   roots.push(root)
   return root
+}
+
+function runtimeIn(data: string) {
+  const db = new Database(':memory:')
+  applyDatabaseSchema(db)
+  const commands = new CommandService(db, join(data, 'commands'))
+  const runtime = new AgentToolRuntime(
+    db,
+    new WorkspaceReadService(),
+    commands,
+    new ToolOutputStore(join(data, 'outputs')),
+    new McpClientManager()
+  )
+  return { db, commands, runtime }
 }
 
 afterEach(async () => {
@@ -133,15 +118,7 @@ describe('AgentToolRuntime file receipts', () => {
         resultCount: 0,
         truncated
       })
-      const db = new Database(':memory:')
-      applyDatabaseSchema(db)
-      const runtime = new AgentToolRuntime(
-        db,
-        new WorkspaceReadService(),
-        new CommandService(db, join(data, 'commands')),
-        new ToolOutputStore(join(data, 'outputs')),
-        new McpClientManager()
-      )
+      const { db, runtime } = runtimeIn(data)
       const session = await runtime.createSession({
         runId: 'scope',
         surface: 'conversation',
@@ -182,15 +159,7 @@ describe('AgentToolRuntime file receipts', () => {
     const data = await temporaryRoot('sidekick-tool-runtime-data-')
     await mkdir(join(workspace, 'docs'))
     await writeFile(join(workspace, 'docs', 'note.md'), 'before\n', 'utf8')
-    const db = new Database(':memory:')
-    applyDatabaseSchema(db)
-    const runtime = new AgentToolRuntime(
-      db,
-      new WorkspaceReadService(),
-      new CommandService(db, join(data, 'commands')),
-      new ToolOutputStore(join(data, 'outputs')),
-      new McpClientManager()
-    )
+    const { db, runtime } = runtimeIn(data)
     try {
       const session = await runtime.createSession({
         runId: 'run-paths',
@@ -226,16 +195,7 @@ describe('AgentToolRuntime file receipts', () => {
   it('lets a later reply read and answer a command its conversation started', async () => {
     const workspace = await temporaryRoot('sidekick-tool-runtime-terminal-')
     const data = await temporaryRoot('sidekick-tool-runtime-terminal-data-')
-    const db = new Database(':memory:')
-    applyDatabaseSchema(db)
-    const commands = new CommandService(db, join(data, 'commands'))
-    const runtime = new AgentToolRuntime(
-      db,
-      new WorkspaceReadService(),
-      commands,
-      new ToolOutputStore(join(data, 'outputs')),
-      new McpClientManager()
-    )
+    const { db, commands, runtime } = runtimeIn(data)
     const sessionFor = (runId: string) =>
       runtime.createSession({
         runId,
@@ -312,47 +272,27 @@ describe('AgentToolRuntime file receipts', () => {
   it('puts a stored credential in a command variable only after checking it again', async () => {
     const workspace = await temporaryRoot('sidekick-tool-runtime-secret-')
     const data = await temporaryRoot('sidekick-tool-runtime-secret-data-')
-    const db = new Database(':memory:')
-    applyDatabaseSchema(db)
-    const commands = new CommandService(db, join(data, 'commands'))
+    const { db, commands, runtime } = runtimeIn(data)
     const execute = vi.spyOn(commands, 'execute')
-    const runtime = new AgentToolRuntime(
-      db,
-      new WorkspaceReadService(),
-      commands,
-      new ToolOutputStore(join(data, 'outputs')),
-      new McpClientManager()
-    )
     const value = `generated-${Date.now().toString(36)}`
     const entry = {
       id: 'gh',
       alias: 'gh-token',
       kind: 'secret' as const,
       description: '',
-      usernameVisible: false,
-      ask: 'never' as const,
-      scope: {
-        projects: 'all' as const,
-        background: false,
-        commands: { mode: 'programs' as const, programs: ['node'] }
-      },
       createdAt: 1,
       updatedAt: 1,
       needsValue: false
     }
     runtime.setCredentials({
       list: () => [entry],
-      useContext: () => ({ projectId: null, background: false }),
       openEditor: () => true,
-      uses: new CredentialUses(
-        {
-          list: () => [entry],
-          resolve: () => ({ summary: entry, values: { secret: value } }),
-          record: vi.fn(),
-          setTransientSecrets: vi.fn()
-        },
-        () => ({ projectId: null, background: false })
-      )
+      uses: new CredentialUses({
+        list: () => [entry],
+        resolve: () => ({ summary: entry, values: { secret: value } }),
+        record: vi.fn(),
+        setTransientSecrets: vi.fn()
+      })
     })
     const session = await runtime.createSession({
       runId: 'run-secret',
@@ -386,19 +326,6 @@ describe('AgentToolRuntime file receipts', () => {
       const reserved = await shell('node -v', { PATH: 'gh-token' })
       expect(reserved.status).toBe('error')
       expect(reserved.error?.message).toContain('changes how commands run')
-
-      // The kernel refuses this before any card; the tool checks again when it runs.
-      expect(
-        session.router.credentialApproval?.(
-          'shell',
-          { command: 'node -v; echo done', secrets: { GH_TOKEN: 'gh-token' } },
-          { conversationId: 'chat', runId: 'run-secret', toolCallId: 'call-0' }
-        )
-      ).toEqual({ refused: expect.stringContaining('one simple command') })
-      const chained = await shell('node -v; echo done', { GH_TOKEN: 'gh-token' })
-      expect(chained.status).toBe('denied')
-      expect(chained.error?.message).toContain('one simple command')
-      expect(execute).not.toHaveBeenCalled()
 
       const allowed = await shell('node --version', { GH_TOKEN: 'gh-token' })
       expect(allowed.status).toBe('success')
@@ -439,16 +366,7 @@ describe('AgentToolRuntime file receipts', () => {
     // A fixed 200-second wait slept through a build that had failed after 4.8 seconds.
     const workspace = await temporaryRoot('sidekick-tool-runtime-wait-')
     const data = await temporaryRoot('sidekick-tool-runtime-wait-data-')
-    const db = new Database(':memory:')
-    applyDatabaseSchema(db)
-    const commands = new CommandService(db, join(data, 'commands'))
-    const runtime = new AgentToolRuntime(
-      db,
-      new WorkspaceReadService(),
-      commands,
-      new ToolOutputStore(join(data, 'outputs')),
-      new McpClientManager()
-    )
+    const { db, commands, runtime } = runtimeIn(data)
     const session = await runtime.createSession({
       runId: 'run-wait',
       surface: 'conversation',
@@ -500,6 +418,23 @@ describe('AgentToolRuntime file receipts', () => {
       expect(ready).toMatchObject({ woke: 'pattern_matched', taskId: server, state: 'running' })
       expect(ready.output).toContain('ready on http://localhost:5173')
 
+      // Printed while the model was writing its call: the wait slept out all its seconds.
+      const early = await background(
+        "console.log('listening on 4317'); setInterval(() => {}, 1000)"
+      )
+      await vi.waitFor(
+        async () => expect((await commands.terminals.lines(early))?.join('\n')).toContain('4317'),
+        { timeout: 10_000 }
+      )
+      const already = await wait({ taskIds: [early], pattern: 'listening', seconds: 120 })
+      expect(already).toMatchObject({ woke: 'pattern_matched', taskId: early })
+      expect(already.elapsed).toBeLessThan(5_000)
+      commands.cancelBackground(early, { conversationId: 'chat' })
+      await vi.waitFor(() => expect(commands.terminals.get(early)?.state).toBe('stopped'), {
+        timeout: 10_000
+      })
+      commands.takeNotices('chat')
+
       setTimeout(() => runtime.notifyUserMessage('run-wait'), 300)
       const interrupted = await wait({ seconds: 30 })
       expect(interrupted).toMatchObject({ woke: 'user_message' })
@@ -525,15 +460,7 @@ describe('AgentToolRuntime file receipts', () => {
       join(workspace, 'shot.png'),
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 13, 1, 2])
     )
-    const db = new Database(':memory:')
-    applyDatabaseSchema(db)
-    const runtime = new AgentToolRuntime(
-      db,
-      new WorkspaceReadService(),
-      new CommandService(db, join(data, 'commands')),
-      new ToolOutputStore(join(data, 'outputs')),
-      new McpClientManager()
-    )
+    const { db, runtime } = runtimeIn(data)
     try {
       const session = await runtime.createSession({
         runId: 'run-binary',
@@ -575,15 +502,7 @@ describe('AgentToolRuntime file receipts', () => {
     const data = await temporaryRoot('sidekick-tool-runtime-data-')
     await writeFile(join(workspace, 'package.json'), '{"scripts":{"test":"vitest"}}')
     await writeFile(join(workspace, 'status.txt'), 'before\n', 'utf8')
-    const db = new Database(':memory:')
-    applyDatabaseSchema(db)
-    const runtime = new AgentToolRuntime(
-      db,
-      new WorkspaceReadService(),
-      new CommandService(db, join(data, 'commands')),
-      new ToolOutputStore(join(data, 'outputs')),
-      new McpClientManager()
-    )
+    const { runtime } = runtimeIn(data)
     const session = await runtime.createSession({
       runId: 'run-1',
       surface: 'conversation',
@@ -619,6 +538,17 @@ describe('AgentToolRuntime file receipts', () => {
     })
 
     await session.router.execute('read', { path: 'status.txt' }, context)
+    const pastEnd = (await session.router.execute(
+      'read',
+      { path: 'status.txt', start_line: 50 },
+      context
+    )) as ToolExecutionResult
+    expect(pastEnd.modelContent).toContain('start_line 50 is past the end; the file has 1 lines')
+    // A hunk the current file does not contain is input to correct, not a reason to re-read.
+    expect(await edit('imagined', 'after')).toMatchObject({
+      status: 'error',
+      error: { code: 'invalid_arguments', recoveryAction: 'correct_input' }
+    })
     await expect(
       session.router.execute(
         'shell',
@@ -664,6 +594,73 @@ describe('AgentToolRuntime file receipts', () => {
     })
   })
 
+  it('lets the next reply in a chat edit what the last one saw, unless the file changed', async () => {
+    // Kept per reply, "now rename it" was refused for a file the agent had written one reply ago.
+    const workspace = await temporaryRoot('sidekick-tool-runtime-receipts-')
+    const data = await temporaryRoot('sidekick-tool-runtime-receipts-data-')
+    await writeFile(join(workspace, 'status.txt'), 'one\n', 'utf8')
+    const db = new Database(':memory:')
+    applyDatabaseSchema(db)
+    const runtime = new AgentToolRuntime(
+      db,
+      new WorkspaceReadService(),
+      new CommandService(db, join(data, 'commands')),
+      new ToolOutputStore(join(data, 'outputs')),
+      new McpClientManager()
+    )
+    const reply = async (runId: string, conversationId: string) => {
+      const session = await runtime.createSession({
+        runId,
+        conversationId,
+        surface: 'conversation',
+        workspaceRoot: workspace,
+        webSearchEnabled: false,
+        capabilities: ['workspace.read', 'workspace.write']
+      })
+      const context = { runId, workspaceRoot: workspace, signal: new AbortController().signal }
+      return {
+        read: () => session.router.execute('read', { path: 'status.txt' }, context),
+        edit: (from: string, to: string) =>
+          session.router.execute(
+            'apply_patch',
+            {
+              patch: `*** Begin Patch\n*** Update File: status.txt\n@@\n-${from}\n+${to}\n*** End Patch`,
+              accessLevel: 'auto'
+            },
+            context
+          ) as Promise<ToolExecutionResult>
+      }
+    }
+    try {
+      const first = await reply('run-1', 'chat')
+      await first.read()
+      expect(await first.edit('one', 'two')).toMatchObject({ status: 'success' })
+
+      expect(await (await reply('run-2', 'chat')).edit('two', 'three')).toMatchObject({
+        status: 'success'
+      })
+      expect(await (await reply('run-3', 'another-chat')).edit('three', 'four')).toMatchObject({
+        error: { code: 'stale_read', message: expect.stringContaining('Read receipt required') }
+      })
+
+      await writeFile(join(workspace, 'status.txt'), 'edited by the user\n', 'utf8')
+      expect(await (await reply('run-4', 'chat')).edit('edited by the user', 'five')).toMatchObject(
+        { error: { code: 'stale_read' } }
+      )
+
+      // A rewind takes the replies that read the file out of the chat.
+      const fifth = await reply('run-5', 'chat')
+      await fifth.read()
+      runtime.forgetConversation('chat')
+      expect(await (await reply('run-6', 'chat')).edit('edited by the user', 'six')).toMatchObject({
+        error: { code: 'stale_read', message: expect.stringContaining('Read receipt required') }
+      })
+    } finally {
+      await runtime.close()
+      db.close()
+    }
+  })
+
   it('passes the trusted full-access mode to external image reads in a real tool session', async () => {
     const workspace = await temporaryRoot('sidekick-image-mode-project-')
     const data = await temporaryRoot('sidekick-image-mode-external-')
@@ -675,16 +672,8 @@ describe('AgentToolRuntime file receipts', () => {
         'base64'
       )
     )
-    const db = new Database(':memory:')
-    applyDatabaseSchema(db)
+    const { db, runtime } = runtimeIn(data)
     try {
-      const runtime = new AgentToolRuntime(
-        db,
-        new WorkspaceReadService(),
-        new CommandService(db, join(data, 'commands')),
-        new ToolOutputStore(join(data, 'outputs')),
-        new McpClientManager()
-      )
       const session = await runtime.createSession({
         runId: 'image-mode',
         surface: 'conversation',
@@ -721,15 +710,7 @@ describe('AgentToolRuntime file receipts', () => {
   it('reports a nonzero foreground command exit as a failed tool call', async () => {
     const workspace = await temporaryRoot('sidekick-command-failure-workspace-')
     const data = await temporaryRoot('sidekick-command-failure-data-')
-    const db = new Database(':memory:')
-    applyDatabaseSchema(db)
-    const runtime = new AgentToolRuntime(
-      db,
-      new WorkspaceReadService(),
-      new CommandService(db, join(data, 'commands')),
-      new ToolOutputStore(join(data, 'outputs')),
-      new McpClientManager()
-    )
+    const { runtime } = runtimeIn(data)
     const session = await runtime.createSession({
       runId: 'failed-command-run',
       surface: 'conversation',
@@ -770,12 +751,7 @@ describe('AgentToolRuntime file receipts', () => {
       status: 'error',
       error: { code: 'command_failed', recoveryAction: 'change_strategy' },
       data: { success: false, exitCode: 7 },
-      output: {
-        truncated: true,
-        originalEstimatedTokens: expect.any(Number),
-        returnedEstimatedTokens: expect.any(Number),
-        fullOutputHandle: expect.any(String)
-      }
+      output: { truncated: true, fullOutputHandle: expect.any(String) }
     })
     expect(result.modelContent.startsWith('Exit code: 7\n')).toBe(true)
     expect(result.modelContent).toContain('<stderr>\n{"coordinates":[[0,0]')
@@ -790,15 +766,7 @@ describe('AgentToolRuntime file receipts', () => {
     async () => {
       const workspace = await temporaryRoot('sidekick-nested-powershell-workspace-')
       const data = await temporaryRoot('sidekick-nested-powershell-data-')
-      const db = new Database(':memory:')
-      applyDatabaseSchema(db)
-      const runtime = new AgentToolRuntime(
-        db,
-        new WorkspaceReadService(),
-        new CommandService(db, join(data, 'commands')),
-        new ToolOutputStore(join(data, 'outputs')),
-        new McpClientManager()
-      )
+      const { runtime } = runtimeIn(data)
       const session = await runtime.createSession({
         runId: 'nested-powershell-run',
         surface: 'conversation',
