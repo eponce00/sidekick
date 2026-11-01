@@ -19,6 +19,26 @@ const NEVER_SITES = new Set([
 const SENSITIVE_SITES =
   /(^|\.)(mail\.google\.com|outlook\.(live|office|office365)\.com|mail\.yahoo\.com|mail\.proton\.me|icloud\.com|accounts\.google\.com|myaccount\.google\.com|pay\.google\.com|account\.microsoft\.com|appleid\.apple\.com|paypal\.com|venmo\.com|cash\.app|wise\.com|coinbase\.com|binance\.com|kraken\.com|robinhood\.com|fidelity\.com|schwab\.com|vanguard\.com|etrade\.com|chase\.com|wellsfargo\.com|bankofamerica\.com|citi\.com|capitalone\.com|americanexpress\.com|discover\.com|usbank\.com|revolut\.com)$|bank|credit/i
 
+// Chromium's own check stops anything that changes the page or reaches the network, but lets a script read what
+// it likes. These are what a look has no business with, and the ways of naming them that the words below can't see.
+const NOT_A_LOOK =
+  /\\u|\\x|\b(cookies?|localStorage|sessionStorage|indexedDB|caches|credentials|eval|Function|Reflect|getOwnPropertyDescriptors?|__lookupGetter__|__proto__|prototype|constructor|with|await|async|then)\b/
+
+/**
+ * Whether a script can be left to Chromium's check, as far as its words go. Failing here only costs the user a
+ * question, so anything that could be naming a property some other way does.
+ */
+export function readsLikeALook(expression: string): boolean {
+  if (NOT_A_LOOK.test(expression)) return false
+  const code = expression.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, "''")
+  // The inside of each [ that picks a property, or names one in an object.
+  for (const bracket of code.matchAll(/([\w$)\]`']?)\s*\[([^\]]*)\](\s*:)?/g)) {
+    if (bracket[3]) return false
+    if (bracket[1] && !/^\s*(\d+|'')\s*$/.test(bracket[2])) return false
+  }
+  return true
+}
+
 /** Whether a site is one to ask about even when the user hasn't asked to be asked about every site. */
 export function isSensitiveSite(hostname: string): boolean {
   return SENSITIVE_SITES.test(hostname)
@@ -52,6 +72,7 @@ export interface ChromeUseDependencies {
     show: () => void
     hide: () => void
     preview: (image: { data: string }) => void
+    replyEnded: () => void
     /** Esc from anywhere, for as long as the agent can act. Returns how to take it back. */
     armStop: (stop: () => void) => () => void
     notify: () => void
@@ -189,6 +210,7 @@ export class ChromeUseService implements NativeBrowserPolicy {
 
   /** A finished reply takes the marks off and lets go of the debugger. Approvals last the chat. */
   runEnded(id: string): void {
+    this.deps.overlay.replyEnded()
     this.stopped.delete(id)
     if (!this.driving.delete(id) || this.driving.size) return
     this.takeMarksOff()
@@ -278,7 +300,11 @@ export class ChromeUseService implements NativeBrowserPolicy {
     }
   }
 
-  /** A script can read everything a page holds, so in the user's own browser each one is shown to them. */
+  mayRunQuietly(expression: string): boolean {
+    return readsLikeALook(expression)
+  }
+
+  /** One that could change something or send it somewhere is shown to the user, as it acts as them there. */
   async beforeEvaluate(expression: string, pageUrl: string, signal?: AbortSignal): Promise<void> {
     if (!(await this.deps.confirmScript(expression, originOf(pageUrl), signal ?? this.quiet))) {
       throw new ComputerUseRefusal(

@@ -967,7 +967,7 @@ const browserOpenWithChrome: AgentToolDefinition = {
   ...browserOpen,
   function: {
     ...browserOpen.function,
-    description: `${browserOpen.function.description} The user's own Chrome is also available, with their sign-ins and saved details, while they keep using their computer: pass browser "chrome" when a task needs their real accounts. Every browser_ tool then works there, in a tab group of your own, until you pick the other browser or close it. In Chrome, sites for email, money or accounts ask the user first, and so does pressing something that sends, buys or deletes. Password and payment fields can't be typed into: Chrome fills saved passwords itself, or ask the user. browser_evaluate, downloads and uploads ask the user each time, so read the page with browser_observe when you can.`,
+    description: `${browserOpen.function.description} The user's own Chrome is also available, with their sign-ins and saved details, while they keep using their computer: pass browser "chrome" when a task needs their real accounts. Every browser_ tool then works there, in a tab group of your own, until you pick the other browser or close it. In Chrome, sites for email, money or accounts ask the user first, and so does pressing something that sends, buys or deletes. Password and payment fields can't be typed into: Chrome fills saved passwords itself, or ask the user. A browser_evaluate that only reads the page runs without asking, unless it reads cookies, storage or a filled-in secret field. One that could change something or send data asks the user, as do downloads and uploads, so write it to only read.`,
     parameters: {
       ...browserOpen.function.parameters,
       properties: {

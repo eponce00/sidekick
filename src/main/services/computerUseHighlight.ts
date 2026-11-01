@@ -12,10 +12,13 @@ const CURSOR_WINDOW_DIP = 76
 const CURSOR_TIP_DIP = 26
 const CURSOR_GLIDE_MS = 300
 const CURSOR_FRAME_MS = 16
-const PILL_WIDTH_DIP = 380
-const PILL_HEIGHT_DIP = 52
-const PREVIEW_WIDTH_DIP = 340
-const PILL_MARGIN_DIP = 12
+const PICTURE_WIDTH_DIP = 340
+const PICTURE_MIN_WIDTH_DIP = 220
+const PICTURE_LABEL_DIP = 36
+// Sharp enough for a window the user has made a good deal bigger.
+const PICTURE_SOURCE_WIDTH = 960
+const PICTURE_MARGIN_DIP = 12
+const PICTURE_BOUNDS_KEY = 'computerPictureBounds'
 
 export interface ComputerHighlightTarget {
   appName: string
@@ -25,22 +28,14 @@ export interface ComputerHighlightTarget {
   bounds: () => Promise<ComputerWindowBounds | null>
 }
 
-/**
- * A glow and a label around a visible app; just the label, in a corner, for one that isn't. No script:
- * the page only ever shows what it was given.
- */
-export function computerHighlightPage(
-  appName: string,
-  look: TrustedLook,
-  mode: 'glow' | 'pill',
-  preview = ''
-): string {
+/** A glow and a label around a visible app. No script: the page only ever shows what it was given. */
+export function computerHighlightPage(appName: string, look: TrustedLook): string {
   const name = escapeHtml(appName)
   return `<!doctype html>
 <html data-theme="${look.theme}">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
 <title>SideKick is using ${name}</title>
 <style>
 ${trustedLookCss(look)}
@@ -55,19 +50,13 @@ html, body { height: 100%; padding: 0; }
 }
 @keyframes breathe { 50% { opacity: 0.7; } }
 .label {
-  position: fixed;
-  ${mode === 'glow' ? `top: ${GLOW_DIP + 10}px; left: 50%; transform: translateX(-50%);` : 'right: 10px; bottom: 10px;'}
+  position: fixed; top: ${GLOW_DIP + 10}px; left: 50%; transform: translateX(-50%);
   display: flex; gap: 8px; align-items: center;
-  max-width: calc(100% - ${mode === 'glow' ? GLOW_DIP * 2 + 24 : 20}px); padding: 5px 13px;
+  max-width: calc(100% - ${GLOW_DIP * 2 + 24}px); padding: 5px 13px;
   border: 1px solid var(--border); border-radius: 999px;
   background: color-mix(in srgb, var(--surface) 94%, transparent);
   box-shadow: 0 6px 20px var(--shadow);
   font-size: 12px; font-weight: 500; white-space: nowrap;
-}
-.preview {
-  position: fixed; right: 10px; bottom: 54px; width: ${PREVIEW_WIDTH_DIP}px;
-  border: 1px solid var(--border); border-radius: 10px;
-  box-shadow: 0 8px 24px var(--shadow);
 }
 .dot { flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .text { overflow: hidden; text-overflow: ellipsis; }
@@ -75,9 +64,61 @@ html, body { height: 100%; padding: 0; }
 </style>
 </head>
 <body>
-${mode === 'glow' ? '<div class="glow"></div>' : ''}
-${mode === 'pill' && preview ? `<img class="preview" alt="" src="${escapeHtml(preview)}">` : ''}
+<div class="glow"></div>
 <div class="label"><span class="dot"></span><span class="text">SideKick is using ${name} <span class="stop">· Esc to stop</span></span></div>
+</body>
+</html>`
+}
+
+const PICTURE_SCHEME = 'sidekick-picture:'
+const PICTURE_SCRIPT = `
+const picture = document.querySelector('img')
+window.setPicture = (source) => {
+  picture.src = source
+  picture.hidden = false
+}
+document.querySelector('button').addEventListener('click', () => { location.href = '${PICTURE_SCHEME}close' })
+`
+
+/**
+ * What the agent last saw, for when the app itself can't be seen. The user's to move, resize or close,
+ * and only ever shows pictures it is handed.
+ */
+export function computerPicturePage(appName: string, look: TrustedLook): string {
+  const hash = createHash('sha256').update(PICTURE_SCRIPT).digest('base64')
+  const name = escapeHtml(appName)
+  return `<!doctype html>
+<html data-theme="${look.theme}">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'sha256-${hash}'">
+<title>SideKick is using ${name}</title>
+<style>
+${trustedLookCss(look)}
+html, body { height: 100%; padding: 0; overflow: hidden; }
+body { display: flex; flex-direction: column; background: var(--surface); user-select: none; -webkit-app-region: drag; }
+img { flex: 1; min-height: 0; width: 100%; object-fit: contain; background: var(--surface-2); pointer-events: none; }
+img[hidden] { display: none; }
+.label {
+  flex-shrink: 0; display: flex; gap: 8px; align-items: center;
+  height: ${PICTURE_LABEL_DIP}px; padding: 0 6px 0 12px; box-sizing: border-box;
+  font-size: 12px; font-weight: 500; white-space: nowrap;
+}
+.dot { flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.stop { color: var(--text-2); }
+button {
+  flex-shrink: 0; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px;
+  color: var(--text-2); background: transparent; font: inherit; font-size: 15px; line-height: 1;
+  cursor: pointer; -webkit-app-region: no-drag;
+}
+button:hover { color: var(--text); background: var(--surface-3); }
+</style>
+</head>
+<body>
+<img alt="" hidden>
+<div class="label"><span class="dot"></span><span class="text">SideKick is using ${name} <span class="stop">· Esc to stop</span></span><button type="button" title="Hide. The agent keeps working." aria-label="Hide. The agent keeps working.">×</button></div>
+<script>${PICTURE_SCRIPT}</script>
 </body>
 </html>`
 }
@@ -194,7 +235,11 @@ button.primary:hover { filter: brightness(1.08); }
 </html>`
 }
 
-function overlayWindow(title: string, javascript: boolean): BrowserWindow {
+function overlayWindow(
+  title: string,
+  javascript: boolean,
+  options: Electron.BrowserWindowConstructorOptions = {}
+): BrowserWindow {
   const window = new BrowserWindow({
     show: false,
     frame: false,
@@ -210,6 +255,7 @@ function overlayWindow(title: string, javascript: boolean): BrowserWindow {
     hasShadow: false,
     title,
     backgroundColor: '#00000000',
+    ...options,
     webPreferences: {
       sandbox: true,
       contextIsolation: true,
@@ -228,9 +274,37 @@ function overlayWindow(title: string, javascript: boolean): BrowserWindow {
   return window
 }
 
+/** Where the user last left the picture, as long as that is still somewhere on a screen. */
+function savedPictureBounds(): Electron.Rectangle | null {
+  const saved = appState.store?.get(PICTURE_BOUNDS_KEY) as Electron.Rectangle | undefined
+  if (!saved || ![saved.x, saved.y, saved.width, saved.height].every(Number.isFinite)) return null
+  const { workArea: area } = screen.getDisplayMatching(saved)
+  const width = Math.min(saved.width, area.width)
+  const height = Math.min(saved.height, area.height)
+  return {
+    x: Math.min(Math.max(saved.x, area.x), area.x + area.width - width),
+    y: Math.min(Math.max(saved.y, area.y), area.y + area.height - height),
+    width,
+    height
+  }
+}
+
+/** The corner of the screen the user is on, sized for a picture of this shape, or just the label. */
+function pictureBounds(aspect: number): Electron.Rectangle {
+  const { workArea: area } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+  const height = Math.round(PICTURE_WIDTH_DIP * aspect) + PICTURE_LABEL_DIP
+  return {
+    x: area.x + area.width - PICTURE_WIDTH_DIP - PICTURE_MARGIN_DIP,
+    y: area.y + area.height - height - PICTURE_MARGIN_DIP,
+    width: PICTURE_WIDTH_DIP,
+    height
+  }
+}
+
 /**
- * Marks the app the agent is working in, following it, and draws the agent's pointer. Neither window
- * ever takes a click or focus, and both stay until the service hides them.
+ * Marks the app the agent is working in, following it, and draws the agent's pointer. Neither of those
+ * ever takes a click or focus. Nor does the picture take focus, though it is the user's to move, resize
+ * and close. All stay until the service hides them.
  */
 export class ComputerUseHighlight {
   private window: BrowserWindow | null = null
@@ -242,8 +316,15 @@ export class ComputerUseHighlight {
   private gliding: ReturnType<typeof setInterval> | null = null
   private center: { x: number; y: number } | null = null
   private mode: 'glow' | 'pill' = 'pill'
-  private preview = ''
-  private previewHeight = 0
+  private picture: BrowserWindow | null = null
+  private pictureName = ''
+  private pictureOpening: Promise<void> | null = null
+  /** Waiting to be shown, as data for an image. */
+  private pictureSource = ''
+  private pictureAspect = 0
+  private pictureSized = false
+  /** Closed by the user, which lasts until the reply ends. */
+  private pictureClosed = false
   private endTeachStep: ((answer: 'next' | 'exit') => void) | null = null
 
   /**
@@ -310,7 +391,7 @@ export class ComputerUseHighlight {
     if (!anchor) {
       return {
         x: Math.round(area.x + (area.width - width) / 2),
-        y: area.y + area.height - height - PILL_MARGIN_DIP,
+        y: area.y + area.height - height - PICTURE_MARGIN_DIP,
         width,
         height
       }
@@ -332,8 +413,13 @@ export class ComputerUseHighlight {
   show(target: ComputerHighlightTarget): void {
     const running = this.target !== null
     this.target = target
-    void this.showPage(target)
+    if (this.mode === 'glow') void this.showGlow(target)
     if (!running) void this.follow()
+  }
+
+  /** The reply is over, so the next one shows its picture again, however this one was left. */
+  replyEnded(): void {
+    this.pictureClosed = false
   }
 
   hide(): void {
@@ -346,23 +432,109 @@ export class ComputerUseHighlight {
     this.cursorAt = null
     this.center = null
     this.mode = 'pill'
-    this.preview = ''
-    this.previewHeight = 0
-    for (const window of [this.window, this.cursor]) {
+    this.pictureSource = ''
+    this.pictureAspect = 0
+    this.pictureSized = false
+    for (const window of [this.window, this.cursor, this.picture]) {
       if (window && !window.isDestroyed()) window.destroy()
     }
     this.window = null
     this.cursor = null
+    this.picture = null
   }
 
-  /** The agent's latest look, shrunk, for the corner label when the app itself can't be seen. */
+  /** The agent's latest look, shrunk, for the picture window when the app itself can't be seen. */
   showPreview(image: { data: string }): void {
-    const shrunk = nativeImage.createFromBuffer(Buffer.from(image.data, 'base64'))
-    if (shrunk.isEmpty()) return
-    const small = shrunk.resize({ width: PREVIEW_WIDTH_DIP * 2, quality: 'good' })
-    this.preview = `data:image/jpeg;base64,${small.toJPEG(72).toString('base64')}`
-    this.previewHeight = Math.round(small.getSize().height / 2)
-    if (this.target && this.mode === 'pill') void this.showPage(this.target)
+    const whole = nativeImage.createFromBuffer(Buffer.from(image.data, 'base64'))
+    if (whole.isEmpty()) return
+    const small = whole.resize({
+      width: Math.min(whole.getSize().width, PICTURE_SOURCE_WIDTH),
+      quality: 'good'
+    })
+    const size = small.getSize()
+    this.pictureAspect = size.height / size.width
+    this.pictureSource = `data:image/jpeg;base64,${small.toJPEG(72).toString('base64')}`
+    this.fillPicture()
+  }
+
+  /** Hands the waiting picture over, and makes room the first time, unless the user has picked a size. */
+  private fillPicture(): void {
+    const window = this.picture
+    if (!window || window.isDestroyed() || this.pictureOpening || !this.pictureSource) return
+    const source = this.pictureSource
+    this.pictureSource = ''
+    void window.webContents
+      .executeJavaScript(`window.setPicture(${JSON.stringify(source)})`)
+      .catch(() => undefined)
+    if (this.pictureSized) return
+    this.pictureSized = true
+    if (!savedPictureBounds()) window.setBounds(pictureBounds(this.pictureAspect))
+  }
+
+  /** Shows it where the user last left it, unless they closed it or are in SideKick and can see for themselves. */
+  private async syncPicture(target: ComputerHighlightTarget): Promise<void> {
+    const wanted =
+      this.mode === 'pill' && !this.pictureClosed && BrowserWindow.getFocusedWindow() === null
+    if (!wanted) {
+      if (this.picture && !this.picture.isDestroyed() && this.picture.isVisible()) {
+        this.picture.hide()
+      }
+      return
+    }
+    if (this.pictureName !== target.appName && this.picture && !this.picture.isDestroyed()) {
+      this.picture.destroy()
+      this.picture = null
+    }
+    if (!this.picture || this.picture.isDestroyed()) {
+      this.pictureOpening = this.openPicture(target.appName).finally(() => {
+        this.pictureOpening = null
+      })
+    }
+    await this.pictureOpening
+    if (!this.target || this.pictureClosed) return
+    if (this.picture && !this.picture.isDestroyed() && !this.picture.isVisible()) {
+      this.picture.showInactive()
+    }
+    this.fillPicture()
+  }
+
+  private async openPicture(appName: string): Promise<void> {
+    const look = await trustedLook(appState.mainWindowRef)
+    if (!this.target) return
+    const window = overlayWindow(`SideKick is using ${appName}`, true, {
+      // Windows only gives a window edges to resize by if it isn't transparent.
+      transparent: false,
+      resizable: true,
+      movable: true,
+      hasShadow: true,
+      minWidth: PICTURE_MIN_WIDTH_DIP,
+      minHeight: PICTURE_LABEL_DIP,
+      backgroundColor: look.theme === 'dark' ? '#171717' : '#ffffff',
+      ...(savedPictureBounds() ?? pictureBounds(this.pictureAspect))
+    })
+    window.setIgnoreMouseEvents(false)
+    this.picture = window
+    this.pictureName = appName
+    this.pictureSized = this.pictureAspect > 0
+    const remember = (): void => {
+      if (!window.isDestroyed()) appState.store?.set(PICTURE_BOUNDS_KEY, window.getBounds())
+    }
+    // Both only ever come from the user moving it, not from SideKick placing it.
+    window.on('moved', remember)
+    window.on('resized', remember)
+    window.webContents.on('will-navigate', (_event, url) => {
+      if (url !== `${PICTURE_SCHEME}close`) return
+      this.pictureClosed = true
+      if (!window.isDestroyed()) window.hide()
+    })
+    window.webContents.on('render-process-gone', () => {
+      if (!window.isDestroyed()) window.destroy()
+    })
+    await window
+      .loadURL(
+        `data:text/html;charset=utf-8,${encodeURIComponent(computerPicturePage(appName, look))}`
+      )
+      .catch(() => undefined)
   }
 
   /**
@@ -429,10 +601,10 @@ export class ComputerUseHighlight {
     }
   }
 
-  private async showPage(target: ComputerHighlightTarget): Promise<void> {
+  private async showGlow(target: ComputerHighlightTarget): Promise<void> {
     const look = await trustedLook(appState.mainWindowRef)
     if (this.target !== target) return
-    const page = computerHighlightPage(target.appName, look, this.mode, this.preview)
+    const page = computerHighlightPage(target.appName, look)
     if (page === this.page) return
     this.page = page
     if (!this.window || this.window.isDestroyed()) {
@@ -454,11 +626,11 @@ export class ComputerUseHighlight {
     // A new action can replace the target while its position was on the way.
     if (!this.target) return
     const mode = bounds && visible ? 'glow' : 'pill'
-    if (mode !== this.mode) {
-      this.mode = mode
-      await this.showPage(this.target)
-      if (!this.target) return
-    }
+    this.mode = mode
+    if (mode === 'glow') await this.showGlow(this.target)
+    if (!this.target) return
+    await this.syncPicture(this.target)
+    if (!this.target) return
     const window = this.window
     if (window && !window.isDestroyed()) {
       if (bounds && mode === 'glow') {
@@ -470,17 +642,10 @@ export class ComputerUseHighlight {
           width: dip.width + GLOW_DIP * 2,
           height: dip.height + GLOW_DIP * 2
         })
-      } else {
-        const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
-        const height = PILL_HEIGHT_DIP + this.previewHeight + (this.previewHeight ? 4 : 0)
-        window.setBounds({
-          x: workArea.x + workArea.width - PILL_WIDTH_DIP - PILL_MARGIN_DIP,
-          y: workArea.y + workArea.height - height - PILL_MARGIN_DIP,
-          width: PILL_WIDTH_DIP,
-          height
-        })
+        if (!window.isVisible()) window.showInactive()
+      } else if (window.isVisible()) {
+        window.hide()
       }
-      if (!window.isVisible()) window.showInactive()
     }
     if (this.cursor && !this.cursor.isDestroyed()) {
       if (mode === 'pill' && this.cursor.isVisible()) this.cursor.hide()

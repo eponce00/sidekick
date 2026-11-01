@@ -115,6 +115,7 @@ export function computerUseService(): ComputerUseService | null {
   service ??= new ComputerUseService({
     showActive: (target) => highlight.show(target),
     hideActive: () => highlight.hide(),
+    replyEnded: () => highlight.replyEnded(),
     moveCursor: (point) => highlight.moveCursor(point),
     listApps: () => appWindows.apps(),
     showPreview: (image) => highlight.showPreview(image),

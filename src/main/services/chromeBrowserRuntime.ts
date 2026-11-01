@@ -147,6 +147,8 @@ class ChromeSurface implements NativeBrowserSurface {
   private inputs: Promise<unknown> = Promise.resolve()
   /** The Enter that was sent already carried its text, so the character after it mustn't type it again. */
   private keyHadText = false
+  /** A size the browser tools set, such as a phone's, to go back to. */
+  private sizeOverride: Record<string, unknown> | undefined
   private readonly requests = new Map<string, { url: string; document: boolean }>()
   private readonly quiet = new AbortController().signal
   private readonly consoles = new Set<(message: NativeBrowserSurfaceConsoleMessage) => void>()
@@ -160,7 +162,8 @@ class ChromeSurface implements NativeBrowserSurface {
     tab: ChromeTabInfo,
     /** The user's own tab, which is theirs to close and is never treated as ours. */
     readonly attached: boolean,
-    private readonly showMark: (tabId: number, x: number, y: number) => void
+    private readonly showMark: (tabId: number, x: number, y: number) => void,
+    private readonly fitPicture: (picture: Buffer, width: number, height: number) => Buffer
   ) {
     this.webContentsId = tab.id
     this.url = tab.url
@@ -420,22 +423,18 @@ class ChromeSurface implements NativeBrowserSurface {
   /** In CSS pixels, so a point on the picture is that same point for a click. */
   async captureViewport(): Promise<NativeBrowserSurfaceCapture> {
     const metrics = await this.command<{
-      cssVisualViewport?: {
-        clientWidth: number
-        clientHeight: number
-        pageX?: number
-        pageY?: number
-      }
+      cssVisualViewport?: { clientWidth: number; clientHeight: number }
     }>('Page.getLayoutMetrics')
-    const view = metrics.cssVisualViewport
-    const width = Math.round(view?.clientWidth ?? 1280)
-    const height = Math.round(view?.clientHeight ?? 800)
-    // A clip is measured from the top of the page, not of what's on screen.
+    const width = Math.round(metrics.cssVisualViewport?.clientWidth ?? 1280)
+    const height = Math.round(metrics.cssVisualViewport?.clientHeight ?? 800)
+    // No clip, which has Chromium lay the page out again to fit: a scrollbar narrower every time, in the
+    // user's own tab. This is as it stands on their screen, at their screen's pixels.
     const shot = await this.command<{ data: string }>('Page.captureScreenshot', {
-      format: 'png',
-      clip: { x: view?.pageX ?? 0, y: view?.pageY ?? 0, width, height, scale: 1 }
+      format: 'jpeg',
+      quality: 90
     })
-    return { png: Buffer.from(shot.data, 'base64'), width, height }
+    const png = this.fitPicture(Buffer.from(shot.data, 'base64'), width, height)
+    return { png, width, height }
   }
 
   async attachDebugger(): Promise<void> {
@@ -454,7 +453,51 @@ class ChromeSurface implements NativeBrowserSurface {
     // they're passed through the page, as a page's own script could.
     if (method === 'DOM.setFileInputFiles') return (await this.setFiles(params ?? {})) as T
     await this.inputs
+    if (method === 'Emulation.setDeviceMetricsOverride') this.sizeOverride = params
+    if (method === 'Emulation.clearDeviceMetricsOverride') this.sizeOverride = undefined
+    if (method === 'Page.captureScreenshot' && params?.captureBeyondViewport) {
+      return (await this.captureWhole(params)) as T
+    }
     return this.command<T>(method, params)
+  }
+
+  /**
+   * Measured in Chrome: asked to capture past the screen by itself, it leaves the tab stretched to the page's
+   * whole size. Asked for that size outright, it goes back when told.
+   */
+  private async captureWhole(params: Record<string, unknown>): Promise<unknown> {
+    const clip = params.clip as { x: number; y: number; width: number; height: number }
+    await this.command('Emulation.setDeviceMetricsOverride', {
+      mobile: false,
+      ...this.sizeOverride,
+      // At a 3x screen's pixels a long page outgrows what the GPU will draw, and comes out part blank.
+      deviceScaleFactor: 1,
+      width: Math.ceil(clip.x + clip.width),
+      height: Math.ceil(clip.y + clip.height)
+    })
+    try {
+      // It has to draw at that size first, or what isn't drawn yet comes out blank.
+      await this.command('Runtime.evaluate', {
+        expression:
+          'new Promise((done) => { requestAnimationFrame(() => requestAnimationFrame(done)); setTimeout(done, 1000) })',
+        awaitPromise: true
+      })
+      return await this.command('Page.captureScreenshot', {
+        ...params,
+        captureBeyondViewport: false
+      })
+    } finally {
+      // Straight from another scale, clearing leaves the tab at that size in the screen's pixels.
+      await this.command('Emulation.setDeviceMetricsOverride', {
+        width: 0,
+        height: 0,
+        deviceScaleFactor: 0,
+        mobile: false
+      })
+      await (this.sizeOverride
+        ? this.command('Emulation.setDeviceMetricsOverride', this.sizeOverride)
+        : this.command('Emulation.clearDeviceMetricsOverride'))
+    }
   }
 
   private async setFiles(params: Record<string, unknown>): Promise<unknown> {
@@ -545,6 +588,8 @@ export class ChromeBrowserRuntime implements NativeBrowserRuntime {
     private readonly line: ChromeLine,
     private readonly marks: {
       showPointer: (tabId: number, x: number, y: number) => void
+      /** A picture at the screen's pixels, as a PNG of the size the page counts in. */
+      fitPicture: (picture: Buffer, width: number, height: number) => Buffer
     }
   ) {
     line.onEvent((event) => {
@@ -566,7 +611,13 @@ export class ChromeBrowserRuntime implements NativeBrowserRuntime {
   }
 
   private remember(tab: ChromeTabInfo, attached: boolean): ChromeSurface {
-    const surface = new ChromeSurface(this.line, tab, attached, this.marks.showPointer)
+    const surface = new ChromeSurface(
+      this.line,
+      tab,
+      attached,
+      this.marks.showPointer,
+      this.marks.fitPicture
+    )
     this.surfaces.set(tab.id, surface)
     surface.onDestroyed(() => this.surfaces.delete(tab.id))
     return surface

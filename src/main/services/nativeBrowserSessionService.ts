@@ -674,6 +674,8 @@ export interface NativeBrowserPolicy {
   beforePress(name: string, pageUrl: string, signal?: AbortSignal): Promise<void>
   /** Before text goes into a field. */
   beforeTyping(field: { secret: boolean }): void
+  /** Whether a script can go ahead without asking, as long as Chromium finds it only looks. */
+  mayRunQuietly(expression: string): boolean
   beforeEvaluate(expression: string, pageUrl: string, signal?: AbortSignal): Promise<void>
   beforeDownload(url: string, signal?: AbortSignal): Promise<void>
   beforeUpload(files: readonly string[], pageUrl: string, signal?: AbortSignal): Promise<void>
@@ -697,6 +699,30 @@ const POLICY_CONTROL_SCRIPT = `function () {
     secret: secret(this) || this.tagName === 'IFRAME'
   }
 }`
+
+const QUIET_SCRIPT_TIMEOUT_MS = 5_000
+
+/** Whether a filled-in secret field is on the page, and what a script reading cookies would find. */
+const PAGE_SECRETS_SCRIPT = `(() => {
+  const SECRET = /password|passwd|passcode|one-time-code|cc-|card.?(num|number)|cvv|cvc|security.?code|ssn/i
+  const secret = (element) =>
+    element.type === 'password' ||
+    SECRET.test([element.autocomplete, element.name, element.id, element.getAttribute('aria-label')].join(' '))
+  const documents = [document]
+  for (const frame of document.querySelectorAll('iframe')) {
+    try {
+      if (frame.contentDocument) documents.push(frame.contentDocument)
+    } catch {}
+  }
+  const fields = documents.some((each) =>
+    [...each.querySelectorAll('input, textarea')].some((field) => field.value && secret(field))
+  )
+  const cookies = document.cookie
+    .split(';')
+    .map((cookie) => cookie.slice(cookie.indexOf('=') + 1).trim())
+    .filter((value) => value.length >= 6)
+  return { fields, cookies }
+})()`
 
 /** How a fixed viewport presents itself: a phone or tablet is mobile, touch, and says so. */
 export interface BrowserEmulationOptions {
@@ -6484,8 +6510,14 @@ export class NativeBrowserSessionService {
         )
       }
       await this.assertAutomatedMutationAllowed(tab, signal)
-      await this.options.policy?.beforeEvaluate(input.expression, tab.surface.getURL(), signal)
-      const envelope = await this.evaluateExpression(tab, input.expression, signal)
+      const policy = this.options.policy
+      let envelope = policy?.mayRunQuietly(input.expression)
+        ? await this.evaluateQuietly(tab, input.expression, signal)
+        : null
+      if (!envelope) {
+        await policy?.beforeEvaluate(input.expression, tab.surface.getURL(), signal)
+        envelope = await this.evaluateExpression(tab, input.expression, signal)
+      }
       let value: unknown = envelope.json
       if (!envelope.truncated) {
         try {
@@ -6502,6 +6534,53 @@ export class NativeBrowserSessionService {
         truncated: envelope.truncated
       }
     })
+  }
+
+  /**
+   * Runs a script that can only look, as DevTools' console previews what is being typed: Chromium stops it
+   * at anything that would change the page or reach the network. Null if it can't be run that way, or what
+   * it found includes what a look shouldn't, and it's for the rules to decide about instead.
+   */
+  private async evaluateQuietly(
+    tab: TabState,
+    expression: string,
+    signal?: AbortSignal
+  ): Promise<{ json: string; truncated: boolean } | null> {
+    const secrets = await abortable(
+      tab.surface.sendDebuggerCommand<{
+        result?: { value?: { fields: boolean; cookies: string[] } }
+      }>('Runtime.evaluate', { expression: PAGE_SECRETS_SCRIPT, returnByValue: true }),
+      signal
+    )
+    const held = secrets.result?.value
+    if (!held || held.fields) return null
+    // Inside the look, so that a getter or toJSON of the script's own can't run outside it.
+    const answer = await abortable(
+      tab.surface.sendDebuggerCommand<{
+        result?: { value?: unknown }
+        exceptionDetails?: { text?: string; exception?: { description?: string } }
+      }>('Runtime.evaluate', {
+        expression: `JSON.stringify((${expression.trim().replace(/;+$/, '')}\n))`,
+        throwOnSideEffect: true,
+        returnByValue: true,
+        silent: true,
+        timeout: QUIET_SCRIPT_TIMEOUT_MS
+      }),
+      signal
+    ).catch((error: unknown) => {
+      throw pageChangedError(error)
+    })
+    if (answer.exceptionDetails) {
+      const said =
+        answer.exceptionDetails.exception?.description ?? answer.exceptionDetails.text ?? ''
+      if (/^(EvalError: Possible side-effect|SyntaxError)/.test(said)) return null
+      throw new Error(said || 'Browser page evaluation failed')
+    }
+    const json = typeof answer.result?.value === 'string' ? answer.result.value : 'null'
+    if (held.cookies.some((cookie) => json.includes(cookie))) return null
+    return json.length > MAX_EVALUATION_BYTES
+      ? { json: json.slice(0, MAX_EVALUATION_BYTES), truncated: true }
+      : { json, truncated: false }
   }
 
   /**

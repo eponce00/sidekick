@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { getAgentToolDefinitions } from '../../shared/agentToolCatalog'
 import { ChromeBrowserRuntime } from './chromeBrowserRuntime'
 import { ChromeUseBridge, chromeExtensionId } from './chromeUseBridge'
-import { ChromeUseService } from './chromeUseService'
+import { ChromeUseService, readsLikeALook } from './chromeUseService'
 import { parseChromeProfiles } from './chromeUseSetup'
 
 const signal = new AbortController().signal
@@ -27,6 +27,7 @@ function harness(url = 'https://shop.example/page', answer = true, everySite = t
     show: vi.fn(),
     hide: vi.fn(),
     preview: vi.fn(),
+    replyEnded: vi.fn(),
     armStop: vi.fn((_stop: () => void) => disarm),
     notify: vi.fn(),
     accent: async () => '#86aee8'
@@ -167,6 +168,35 @@ describe('what the agent may reach in Chrome', () => {
   })
 })
 
+describe('scripts that only look', () => {
+  it.each([
+    'document.title',
+    "[...document.querySelectorAll('a[href]')].map((a) => a.href)",
+    "(() => { const a = document.querySelector('a'); return { href: a?.getAttribute('href') } })()",
+    'document.links[0].href',
+    "document.body['innerText'].length"
+  ])('leaves %s to the browser’s own check', (script) => {
+    expect(readsLikeALook(script)).toBe(true)
+  })
+
+  it.each([
+    'document.cookie',
+    "document['cookie']",
+    "const k = 'coo' + 'kie'; document[k]",
+    'document[`coo${"kie"}`]',
+    "const { ['coo' + 'kie']: c } = document; c",
+    'doc\\u0075ment.title',
+    "localStorage.getItem('token')",
+    "Reflect.get(document, 'x')",
+    "Object.getOwnPropertyDescriptor(Document.prototype, 'x')",
+    "eval('1')",
+    "[].constructor.constructor('return 1')()",
+    'await 1'
+  ])('asks about %s', (script) => {
+    expect(readsLikeALook(script)).toBe(false)
+  })
+})
+
 describe('when it is driving', () => {
   it('stops for good on Esc: the reply gets nowhere, and its approvals are gone', async () => {
     const { service, inChat, surface, send, overlay, disarm, confirmSite } = harness()
@@ -211,21 +241,23 @@ describe('the browser tools in Chrome', () => {
     expect(names(true)).not.toContain('chrome')
   })
 
-  it('takes the picture of what is on screen, wherever the page is scrolled to', async () => {
+  it('takes its picture without laying the user’s page out again', async () => {
     const send = vi.fn(async (op: string, args: Record<string, unknown>) => {
       if (op === 'open') return { id: 7, title: '', url: 'about:blank', windowId: 1 }
       return args.method === 'Page.getLayoutMetrics'
-        ? { cssVisualViewport: { clientWidth: 800, clientHeight: 600, pageX: 0, pageY: 2655 } }
+        ? { cssVisualViewport: { clientWidth: 800, clientHeight: 600 } }
         : { data: 'cGlj' }
     })
+    const fitPicture = vi.fn((picture: Buffer) => picture)
     const runtime = new ChromeBrowserRuntime(
       { send: send as never, onEvent: () => () => undefined },
-      { showPointer: () => undefined }
+      { showPointer: () => undefined, fitPicture }
     )
     const surface = await runtime.createSurface()
-    await surface.captureViewport()
+    expect(await surface.captureViewport()).toMatchObject({ width: 800, height: 600 })
     const shot = send.mock.calls.find(([, args]) => args.method === 'Page.captureScreenshot')
-    expect(shot?.[1].params).toMatchObject({ clip: { x: 0, y: 2655, width: 800, height: 600 } })
+    expect(shot?.[1].params).not.toHaveProperty('clip')
+    expect(fitPicture).toHaveBeenCalledWith(expect.any(Buffer), 800, 600)
   })
 })
 
