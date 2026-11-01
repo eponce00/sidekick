@@ -12,6 +12,7 @@ import { saveViewedImagePreview } from './viewedImagePreviews'
 
 const IMAGE_TYPES: readonly ToolResultImageMimeType[] = ['image/png', 'image/jpeg', 'image/webp']
 const MAX_BATCH_STEPS = 50
+const MAX_WAIT_SECONDS = 30
 // Enough for a menu or a field to be ready for the next step.
 const BATCH_STEP_PAUSE_MS = 150
 
@@ -102,6 +103,11 @@ export function registerComputerToolHandlers(
       if (!seen) return succeed(result)
       return showLook(seen, `${result}\n${seen.note ? `${seen.note}\n` : ''}`)
     }
+    const held = (step: Record<string, unknown>): string[] =>
+      Array.isArray(step.modifiers) ? step.modifiers.map(String) : []
+    // Copying shows nothing, and waiting may well not, so neither is a sign of a step not landing.
+    const mayShowNothing = (step: Record<string, unknown>): boolean =>
+      text(step, 'action') === 'wait' || isCombination(step)
     const isCombination = (step: Record<string, unknown>): boolean =>
       text(step, 'action') === 'key' &&
       computerKeyCombination(
@@ -118,6 +124,8 @@ export function registerComputerToolHandlers(
       switch (name) {
         case 'click':
         case 'double_click':
+        case 'triple_click':
+        case 'middle_click':
         case 'right_click':
           return service.click(
             chat,
@@ -127,12 +135,29 @@ export function registerComputerToolHandlers(
               x: number(step, 'x'),
               y: number(step, 'y'),
               double: name === 'double_click',
+              triple: name === 'triple_click',
+              middle: name === 'middle_click',
               button: name === 'right_click' ? 'right' : 'left',
-              fromZoom: step.from_zoom === true
+              fromZoom: step.from_zoom === true,
+              modifiers: held(step)
             },
             signal,
             real,
             step.confirm_risky === true
+          )
+        case 'wait': {
+          const seconds = Math.min(Math.max(number(step, 'seconds') ?? 2, 0.1), MAX_WAIT_SECONDS)
+          await new Promise((resolve) => setTimeout(resolve, seconds * 1000))
+          signal.throwIfAborted()
+          return `Waited ${seconds} seconds.`
+        }
+        case 'press_and_hold':
+          return service.pressAndHold(
+            chat,
+            app,
+            { element: row, x: number(step, 'x'), y: number(step, 'y') },
+            number(step, 'seconds') ?? 1,
+            signal
           )
         case 'hover':
           return service.hover(
@@ -157,7 +182,8 @@ export function registerComputerToolHandlers(
               element: number(step, 'to_element')
             },
             signal,
-            real
+            real,
+            { seconds: number(step, 'seconds'), modifiers: held(step) }
           )
         case 'type':
           return service.type(chat, app, text(step, 'text'), row, signal, real)
@@ -199,7 +225,7 @@ export function registerComputerToolHandlers(
           const result = await perform(step, real)
           if (result === null) {
             throw new ComputerUseRefusal(
-              `${text(step, 'action') || '(none)'} can't be in a batch, only click, double_click, right_click, type, set_value, key, scroll, drag and hover.`
+              `${text(step, 'action') || '(none)'} can't be in a batch, only click, double_click, triple_click, middle_click, right_click, type, set_value, key, scroll, drag, hover, press_and_hold and wait.`
             )
           }
           done.push(`${index + 1}. ${result}`)
@@ -217,7 +243,7 @@ export function registerComputerToolHandlers(
       }
       return acted(done.join('\n'), {
         realInput: anyReal,
-        mayShowNothing: !stopped && isCombination(steps[steps.length - 1])
+        mayShowNothing: !stopped && mayShowNothing(steps[steps.length - 1])
       })
     }
     try {
@@ -273,7 +299,7 @@ export function registerComputerToolHandlers(
               message: `Unknown action ${action || '(none)'}.`
             })
           }
-          return await acted(result, { realInput, mayShowNothing: isCombination(args) })
+          return await acted(result, { realInput, mayShowNothing: mayShowNothing(args) })
         }
       }
     } catch (error) {

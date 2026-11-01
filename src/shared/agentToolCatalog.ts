@@ -823,6 +823,8 @@ const computer = definition(
           'look',
           'click',
           'double_click',
+          'triple_click',
+          'middle_click',
           'right_click',
           'type',
           'set_value',
@@ -830,6 +832,8 @@ const computer = definition(
           'scroll',
           'drag',
           'hover',
+          'press_and_hold',
+          'wait',
           'zoom',
           'batch'
         ]
@@ -838,7 +842,7 @@ const computer = definition(
         type: 'array',
         maxItems: 50,
         description:
-          'For batch: up to 50 actions on the same app, each with its own action and arguments, run in order. It stops at the first one refused, and you get one look at the end. Only click, double_click, right_click, type, set_value, key, scroll, drag and hover. Row numbers are from your last look, so leave out steps that depend on what an earlier step opens.',
+          'For batch: up to 50 actions on the same app, each with its own action and arguments, run in order. It stops at the first one refused, and you get one look at the end. Only click, double_click, triple_click, middle_click, right_click, type, set_value, key, scroll, drag, hover, press_and_hold and wait. Row numbers are from your last look, so leave out steps that depend on what an earlier step opens.',
         items: { type: 'object' }
       },
       app: { type: 'string', description: 'App name. All but list_apps need it.' },
@@ -862,7 +866,7 @@ const computer = definition(
       real_input: {
         type: 'boolean',
         description:
-          'For a step that was refused or changed nothing, and always for drag: wait until the user has stepped away, then use their real mouse and keyboard. On batch, for all its steps. Later steps go straight on unless the user comes back. Hover always does this.'
+          'For a step that was refused or changed nothing, and always for drag, triple_click, middle_click and a click with modifiers: wait until the user has stepped away, then use their real mouse and keyboard. On batch, for all its steps. Later steps go straight on unless the user comes back. Hover always does this.'
       },
       from_zoom: {
         type: 'boolean',
@@ -878,7 +882,10 @@ const computer = definition(
           'For drag: where to end. For zoom: the bottom right, with x and y the top left, up to 500 wide.'
       },
       to_y: { type: 'number' },
-      text: { type: 'string', description: 'For type and set_value.' },
+      text: {
+        type: 'string',
+        description: 'For type and set_value. To fill in a field, prefer set_value: it is exact.'
+      },
       key: {
         type: 'string',
         description:
@@ -887,7 +894,12 @@ const computer = definition(
       modifiers: {
         type: 'array',
         items: { type: 'string' },
-        description: 'ctrl, shift, alt. Needs real_input.'
+        description: 'ctrl, shift, alt. For key, and held during a click or drag. Needs real_input.'
+      },
+      seconds: {
+        type: 'number',
+        description:
+          'For wait: how long, up to 30, when something is loading, then you get a fresh look. For press_and_hold: how long to hold, up to 10. For drag: how long it takes, up to 10, for apps that need it slow.'
       },
       direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] },
       amount: { type: 'number', minimum: 1, maximum: 50 }

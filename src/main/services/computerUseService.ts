@@ -3,6 +3,7 @@ import { computerAppAccess, findInstalledApp, type ComputerApp } from './compute
 import {
   computerActionPoint,
   computerRowPoints,
+  computerRowValues,
   startComputerDriver,
   type ComputerDriver,
   type ComputerDriverResult,
@@ -107,6 +108,8 @@ interface ChatAccess {
       fullTree: string
       /** Where each row is on screen, so the pointer can get there first. */
       rowPoints: Map<number, { x: number; y: number }>
+      /** What each field that can be set holds now. */
+      rowValues: Map<number, string>
       /** The last zoom into this picture, to say where a click on the zoomed picture is. */
       zoom?: { x: number; y: number; width: number; imageWidth: number }
       /** It gave no controls in time, so looks don't wait as long for them. */
@@ -162,6 +165,8 @@ const REAL_INPUT_SETTLE_MS = 150
 // Canvas apps show what can be grabbed only once the pointer has rested on it, as draw.io does for
 // the handles that draw an arrow.
 const REAL_DRAG_HOVER_MS = 350
+const MAX_HOLD_SECONDS = 10
+const MAX_DRAG_SECONDS = 10
 // Further than this from where a step left the real pointer, and someone else has moved it.
 const POINTER_TOLERANCE = 12
 // Some apps open an editor on the first key, as draw.io and spreadsheets do. The real keys right behind
@@ -403,6 +408,19 @@ export function computerKeyCombination(
         key: parts.at(-1) || '+',
         modifiers: [...modifiers, ...parts.slice(0, -1).filter(Boolean)]
       }
+}
+
+/** What can be held during a click. The Windows key reaches the shell, not the app. */
+function heldKeys(modifiers: readonly string[] | undefined): string[] {
+  const held = (modifiers ?? []).map((name) => {
+    const key = name.trim().toLowerCase()
+    return key === 'control' ? 'ctrl' : key
+  })
+  const other = held.find((key) => !['ctrl', 'shift', 'alt'].includes(key))
+  if (other) {
+    throw new ComputerUseRefusal(`Only ctrl, shift and alt can be held, not ${other}.`)
+  }
+  return held
 }
 
 function wantedName(name: string): string {
@@ -862,6 +880,7 @@ export class ComputerUseService {
         tree: state.text,
         fullTree: find ? (before?.fullTree ?? '') : state.text,
         rowPoints: computerRowPoints(state.structured),
+        rowValues: computerRowValues(state.structured),
         slowControls: gaveNoControls,
         zoom: find ? before?.zoom : undefined
       })
@@ -950,7 +969,9 @@ export class ComputerUseService {
     element: number | undefined,
     signal: AbortSignal,
     realInput = false,
-    confirmRisky = false
+    confirmRisky = false,
+    /** What a row pressed by its place is, since the pixel there may be something inside it. */
+    rowName = ''
   ): Promise<string> {
     const { app, pid, windowId, bounds, driver } = await this.target(chat, name, signal)
     this.refuseOutsidePicture(chat, app, [
@@ -984,14 +1005,11 @@ export class ComputerUseService {
     }
     const scaleNow = this.imageScale(chat, app, bounds)
     const pressing =
-      tool === 'click' || tool === 'double_click'
+      rowName ||
+      (tool === 'click' || tool === 'double_click'
         ? await this.controlBeingClicked(chat, app, args, element, bounds, scaleNow)
-        : ''
-    if (RISKY_CONTROL.test(pressing) && !confirmRisky) {
-      throw new ComputerUseRefusal(
-        `This would press ${pressing} in ${app.name}, which may not be reversible, so nothing was sent. If the user clearly asked for this, repeat it with confirm_risky true. Otherwise stop and ask them.`
-      )
-    }
+        : '')
+    if (!confirmRisky) this.refuseIfRisky(app, pressing)
     const isClick =
       tool === 'click' || tool === 'double_click' || tool === 'right_click' || tool === 'drag'
     if (!realInput && isClick && (await this.deps.appWindows.ignoresPostedClicks(windowId))) {
@@ -1126,6 +1144,16 @@ export class ComputerUseService {
     return pointOnScreen(args, bounds, scale)
   }
 
+  private rowLabel(chat: string, app: ComputerApp, element: number): string {
+    const seen = this.access(chat).snapshots.get(app.path.toLowerCase())
+    // The driver's header line explains its tokens with a row number too, so only a line that starts
+    // with the number is that row.
+    const line = seen?.tree
+      .split('\n')
+      .find((row) => /^\W*\[(\d+)\] /.exec(row)?.[1] === String(element))
+    return line?.replace(/^.*?\[\d+\]\s*/, '').replace(/\s*\[[\s\S]*$/, '') ?? ''
+  }
+
   /** What a click is about to press: a row's own line, or what Windows says is at the point. */
   private async controlBeingClicked(
     chat: string,
@@ -1135,17 +1163,36 @@ export class ComputerUseService {
     bounds: ComputerWindowBounds | null,
     scale: number
   ): Promise<string> {
-    if (element !== undefined) {
-      const seen = this.access(chat).snapshots.get(app.path.toLowerCase())
-      // The driver's header line explains its tokens with a row number too, so only a line that
-      // starts with the number is that row.
-      const line = seen?.tree
-        .split('\n')
-        .find((row) => /^\W*\[(\d+)\] /.exec(row)?.[1] === String(element))
-      return line?.replace(/^.*?\[\d+\]\s*/, '').replace(/\s*\[.*$/, '') ?? ''
-    }
+    if (element !== undefined) return this.rowLabel(chat, app, element)
     const point = this.aimedAt(chat, app, args, undefined, bounds, scale)
     return point ? this.deps.appWindows.controlAt(app.pid, point).catch(() => '') : ''
+  }
+
+  private refuseIfRisky(app: ComputerApp, pressing: string): void {
+    if (RISKY_CONTROL.test(pressing)) {
+      throw new ComputerUseRefusal(
+        `This would press ${pressing} in ${app.name}, which may not be reversible, so nothing was sent. If the user clearly asked for this, repeat it with confirm_risky true. Otherwise stop and ask them.`
+      )
+    }
+  }
+
+  /** Where a row is, in the last picture's pixels. A row's place is exact, and a guess isn't. */
+  private async placeOf(
+    chat: string,
+    name: string,
+    row: number,
+    signal: AbortSignal
+  ): Promise<{ x: number; y: number }> {
+    const { app, bounds } = await this.target(chat, name, signal)
+    const point = this.access(chat).snapshots.get(app.path.toLowerCase())?.rowPoints.get(row)
+    if (!point || !bounds) {
+      throw new ComputerUseRefusal(`Row ${row} has no place on screen. Use look.`, true)
+    }
+    const scale = this.imageScale(chat, app, bounds)
+    return {
+      x: Math.round((point.x - bounds.x) / scale),
+      y: Math.round((point.y - bounds.y) / scale)
+    }
   }
 
   /** Web-based apps take some input directly, with no focus. False when this step isn't one. */
@@ -1313,6 +1360,9 @@ export class ComputerUseService {
       button?: string
       double?: boolean
       fromZoom?: boolean
+      triple?: boolean
+      middle?: boolean
+      modifiers?: readonly string[]
     },
     signal: AbortSignal,
     realInput = false,
@@ -1321,7 +1371,49 @@ export class ComputerUseService {
     if (target.element === undefined && (target.x === undefined || target.y === undefined)) {
       throw new ComputerUseRefusal('Give an element number, or both x and y.')
     }
+    const held = heldKeys(target.modifiers)
+    // The driver can't hold a key in the background: posted input carries no live modifier state.
+    if (held.length && !realInput) {
+      throw new ComputerUseRefusal(
+        'A click with a key held needs real_input true, so nothing was sent.'
+      )
+    }
+    // Measured in File Explorer: a middle click sent in the background arrived as a plain left click.
+    if ((target.middle || target.triple) && !realInput) {
+      throw new ComputerUseRefusal(
+        `A ${target.middle ? 'middle' : 'triple'} click needs real_input true, so nothing was sent.`
+      )
+    }
+    const extras = {
+      ...(held.length ? { modifier: held } : {}),
+      ...(target.triple ? { count: 3 } : {}),
+      ...(target.middle ? { button: 'middle' } : {})
+    }
     let point: { x?: number; y?: number } = {}
+    // Pressing a row means invoking it, which is one plain click whatever was asked for. These need the
+    // mouse at its place, having first checked what is there, since a pixel can't say when covered.
+    if (target.element !== undefined && Object.keys(extras).length) {
+      const app = await this.resolve(chat, name, signal)
+      const rowName = this.rowLabel(chat, app, target.element)
+      if (!confirmRisky) this.refuseIfRisky(app, rowName)
+      point = await this.placeOf(chat, name, target.element, signal)
+      const tool = target.double
+        ? 'double_click'
+        : target.button === 'right'
+          ? 'right_click'
+          : 'click'
+      return this.act(
+        chat,
+        name,
+        tool,
+        { ...point, ...extras },
+        undefined,
+        signal,
+        realInput,
+        true,
+        rowName
+      )
+    }
     if (target.element === undefined) {
       point = { x: target.x, y: target.y }
       if (target.fromZoom) {
@@ -1338,7 +1430,33 @@ export class ComputerUseService {
       : target.button === 'right'
         ? 'right_click'
         : 'click'
-    return this.act(chat, name, tool, point, target.element, signal, realInput, confirmRisky)
+    return this.act(
+      chat,
+      name,
+      tool,
+      { ...point, ...extras },
+      target.element,
+      signal,
+      realInput,
+      confirmRisky
+    )
+  }
+
+  /**
+   * Presses and keeps the button down in one place, for what only responds to holding. The driver has
+   * no separate press and release, and a drag that goes nowhere is the same thing to an app.
+   */
+  async pressAndHold(
+    chat: string,
+    name: string,
+    target: { element?: number; x?: number; y?: number },
+    seconds: number,
+    signal: AbortSignal
+  ): Promise<string> {
+    await this.drag(chat, name, target, target, signal, true, {
+      seconds: Math.min(Math.max(seconds, 0.1), MAX_HOLD_SECONDS)
+    })
+    return 'Held and released.'
   }
 
   /**
@@ -1430,31 +1548,33 @@ export class ComputerUseService {
     from: { x?: number; y?: number; element?: number },
     to: { x?: number; y?: number; element?: number },
     signal: AbortSignal,
-    realInput = false
+    realInput = false,
+    options: { seconds?: number; modifiers?: readonly string[] } = {}
   ): Promise<string> {
     // A row's place is exact. Guessing at small targets by eye is what took a model longest on a canvas.
-    const place = async (end: typeof from): Promise<{ x?: number; y?: number }> => {
-      if (end.element === undefined) return { x: end.x, y: end.y }
-      const { app, bounds } = await this.target(chat, name, signal)
-      const point = this.access(chat)
-        .snapshots.get(app.path.toLowerCase())
-        ?.rowPoints.get(end.element)
-      if (!point || !bounds) {
-        throw new ComputerUseRefusal(`Row ${end.element} has no place on screen. Use look.`, true)
-      }
-      const scale = this.imageScale(chat, app, bounds)
-      return {
-        x: Math.round((point.x - bounds.x) / scale),
-        y: Math.round((point.y - bounds.y) / scale)
-      }
-    }
+    const place = (
+      end: typeof from
+    ): Promise<{ x?: number; y?: number }> | { x?: number; y?: number } =>
+      end.element === undefined
+        ? { x: end.x, y: end.y }
+        : this.placeOf(chat, name, end.element, signal)
     const [start, end] = [await place(from), await place(to)]
+    const held = heldKeys(options.modifiers)
     if ([start.x, start.y, end.x, end.y].includes(undefined)) {
       throw new ComputerUseRefusal(
         'Give a row or x and y to start from, and a row or to_x and to_y to end at.'
       )
     }
-    const args = { from_x: start.x, from_y: start.y, to_x: end.x, to_y: end.y }
+    const args = {
+      from_x: start.x,
+      from_y: start.y,
+      to_x: end.x,
+      to_y: end.y,
+      ...(options.seconds
+        ? { duration_ms: Math.round(Math.min(options.seconds, MAX_DRAG_SECONDS) * 1000) }
+        : {}),
+      ...(held.length ? { modifier: held } : {})
+    }
     return this.act(chat, name, 'drag', args, undefined, signal, realInput)
   }
 
@@ -1471,6 +1591,12 @@ export class ComputerUseService {
     // line break. So those go as real key presses, with the text between them typed on its own.
     const parts = text.split(/(\t|\r?\n)/).filter(Boolean)
     const send = async (part: string, row: number | undefined): Promise<string> => {
+      if (row !== undefined) {
+        if (!realInput) return this.typeIntoRow(chat, name, part, row, signal)
+        // Real keys go to whatever has focus, so the row has to be given it first.
+        await this.act(chat, name, 'click', {}, row, signal, true, false)
+        return send(part, undefined)
+      }
       const [firstKey, ...rest] = part
       if (!realInput || !rest.length) {
         return this.act(chat, name, 'type_text', { text: part }, row, signal, realInput)
@@ -1507,6 +1633,28 @@ export class ComputerUseService {
       }
     }
     return `Typed ${parts.length} pieces, with real Tab and Enter presses between them.`
+  }
+
+  /**
+   * Text sent in the background goes to whatever has focus, whichever row it was aimed at. In Character
+   * Map it changed the font instead of filling the field. A field can be set directly; anything else
+   * can't be reached this way.
+   */
+  private async typeIntoRow(
+    chat: string,
+    name: string,
+    text: string,
+    row: number,
+    signal: AbortSignal
+  ): Promise<string> {
+    const app = await this.resolve(chat, name, signal)
+    const current = this.access(chat).snapshots.get(app.path.toLowerCase())?.rowValues.get(row)
+    if (current === undefined) {
+      throw new ComputerUseRefusal(
+        `Row ${row} can't be typed into in the background, so nothing was sent. Repeat it with real_input true, or tell the user what you need done.`
+      )
+    }
+    return this.setValue(chat, name, row, current + text, signal)
   }
 
   async setValue(

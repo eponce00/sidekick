@@ -724,6 +724,111 @@ describe('what the agent may reach', () => {
     expect((await service.lookAfterAction('chat', 'notes', signal)).changed).toBe(false)
   })
 
+  it('holds a key during a click only with real input, and only ones it allows', async () => {
+    const { service, call, appWindows } = harness([app('notes')])
+    needsForeground(call, 'never refused')
+    appWindows.windowsOf.mockResolvedValue([
+      { id: 77, title: 'W', bounds: { x: 0, y: 0, width: 100, height: 100 } }
+    ])
+    await service.requestApp('chat', 'notes', signal)
+    const where = { x: 5, y: 6 }
+    await expect(
+      service.click('chat', 'notes', { ...where, modifiers: ['ctrl'] }, signal)
+    ).rejects.toThrow('real_input')
+    await expect(
+      service.click('chat', 'notes', { ...where, modifiers: ['win'] }, signal, true)
+    ).rejects.toThrow('not win')
+    await service.click('chat', 'notes', { ...where, modifiers: ['Control'] }, signal, true)
+    expect(call).toHaveBeenLastCalledWith(
+      'click',
+      expect.objectContaining({ modifier: ['ctrl'], delivery_mode: 'foreground' }),
+      signal
+    )
+  })
+
+  it('presses a row by its place for a triple click, still checking what it is', async () => {
+    const { service, call, appWindows } = harness([app('notes')])
+    needsForeground(call, 'never refused')
+    appWindows.windowsOf.mockResolvedValue([
+      { id: 77, title: 'W', bounds: { x: 0, y: 0, width: 100, height: 100 } }
+    ])
+    const frame = { x: 40, y: 50, w: 10, h: 10 }
+    const answer = call.getMockImplementation()!
+    call.mockImplementation(async (tool, args) => ({
+      ...(await answer(tool, args)),
+      text:
+        tool === 'get_window_state'
+          ? 'snapshot_id=s1\n- [0] Edit "Name"\n- [1] Button "Delete account"'
+          : 'ok',
+      structured:
+        tool === 'bring_to_front'
+          ? { landed_on_target: true, previous_fg_hwnd: '0x9', target_hwnd: '0x4d' }
+          : tool === 'get_window_state'
+            ? {
+                elements: [
+                  { element_index: 0, frame },
+                  { element_index: 1, frame }
+                ]
+              }
+            : undefined
+    }))
+    await service.requestApp('chat', 'notes', signal)
+    await service.look('chat', 'notes', true, signal)
+    await expect(
+      service.click('chat', 'notes', { element: 0, triple: true }, signal)
+    ).rejects.toThrow('real_input')
+    await service.click('chat', 'notes', { element: 0, triple: true }, signal, true)
+    expect(call).toHaveBeenLastCalledWith(
+      'click',
+      expect.objectContaining({ x: 45, y: 55, count: 3 }),
+      signal
+    )
+    expect(call.mock.lastCall?.[1]).not.toHaveProperty('element_token')
+    await expect(
+      service.click('chat', 'notes', { element: 1, triple: true }, signal, true)
+    ).rejects.toThrow('may not be reversible')
+    await expect(
+      service.click('chat', 'notes', { element: 0, middle: true }, signal)
+    ).rejects.toThrow('real_input')
+  })
+
+  it('never lets background text go wherever the focus happens to be', async () => {
+    const { service, call } = harness([app('notes')])
+    needsForeground(call, 'never refused')
+    const answer = call.getMockImplementation()!
+    call.mockImplementation(async (tool, args) => ({
+      ...(await answer(tool, args)),
+      text:
+        tool === 'get_window_state' ? 'snapshot_id=s1\n- [0] Edit "Name"\n- [1] Button "Go"' : 'ok',
+      structured:
+        tool === 'bring_to_front'
+          ? { landed_on_target: true, previous_fg_hwnd: '0x9', target_hwnd: '0x4d' }
+          : tool === 'get_window_state'
+            ? {
+                elements: [
+                  { element_index: 0, value: 'one ', actions: ['set_value', 'text'] },
+                  { element_index: 1, actions: ['invoke'] }
+                ]
+              }
+            : undefined
+    }))
+    await service.requestApp('chat', 'notes', signal)
+    await service.look('chat', 'notes', true, signal)
+    await service.type('chat', 'notes', 'two', 0, signal)
+    expect(call).toHaveBeenLastCalledWith(
+      'set_value',
+      expect.objectContaining({ value: 'one two', element_token: 's1:0' }),
+      signal
+    )
+    await expect(service.type('chat', 'notes', 'two', 1, signal)).rejects.toThrow('real_input')
+    expect(call).not.toHaveBeenCalledWith('type_text', expect.anything(), signal)
+    // With real keys, the row gets the focus first.
+    await service.type('chat', 'notes', 'x', 0, signal, true)
+    const sent = call.mock.calls.map(([tool]) => tool)
+    expect(sent.lastIndexOf('click')).toBeLessThan(sent.lastIndexOf('type_text'))
+    expect(sent.lastIndexOf('click')).toBeGreaterThan(-1)
+  })
+
   it('holds a key combination written as one key to the same limits', async () => {
     const { service, call } = harness([app('notes')])
     needsForeground(call, 'never refused')

@@ -122,6 +122,27 @@ export interface ComputerWindowBounds {
   height: number
 }
 
+/** What a field holds, from a look's structured detail. Null for a row that can't be set. */
+export function computerRowValues(structured: unknown): Map<number, string> {
+  const elements = (structured as { elements?: unknown } | null | undefined)?.elements
+  const values = new Map<number, string>()
+  if (!Array.isArray(elements)) return values
+  for (const element of elements as Array<{
+    element_index?: unknown
+    value?: unknown
+    actions?: unknown
+  }>) {
+    if (
+      typeof element?.element_index === 'number' &&
+      Array.isArray(element.actions) &&
+      element.actions.includes('set_value')
+    ) {
+      values.set(element.element_index, typeof element.value === 'string' ? element.value : '')
+    }
+  }
+  return values
+}
+
 /** The middle of each numbered row, as a screen point, from a look's structured detail. */
 export function computerRowPoints(structured: unknown): Map<number, { x: number; y: number }> {
   const elements = (structured as { elements?: unknown } | null | undefined)?.elements
