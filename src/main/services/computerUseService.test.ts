@@ -9,11 +9,10 @@ import {
   COMPUTER_DRIVER_TOOLS,
   computerDriverEnvironment,
   computerDriverManifest,
-  computerActionPoint,
-  computerOpenWindows,
-  computerWindowBounds
+  computerActionPoint
 } from './computerUseDriver'
 import { ComputerUseService } from './computerUseService'
+import { parseComputerWindows, type ComputerAppWindow } from './computerUseWindows'
 
 const app = (name: string, pid = 10): ComputerApp => {
   const path = `C:\\Apps\\${name}.exe`
@@ -27,11 +26,9 @@ function harness(apps: ComputerApp[], confirm = true) {
     images: [] as Array<{ mimeType: string; data: string }>,
     structured: undefined as unknown,
     text:
-      tool === 'list_windows'
-        ? '- app (pid 10) "Window" [window_id: 77]'
-        : tool === 'get_window_state'
-          ? 'window_id=77 pid=10 elements=1 snapshot_id=s1\n- [0] Button "OK"'
-          : 'ok'
+      tool === 'get_window_state'
+        ? 'window_id=77 pid=10 elements=1 snapshot_id=s1\n- [0] Button "OK"'
+        : 'ok'
   }))
   const startDriver = vi.fn(async () => ({ call, close: vi.fn(async () => undefined) }))
   const confirmApp = vi.fn(async () => confirm)
@@ -61,10 +58,17 @@ function harness(apps: ComputerApp[], confirm = true) {
     front: vi.fn(async () => 0),
     controlAt: vi.fn(async (_pid: number, _point: { x: number; y: number }) => ''),
     ignoresPostedClicks: vi.fn(async (_window: number) => false),
-    ignoresBackgroundDrags: vi.fn(async (_window: number) => false)
+    ignoresBackgroundDrags: vi.fn(async (_window: number) => false),
+    windowsOf: vi.fn(
+      async (_pid: number): Promise<ComputerAppWindow[]> => [
+        { id: 77, title: 'Window', bounds: null }
+      ]
+    ),
+    glide: vi.fn(async (_point: { x: number; y: number }) => true)
   }
   const hideActive = vi.fn()
   const moveCursor = vi.fn()
+  const hideCursor = vi.fn()
   const service = new ComputerUseService({
     driverPath: 'C:\\driver\\cua-driver.exe',
     dataFolder: () => 'C:\\data',
@@ -77,6 +81,7 @@ function harness(apps: ComputerApp[], confirm = true) {
     showActive,
     hideActive,
     moveCursor,
+    hideCursor,
     showPreview: vi.fn(),
     listApps: async () => apps,
     findInstalled: async (name) => installed.find((a) => a.name.toLowerCase() === name) ?? null,
@@ -97,7 +102,8 @@ function harness(apps: ComputerApp[], confirm = true) {
     appWindows,
     showActive,
     hideActive,
-    moveCursor
+    moveCursor,
+    hideCursor
   }
 }
 
@@ -109,9 +115,7 @@ function needsForeground(call: ReturnType<typeof harness>['call'], tool: string)
     text:
       name === tool && args?.delivery_mode !== 'foreground'
         ? 'Background delivery is not available for target window class'
-        : name === 'list_windows'
-          ? '- app (pid 10) "Window" [window_id: 77]'
-          : 'ok',
+        : 'ok',
     structured:
       name === 'bring_to_front'
         ? { landed_on_target: true, previous_fg_hwnd: '0x9', target_hwnd: '0x4d' }
@@ -281,7 +285,7 @@ describe('what the agent may reach', () => {
       await service.scroll('chat', 'notes', 'up', 3, {}, signal)
       notes.push((await service.lookAfterAction('chat', 'notes', signal)).note)
     }
-    expect(notes[0]).toContain('did not land')
+    expect(notes[0]).toContain('may not have landed')
     expect(notes[2]).toContain('Stop trying')
     await expect(service.scroll('chat', 'notes', 'up', 3, {}, signal)).rejects.toThrow(
       'changed nothing'
@@ -310,23 +314,17 @@ describe('what the agent may reach', () => {
 
   it('stops before pressing something risky, whether by row or by pixel', async () => {
     const { service, call, appWindows } = harness([app('notes')])
+    appWindows.windowsOf.mockResolvedValue([
+      { id: 77, title: 'W', bounds: { x: 0, y: 0, width: 100, height: 100 } }
+    ])
     call.mockImplementation(async (tool) => ({
       isError: false,
       images: [] as Array<{ mimeType: string; data: string }>,
-      structured:
-        tool === 'list_windows'
-          ? {
-              windows: [
-                { window_id: 77, title: 'W', bounds: { x: 0, y: 0, width: 100, height: 100 } }
-              ]
-            }
-          : (undefined as unknown),
+      structured: undefined as unknown,
       text:
-        tool === 'list_windows'
-          ? '- app (pid 10) "Window" [window_id: 77]'
-          : tool === 'get_window_state'
-            ? 'window_id=77 pid=10 elements=2 snapshot_id=s1\n- [0] Button "OK"\n- [1] Button "Delete account" [actions=[invoke]]'
-            : 'ok'
+        tool === 'get_window_state'
+          ? 'window_id=77 pid=10 elements=2 snapshot_id=s1\nelement_token for row [1] is "s1:1"\n- [0] Button "OK"\n  - [1] Button "Delete account" [actions=[invoke]]'
+          : 'ok'
     }))
     const sent = () => call.mock.calls.filter(([tool]) => tool === 'click')
     await service.requestApp('chat', 'notes', signal)
@@ -351,16 +349,11 @@ describe('what the agent may reach', () => {
     ]).toString('base64')
     call.mockImplementation(async (tool, args) => ({
       ...(await answer(tool, args)),
-      images: tool === 'zoom' ? [{ mimeType: 'image/jpeg', data: jpeg }] : [],
-      structured:
-        tool === 'list_windows'
-          ? {
-              windows: [
-                { window_id: 77, title: 'W', bounds: { x: 0, y: 0, width: 1000, height: 500 } }
-              ]
-            }
-          : undefined
+      images: tool === 'zoom' ? [{ mimeType: 'image/jpeg', data: jpeg }] : []
     }))
+    appWindows.windowsOf.mockResolvedValue([
+      { id: 77, title: 'W', bounds: { x: 0, y: 0, width: 1000, height: 500 } }
+    ])
     await service.requestApp('chat', 'notes', signal)
     await service.look('chat', 'notes', false, signal)
     await service.zoom('chat', 'notes', { x: 0, y: 0, toX: 1000, toY: 50 }, signal)
@@ -397,25 +390,78 @@ describe('what the agent may reach', () => {
     )
   })
 
-  it('moves to a window that has just opened, as a dialog does', async () => {
+  it('holds a key combination written as one key to the same limits', async () => {
     const { service, call } = harness([app('notes')])
-    const windows = (...ids: number[]) => ({
-      windows: ids.map((window_id) => ({
-        window_id,
-        title: 'W',
-        bounds: { x: 0, y: 0, width: 100 * window_id, height: 10 }
-      }))
-    })
-    let open = windows(9, 2)
-    const answer = call.getMockImplementation()!
-    call.mockImplementation(async (tool, args) => ({
-      ...(await answer(tool, args)),
-      structured: tool === 'list_windows' ? open : undefined,
-      text:
-        tool === 'list_windows'
-          ? open.windows.map((w) => `- app "W" [window_id: ${w.window_id}]`).join('\n')
-          : (await answer(tool, args)).text
+    needsForeground(call, 'never refused')
+    await service.requestApp('chat', 'notes', signal)
+    for (const key of ['win+r', 'WIN + R', 'cmd+r', 'win']) {
+      await expect(service.key('chat', 'notes', key, [], signal, true)).rejects.toThrow(
+        'Windows key'
+      )
+    }
+    await expect(service.key('chat', 'notes', 'ctrl+s', [], signal)).rejects.toThrow('modifiers')
+    expect(call).not.toHaveBeenCalledWith('press_key', expect.anything(), signal)
+    await service.key('chat', 'notes', 'ctrl+s', [], signal, true)
+    expect(call).toHaveBeenLastCalledWith(
+      'press_key',
+      expect.objectContaining({ key: 's', modifiers: ['ctrl'] }),
+      signal
+    )
+  })
+
+  it("doesn't take the agent's own real input for the user coming back", async () => {
+    const { service, appWindows, userIdleSeconds, call } = harness([app('notes')])
+    needsForeground(call, 'never refused')
+    appWindows.front.mockResolvedValue(77)
+    await service.requestApp('chat', 'notes', signal)
+    await service.key('chat', 'notes', 'a', [], signal, true)
+    // Windows now reports no idle time at all, because of the key the agent just pressed.
+    userIdleSeconds.mockReturnValue(0)
+    const sent = call.mock.calls.length
+    await service.key('chat', 'notes', 'b', [], signal, true)
+    expect(call.mock.calls.length).toBe(sent + 1)
+    // But input that comes well after the agent's is the user's, so it waits and gives up.
+    vi.useFakeTimers({ now: Date.now() + 60_000 })
+    try {
+      const waiting = service.key('chat', 'notes', 'c', [], signal, true)
+      const refused = expect(waiting).rejects.toThrow('still using')
+      await vi.advanceTimersByTimeAsync(80_000)
+      await refused
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('after an action, sends only the rows that changed, and every row when most did', async () => {
+    const { service, call } = harness([app('notes')])
+    let tree = ['- [0] Button "A"', '- [1] Button "B"', '- [2] Button "C"', '- [3] Button "D"']
+    call.mockImplementation(async (tool) => ({
+      isError: false,
+      images: [] as Array<{ mimeType: string; data: string }>,
+      structured: undefined as unknown,
+      text: tool === 'get_window_state' ? `snapshot_id=s1\n${tree.join('\n')}` : 'ok'
     }))
+    await service.requestApp('chat', 'notes', signal)
+    await service.look('chat', 'notes', true, signal)
+    tree = ['- [0] Button "A"', '- [1] Button "B2"', '- [2] Button "C"', '- [3] Button "D"']
+    const few = await service.lookAfterAction('chat', 'notes', signal)
+    expect(few.text).toContain('[1] Button "B2"')
+    expect(few.text).not.toContain('Button "A"')
+    expect((await service.look('chat', 'notes', true, signal)).text).toContain('Button "A"')
+    tree = ['- [0] Button "W"', '- [1] Button "X"', '- [2] Button "Y"', '- [3] Button "Z"']
+    expect((await service.lookAfterAction('chat', 'notes', signal)).text).toContain('Button "W"')
+  })
+
+  it('moves to a window that has just opened, as a dialog does', async () => {
+    const { service, call, appWindows } = harness([app('notes')])
+    const windows = (...ids: number[]) =>
+      ids.map((id) => ({
+        id,
+        title: 'W',
+        bounds: { x: 0, y: 0, width: 100 * id, height: 10 }
+      }))
+    let open = windows(9, 2)
+    appWindows.windowsOf.mockImplementation(async () => open)
     await service.requestApp('chat', 'notes', signal)
     await service.look('chat', 'notes', false, signal)
     expect(call).toHaveBeenLastCalledWith(
@@ -563,15 +609,16 @@ describe('what the agent may reach', () => {
   })
 
   it('stays on the window the agent chose, and refuses one the app does not have', async () => {
-    const { service, call } = harness([app('notes')])
-    call.mockImplementation(async (tool) => ({
+    const { service, call, appWindows } = harness([app('notes')])
+    appWindows.windowsOf.mockResolvedValue([
+      { id: 77, title: 'One', bounds: null },
+      { id: 88, title: 'Two', bounds: null }
+    ])
+    call.mockImplementation(async () => ({
       isError: false,
       images: [] as Array<{ mimeType: string; data: string }>,
       structured: undefined as unknown,
-      text:
-        tool === 'list_windows'
-          ? '- app "One" [window_id: 77]\n- app "Two" [window_id: 88]'
-          : 'snapshot_id=s1'
+      text: 'snapshot_id=s1'
     }))
     await service.requestApp('chat', 'notes', signal)
     await expect(service.look('chat', 'notes', false, signal, 99)).rejects.toThrow('no window 99')
@@ -735,27 +782,6 @@ describe('the driver’s limits', () => {
     })
   })
 
-  it('works in an app’s real windows, largest first, not the desktop or taskbar', () => {
-    const window = (window_id: number, title: string, width: number, minimized = false) => ({
-      window_id,
-      title,
-      minimized,
-      bounds: { x: 0, y: 0, width, height: 10 }
-    })
-    expect(
-      computerOpenWindows({
-        windows: [
-          window(1, '', 900),
-          window(2, 'Program Manager', 800),
-          window(3, 'Small', 5),
-          window(4, 'Big', 50),
-          window(5, 'Hidden', 500, true)
-        ]
-      })
-    ).toEqual([4, 3])
-    expect(computerOpenWindows('nonsense')).toBeNull()
-  })
-
   it('finds where an action landed in what the driver reports', () => {
     expect(computerActionPoint('✅ Performed UIA Invoke on [1] (screen (1093,1240)).')).toEqual({
       x: 1093,
@@ -771,19 +797,23 @@ describe('the driver’s limits', () => {
     expect(computerActionPoint('Typed 1 char(s) on pid 3')).toBeNull()
   })
 
-  it('outlines only a window it knows, and not a minimized one', () => {
-    const bounds = { x: 60, y: 195, width: 1431, height: 1280 }
-    const windows = (minimized: boolean) => ({ windows: [{ window_id: 7, minimized, bounds }] })
-    expect(computerWindowBounds(windows(false), 7)).toEqual(bounds)
-    expect(computerWindowBounds(windows(true), 7)).toBeNull()
-    expect(computerWindowBounds(windows(false), 8)).toBeNull()
-    expect(computerWindowBounds('nonsense', 7)).toBeNull()
-  })
-
-  it('reads a single running app as well as many', () => {
-    expect(parseComputerApps('{"Id":5,"Path":"C:\\\\Apps\\\\notes.exe"}')).toMatchObject([
-      { pid: 5, name: 'notes' }
+  it('reads what the helper says is open', () => {
+    expect(parseComputerApps('5|C:\\Apps\\notes.exe?6|C:\\Apps\\My App.exe?')).toMatchObject([
+      { pid: 5, name: 'notes' },
+      { pid: 6, name: 'My App' }
     ])
     expect(parseComputerApps('')).toEqual([])
+    expect(parseComputerApps('no')).toEqual([])
+    expect(parseComputerWindows('')).toEqual([])
+    expect(parseComputerWindows('no')).toEqual([])
+    expect(
+      parseComputerWindows(
+        '3,0,0,5,5,Small\u00014,-8,-8,50,50,Big, with a comma\u00015,0,0,0,0,Empty'
+      )
+    ).toEqual([
+      { id: 4, title: 'Big, with a comma', bounds: { x: -8, y: -8, width: 50, height: 50 } },
+      { id: 3, title: 'Small', bounds: { x: 0, y: 0, width: 5, height: 5 } },
+      { id: 5, title: 'Empty', bounds: null }
+    ])
   })
 })

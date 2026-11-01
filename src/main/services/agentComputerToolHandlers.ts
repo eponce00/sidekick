@@ -3,6 +3,7 @@ import type { ToolResultImageMimeType } from '../../shared/agentRuntime'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
 import type { ToolOutputStore } from './toolOutputStore'
 import {
+  computerKeyCombination,
   ComputerUseRefusal,
   type ComputerLook,
   type ComputerUseService
@@ -10,6 +11,9 @@ import {
 import { saveViewedImagePreview } from './viewedImagePreviews'
 
 const IMAGE_TYPES: readonly ToolResultImageMimeType[] = ['image/png', 'image/jpeg', 'image/webp']
+const MAX_BATCH_STEPS = 20
+// Enough for a menu or a field to be ready for the next step.
+const BATCH_STEP_PAUSE_MS = 150
 
 function text(args: Record<string, unknown>, key: string): string {
   return typeof args[key] === 'string' ? args[key] : ''
@@ -32,9 +36,7 @@ export function registerComputerToolHandlers(
     const { signal } = context
     const action = text(args, 'action')
     const app = text(args, 'app')
-    const element = number(args, 'element')
     const realInput = args.real_input === true
-    const confirmRisky = args.confirm_risky === true
     const succeed = async (content: string) => {
       const bounded = await outputs.apply(content)
       return toolExecutionSucceeded({
@@ -48,7 +50,7 @@ export function registerComputerToolHandlers(
     const showLook = async (seen: ComputerLook, before = '', isZoom = false) => {
       // Web-based apps often expose no controls, and then only the picture says what is there.
       const bounded = await outputs.apply(
-        isZoom || /\[\d+\]/.test(seen.text)
+        isZoom || seen.controls
           ? `${before}${seen.text}`
           : `${before}${seen.text}\n${options.vision ? 'This app lists no controls. Work from the image, by pixel.' : 'This app lists no controls, and this model cannot see the image, so it cannot operate this app. Tell the user.'}`
       )
@@ -56,6 +58,8 @@ export function registerComputerToolHandlers(
         IMAGE_TYPES.includes(image.mimeType as ToolResultImageMimeType)
       )
       const first = images[0]
+      // The model has this picture already, so sending it again would only be slower.
+      const sendImage = options.vision && seen.changed !== false
       const previewUrl = first
         ? await saveViewedImagePreview(Buffer.from(first.data, 'base64'))
         : undefined
@@ -66,7 +70,7 @@ export function registerComputerToolHandlers(
         output: bounded.output,
         // The model clicks by pixels in this image, so its copy must keep its size.
         media:
-          first && options.vision
+          first && sendImage
             ? [
                 {
                   type: 'image',
@@ -84,13 +88,113 @@ export function registerComputerToolHandlers(
       })
     }
     // An action comes back with the app as it now stands, so the agent sees what its step really did.
-    const acted = async (result: string) => {
-      const seen = await service.lookAfterAction(chat, app, signal).catch((error) => {
+    const acted = async (result: string, step: { realInput: boolean; mayShowNothing: boolean }) => {
+      const seen = await service.lookAfterAction(chat, app, signal, step).catch((error) => {
         if (signal.aborted) throw error
         return null
       })
       if (!seen) return succeed(result)
       return showLook(seen, `${result}\n${seen.note ? `${seen.note}\n` : ''}`)
+    }
+    const isCombination = (step: Record<string, unknown>): boolean =>
+      text(step, 'action') === 'key' &&
+      computerKeyCombination(
+        text(step, 'key'),
+        Array.isArray(step.modifiers) ? step.modifiers.map(String) : []
+      ).modifiers.length > 0
+    /** One action, with no look after it. Null for anything that isn't one. */
+    const perform = async (
+      step: Record<string, unknown>,
+      real: boolean
+    ): Promise<string | null> => {
+      const name = text(step, 'action')
+      const row = number(step, 'element')
+      switch (name) {
+        case 'click':
+        case 'double_click':
+        case 'right_click':
+          return service.click(
+            chat,
+            app,
+            {
+              element: row,
+              x: number(step, 'x'),
+              y: number(step, 'y'),
+              double: name === 'double_click',
+              button: name === 'right_click' ? 'right' : 'left',
+              fromZoom: step.from_zoom === true
+            },
+            signal,
+            real,
+            step.confirm_risky === true
+          )
+        case 'drag':
+          return service.drag(
+            chat,
+            app,
+            { x: number(step, 'x'), y: number(step, 'y') },
+            { x: number(step, 'to_x'), y: number(step, 'to_y') },
+            signal,
+            real
+          )
+        case 'type':
+          return service.type(chat, app, text(step, 'text'), row, signal, real)
+        case 'set_value':
+          if (row === undefined) throw new ComputerUseRefusal('set_value needs an element.')
+          return service.setValue(chat, app, row, text(step, 'text'), signal)
+        case 'key':
+          return service.key(
+            chat,
+            app,
+            text(step, 'key'),
+            Array.isArray(step.modifiers) ? step.modifiers.map(String) : [],
+            signal,
+            real
+          )
+        case 'scroll':
+          return service.scroll(
+            chat,
+            app,
+            text(step, 'direction'),
+            number(step, 'amount') ?? 3,
+            { x: number(step, 'x'), y: number(step, 'y') },
+            signal,
+            real
+          )
+        default:
+          return null
+      }
+    }
+    /** Steps the model could already predict, for one turn of its time instead of one each. */
+    const batch = async (steps: Array<Record<string, unknown>>) => {
+      const done: string[] = []
+      let anyReal = false
+      let stopped = false
+      for (const [index, step] of steps.entries()) {
+        const real = step.real_input === true || realInput
+        anyReal ||= real
+        try {
+          const result = await perform(step, real)
+          if (result === null) {
+            throw new ComputerUseRefusal(`${text(step, 'action') || '(none)'} can't be in a batch.`)
+          }
+          done.push(`${index + 1}. ${result}`)
+        } catch (error) {
+          if (!(error instanceof ComputerUseRefusal)) throw error
+          done.push(`${index + 1}. Not done: ${error.message}`)
+          if (index + 1 < steps.length)
+            done.push(`The other ${steps.length - index - 1} were not tried.`)
+          stopped = true
+          break
+        }
+        if (index + 1 < steps.length) {
+          await new Promise((resolve) => setTimeout(resolve, BATCH_STEP_PAUSE_MS))
+        }
+      }
+      return acted(done.join('\n'), {
+        realInput: anyReal,
+        mayShowNothing: !stopped && isCombination(steps[steps.length - 1])
+      })
     }
     try {
       if (action === 'list_apps') return await succeed(await service.apps(signal))
@@ -122,73 +226,26 @@ export function registerComputerToolHandlers(
           }
           return await showLook(await service.zoom(chat, app, { x, y, toX, toY }, signal), '', true)
         }
-        case 'click':
-        case 'double_click':
-        case 'right_click':
-          return await acted(
-            await service.click(
-              chat,
-              app,
-              {
-                element,
-                x: number(args, 'x'),
-                y: number(args, 'y'),
-                double: action === 'double_click',
-                button: action === 'right_click' ? 'right' : 'left',
-                fromZoom: args.from_zoom === true
-              },
-              signal,
-              realInput,
-              confirmRisky
-            )
-          )
-        case 'drag':
-          return await acted(
-            await service.drag(
-              chat,
-              app,
-              { x: number(args, 'x'), y: number(args, 'y') },
-              { x: number(args, 'to_x'), y: number(args, 'to_y') },
-              signal,
-              realInput
-            )
-          )
-        case 'type':
-          return await acted(
-            await service.type(chat, app, text(args, 'text'), element, signal, realInput)
-          )
-        case 'set_value':
-          if (element === undefined) throw new ComputerUseRefusal('set_value needs an element.')
-          return await acted(await service.setValue(chat, app, element, text(args, 'text'), signal))
-        case 'key':
-          return await acted(
-            await service.key(
-              chat,
-              app,
-              text(args, 'key'),
-              Array.isArray(args.modifiers) ? args.modifiers.map(String) : [],
-              signal,
-              realInput
-            )
-          )
-        case 'scroll':
-          return await acted(
-            await service.scroll(
-              chat,
-              app,
-              text(args, 'direction'),
-              number(args, 'amount') ?? 3,
-              { x: number(args, 'x'), y: number(args, 'y') },
-              signal,
-              realInput
-            )
-          )
-        default:
-          return toolExecutionFailed({
-            title,
-            code: 'invalid_arguments',
-            message: `Unknown action ${action || '(none)'}.`
-          })
+        case 'batch': {
+          const steps = Array.isArray(args.steps)
+            ? (args.steps as Array<Record<string, unknown>>)
+            : []
+          if (!steps.length || steps.length > MAX_BATCH_STEPS) {
+            throw new ComputerUseRefusal(`batch needs 1 to ${MAX_BATCH_STEPS} steps.`)
+          }
+          return await batch(steps)
+        }
+        default: {
+          const result = await perform(args, realInput)
+          if (result === null) {
+            return toolExecutionFailed({
+              title,
+              code: 'invalid_arguments',
+              message: `Unknown action ${action || '(none)'}.`
+            })
+          }
+          return await acted(result, { realInput, mayShowNothing: isCombination(args) })
+        }
       }
     } catch (error) {
       if (signal.aborted) {

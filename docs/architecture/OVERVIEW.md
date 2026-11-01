@@ -364,7 +364,9 @@ apps: once approved, SideKick starts a Start Menu app's executable itself, with 
 `computerUseService.ts` resolves an app from its real executable path on every call, keeps one chat in
 control at a time, and clears a chat's approvals when the user presses Esc. Input goes in the
 background unless the driver reports that an app can't take it there. The real mouse and keyboard then
-need a second approval and a pause in the user's own input, and are refused for equipment software.
+need a pause in the user's own input, and are refused for equipment software. SideKick lists apps and
+windows through its own long-lived helper (`computerUseWindows.ts`) rather than the driver, since this
+happens on every step, and draws the agent's pointer itself with the driver's turned off.
 While Esc is armed, `computerUseHighlight.ts` outlines the app with a click-through window that runs no
 script and stays out of screen captures. The end of a run gives back the driver, Esc and the one-chat
 lock.

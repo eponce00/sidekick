@@ -1,14 +1,7 @@
 import { createHash } from 'crypto'
-import {
-  computerAppAccess,
-  findInstalledApp,
-  listComputerApps,
-  type ComputerApp
-} from './computerUseApps'
+import { computerAppAccess, findInstalledApp, type ComputerApp } from './computerUseApps'
 import {
   computerActionPoint,
-  computerOpenWindows,
-  computerWindowBounds,
   startComputerDriver,
   type ComputerDriver,
   type ComputerDriverResult,
@@ -35,6 +28,10 @@ export interface ComputerLook {
   changed: boolean | null
   /** The controls are as they were in the last look, so their numbers still hold. */
   sameControls: boolean
+  /** Whether the app lists any numbered rows at all. Web-based apps often don't. */
+  controls: boolean
+  /** Just the rows that differ from the last look, when that is much less than all of them. */
+  onlyChanged?: string
 }
 
 export interface ComputerUseDependencies {
@@ -56,6 +53,8 @@ export interface ComputerUseDependencies {
     | 'controlAt'
     | 'ignoresPostedClicks'
     | 'ignoresBackgroundDrags'
+    | 'windowsOf'
+    | 'glide'
   >
   /** Starts an approved executable, with no arguments. */
   startApp: (path: string) => void
@@ -67,9 +66,11 @@ export interface ComputerUseDependencies {
   hideActive: () => void
   /** Shows the agent's pointer reaching a screen point, in physical pixels. */
   moveCursor: (point: { x: number; y: number }) => Promise<void> | void
+  /** For while the real pointer is the one moving. */
+  hideCursor: () => void
   /** The agent's latest look, for the user to see when the app is covered. */
   showPreview: (image: { data: string }) => void
-  listApps?: (signal: AbortSignal) => Promise<ComputerApp[]>
+  listApps: () => Promise<ComputerApp[]>
   findInstalled?: (name: string, signal: AbortSignal) => Promise<ComputerApp | null>
   startDriver?: typeof startComputerDriver
   setTimer?: typeof setTimeout
@@ -115,14 +116,19 @@ const NEW_WINDOW_GRACE_MS = 3_000
 const POLL_MS = 500
 // The real keyboard goes to whichever window has focus, and the app comes forward over what the user
 // is doing, so this waits until they have stepped away. It stops short of the tool's two minutes.
-const TAKEOVER_IDLE_SECONDS = 30
+const TAKEOVER_IDLE_SECONDS = 10
 const TAKEOVER_WAIT_MS = 75_000
+// Windows counts idle time in whole seconds, so input just after the agent's can't be told from it.
+const OWN_INPUT_SLACK_SECONDS = 2
 // Real input is queued: going back at once could send it to the window going back to the front.
 const REAL_INPUT_SETTLE_MS = 150
+// Canvas apps show what can be grabbed only once the pointer has rested on it, as draw.io does for
+// the handles that draw an arrow.
+const REAL_DRAG_HOVER_MS = 350
 // Chromium drops the first wheel tick after the pointer jumps to a window.
 const MIN_REAL_WHEEL_TICKS = 2
 // An app takes a moment to draw what an action did.
-const ACTION_SETTLE_MS = 500
+const ACTION_SETTLE_MS = 300
 // The driver's own limit of 250 cut off a list of 21 containers. Searching can reach further, since
 // it returns only what matches.
 const MAX_CONTROLS = 500
@@ -131,7 +137,7 @@ const PICTURE_CHANGE = 0.01
 const MAX_ZOOM_WIDTH = 500
 const MAX_CONTROLS_SEARCHED = 5_000
 // Some apps take over a second, so nothing changing yet doesn't mean nothing happened.
-const SLOW_APP_SETTLE_MS = 1_200
+const SLOW_APP_SETTLE_MS = 900
 const WARN_UNCHANGED_STEPS = 3
 // Past these, more of the same only risks the agent going somewhere strange in someone's app.
 const MAX_UNCHANGED_STEPS = 5
@@ -194,6 +200,24 @@ async function picturesDiffer(a: string, b: string): Promise<boolean> {
   }
 }
 
+/**
+ * The rows of a tree that differ from an earlier one, or null when most do. A row keeps its number
+ * only if its whole line is the same, so whatever isn't listed can still be pressed by its number.
+ */
+function changedRows(before: string, now: string): string | null {
+  const rows = (tree: string): string[] => tree.split('\n').filter((line) => /\[\d+\]/.test(line))
+  const [old, current] = [rows(before), rows(now)]
+  const [oldSet, currentSet] = [new Set(old), new Set(current)]
+  const added = current.filter((row) => !oldSet.has(row))
+  const gone = old.filter((row) => !currentSet.has(row))
+  if (!current.length || added.length + gone.length > current.length / 2) return null
+  return [
+    'Only the rows that changed since your last look. Every other row is as it was, with the same number.',
+    ...(added.length ? ['New or changed:', ...added] : []),
+    ...(gone.length ? ['No longer there:', ...gone] : [])
+  ].join('\n')
+}
+
 function centerOf(bounds: ComputerWindowBounds | null): { x: number; y: number } | null {
   return bounds
     ? {
@@ -210,6 +234,23 @@ function pointOnScreen(
 ): { x: number; y: number } | null {
   if (!bounds || typeof args.x !== 'number' || typeof args.y !== 'number') return null
   return { x: Math.round(bounds.x + args.x * scale), y: Math.round(bounds.y + args.y * scale) }
+}
+
+/**
+ * A model can write a shortcut as "ctrl+s" instead of naming its modifiers, and the driver takes that
+ * too, so the limits on modifiers have to see it the same way.
+ */
+export function computerKeyCombination(
+  key: string,
+  modifiers: readonly string[]
+): { key: string; modifiers: string[] } {
+  const parts = key.split('+').map((part) => part.trim())
+  return parts.length < 2 || key.trim() === '+'
+    ? { key, modifiers: [...modifiers] }
+    : {
+        key: parts.at(-1) || '+',
+        modifiers: [...modifiers, ...parts.slice(0, -1).filter(Boolean)]
+      }
 }
 
 function wantedName(name: string): string {
@@ -230,6 +271,7 @@ export class ComputerUseService {
   private idleTimer: ReturnType<typeof setTimeout> | null = null
   /** What was in front before real input took it, to give back when the reply ends. */
   private handBack: { previous: number; app: number } | null = null
+  private lastRealInput = 0
 
   constructor(private readonly deps: ComputerUseDependencies) {}
 
@@ -249,12 +291,9 @@ export class ComputerUseService {
     return access
   }
 
-  private listApps(signal: AbortSignal): Promise<ComputerApp[]> {
-    return (this.deps.listApps ?? listComputerApps)(signal)
-  }
-
   async apps(signal: AbortSignal): Promise<string> {
-    const apps = await this.listApps(signal)
+    signal.throwIfAborted()
+    const apps = await this.deps.listApps()
     const open = apps.filter((a) => a.access.kind !== 'blocked').map((a) => a.name)
     // The same app can be listed under two spellings, as File Explorer is.
     const names = [...new Map(open.map((name) => [name.toLowerCase(), name])).values()]
@@ -271,8 +310,9 @@ export class ComputerUseService {
   }
 
   private async running(name: string, signal: AbortSignal): Promise<ComputerApp | undefined> {
+    signal.throwIfAborted()
     const wanted = wantedName(name)
-    return (await this.listApps(signal)).find((a) => a.name.toLowerCase() === wanted)
+    return (await this.deps.listApps()).find((a) => a.name.toLowerCase() === wanted)
   }
 
   /** The app by name, its real executable, checked on every call: a name proves nothing. */
@@ -317,14 +357,14 @@ export class ComputerUseService {
 
   /** Null once the app's window is up; otherwise what the agent should know instead. */
   private async startAndWait(app: ComputerApp, signal: AbortSignal): Promise<string | null> {
-    const before = new Set((await this.listApps(signal)).map((a) => a.path.toLowerCase()))
+    const before = new Set((await this.deps.listApps()).map((a) => a.path.toLowerCase()))
     this.deps.startApp(app.path)
     const key = app.path.toLowerCase()
     const deadline = Date.now() + APP_START_WAIT_MS
     let newcomers: string[] = []
     while (Date.now() < deadline) {
       signal.throwIfAborted()
-      const apps = await this.listApps(signal)
+      const apps = await this.deps.listApps()
       if (apps.some((a) => a.path.toLowerCase() === key)) return null
       newcomers = apps
         .filter((a) => !before.has(a.path.toLowerCase()) && a.access.kind !== 'blocked')
@@ -395,12 +435,9 @@ export class ComputerUseService {
       throw new ComputerUseRefusal(`${app.name} is not approved. Use request_app first.`)
     }
     const driver = await this.driverFor_(chat)
-    const listed = await driver.call('list_windows', { pid: app.pid }, signal)
-    const idOf = (line: string): number => Number(/\[window_id: (\d+)\]/.exec(line)?.[1])
-    const lines = listed.text.split('\n').filter((line) => /\[window_id: \d+\]/.test(line))
-    const ids = computerOpenWindows(listed.structured) ?? lines.map(idOf)
-    const windows = lines.filter((line) => ids.includes(idOf(line)))
-    if (listed.isError || ids.length === 0) {
+    const listed = await this.deps.appWindows.windowsOf(app.pid)
+    const ids = listed.map((window) => window.id)
+    if (ids.length === 0) {
       throw new ComputerUseRefusal(`${app.name} has no window SideKick can reach right now.`, true)
     }
     if (chosenWindow !== undefined && !ids.includes(chosenWindow)) {
@@ -417,24 +454,18 @@ export class ComputerUseService {
     const windowId =
       chosenWindow ?? opened ?? (last !== undefined && ids.includes(last) ? last : ids[0])
     access.windows.set(key, windowId)
-    this.markActive(chat, app, driver, app.pid, windowId)
+    this.markActive(chat, app, app.pid, windowId)
     return {
       app,
       pid: app.pid,
       windowId,
-      windows,
-      bounds: computerWindowBounds(listed.structured, windowId),
+      windows: listed.map((window) => `- "${window.title}" [window_id: ${window.id}]`),
+      bounds: listed.find((window) => window.id === windowId)?.bounds ?? null,
       driver
     }
   }
 
-  private markActive(
-    chat: string,
-    app: ComputerApp,
-    driver: ComputerDriver,
-    pid: number,
-    windowId: number
-  ): void {
+  private markActive(chat: string, app: ComputerApp, pid: number, windowId: number): void {
     const access = this.access(chat)
     if (!access.notified) {
       access.notified = true
@@ -448,10 +479,8 @@ export class ComputerUseService {
       appName: app.name,
       visible: () => this.deps.appWindows.visible(windowId),
       bounds: async () =>
-        computerWindowBounds(
-          (await driver.call('list_windows', { pid }, new AbortController().signal)).structured,
-          windowId
-        )
+        (await this.deps.appWindows.windowsOf(pid)).find((window) => window.id === windowId)
+          ?.bounds ?? null
     })
   }
 
@@ -544,6 +573,7 @@ export class ComputerUseService {
     let changed: boolean | null = null
     let treeKey = ''
     let sameControls = false
+    let onlyChanged: string | undefined
     if (snapshot) {
       const key = app.path.toLowerCase()
       const before = this.access(chat).snapshots.get(key)
@@ -551,6 +581,9 @@ export class ComputerUseService {
       imageHash = image ? createHash('sha256').update(image).digest('hex') : undefined
       treeKey = state.text.replace(/snapshot_id=\S+/g, '').replace(/\d+/g, '#')
       sameControls = /\[\d+\]/.test(state.text) && before?.treeKey === treeKey
+      if (before?.windowId === windowId && !find) {
+        onlyChanged = changedRows(before.tree, state.text) ?? undefined
+      }
       if (imageHash && before?.imageHash && before.windowId === windowId) {
         changed =
           imageHash !== before.imageHash &&
@@ -585,7 +618,9 @@ export class ComputerUseService {
       text: `${UNTRUSTED}\n${cutOff}${otherWindows}${state.text.replace(/^element_token for row.*$/m, '').trim()}`,
       images: state.images,
       changed,
-      sameControls
+      sameControls,
+      controls: /\[\d+\]/.test(state.text),
+      onlyChanged: onlyChanged && `${UNTRUSTED}\n${cutOff}${onlyChanged}`
     }
   }
 
@@ -596,29 +631,34 @@ export class ComputerUseService {
   async lookAfterAction(
     chat: string,
     name: string,
-    signal: AbortSignal
+    signal: AbortSignal,
+    step: {
+      realInput?: boolean
+      /** A key combination can work and show nothing, as copying does. */
+      mayShowNothing?: boolean
+    } = {}
   ): Promise<ComputerLook & { note: string }> {
     await new Promise((resolve) => setTimeout(resolve, ACTION_SETTLE_MS))
     let seen = await this.look(chat, name, true, signal)
-    if (seen.changed === false) {
+    if (seen.changed === false && !step.mayShowNothing) {
       await new Promise((resolve) => setTimeout(resolve, SLOW_APP_SETTLE_MS))
       seen = await this.look(chat, name, true, signal)
     }
     const access = this.access(chat)
-    if (seen.changed === false) access.unchangedSteps += 1
+    if (seen.changed === false && !step.mayShowNothing) access.unchangedSteps += 1
     if (seen.changed === true) access.unchangedSteps = 0
-    if (seen.changed !== false) return { ...seen, note: '' }
     // The whole list again would say nothing new, at the cost of a long read for the model.
-    if (seen.sameControls) {
-      seen = {
-        ...seen,
-        text: `${UNTRUSTED}\nThe controls are the same as in your last look, and their numbers still work.`
-      }
-    }
+    const text = seen.sameControls
+      ? `${UNTRUSTED}\nThe controls are the same as in your last look, and their numbers still work.`
+      : (seen.onlyChanged ?? seen.text)
+    seen = { ...seen, text }
+    if (seen.changed !== false || step.mayShowNothing) return { ...seen, note: '' }
     const note =
       access.unchangedSteps >= WARN_UNCHANGED_STEPS
         ? `The window has not changed in ${access.unchangedSteps} steps in a row, so these are not landing. Stop trying, and tell the user what you were trying to do and what happened.`
-        : 'The window looks exactly as it did before this step, so it probably did not land. Do not assume it worked. Repeat it with real_input true, or tell the user what you need done.'
+        : step.realInput
+          ? 'The window looks as it did before this step. Check whether it did what you wanted before repeating it, or tell the user what you need done.'
+          : 'The window looks as it did before this step, so it may not have landed. Do not assume it worked. Repeat it with real_input true, or tell the user what you need done.'
     return { ...seen, note }
   }
 
@@ -679,11 +719,11 @@ export class ComputerUseService {
     }
     if (realInput) await this.waitToUseRealInput(app, signal)
     // The pointer gets there first, so a click doesn't happen ahead of it.
-    const aimedAt = args.from_zoom === true ? null : pointOnScreen(args, bounds, scaleNow)
-    if (aimedAt) await this.deps.moveCursor(aimedAt)
+    const aimedAt = this.aimedAt(chat, app, args, bounds, scaleNow)
+    if (aimedAt && !realInput) await this.deps.moveCursor(aimedAt)
     const frontBefore = realInput ? 0 : await this.deps.appWindows.front()
     const result = realInput
-      ? await this.sendRealInput(app, driver, tool, targetArgs, signal)
+      ? await this.sendRealInput(app, driver, tool, targetArgs, aimedAt, signal)
       : await driver.call(tool, targetArgs, signal)
     // A background click can still make an app bring itself forward, over what the user is doing.
     if (
@@ -698,7 +738,7 @@ export class ComputerUseService {
       const sent = await this.sendInBackground(tool, args, windowId, bounds, scale)
       if (sent) {
         const point = pointOnScreen(args, bounds, scale)
-        if (point) this.deps.moveCursor(point)
+        if (point) void this.deps.moveCursor(point)
         return `Sent to ${app.name} in the background. It can't be confirmed from here, so use look to see whether it arrived.`
       }
       throw new ComputerUseRefusal(
@@ -711,8 +751,13 @@ export class ComputerUseService {
         true
       )
     }
-    const point = aimedAt ? null : computerActionPoint(result.text)
-    if (point) await this.deps.moveCursor(point)
+    const point =
+      tool === 'drag'
+        ? pointOnScreen({ x: args.to_x, y: args.to_y }, bounds, scaleNow)
+        : aimedAt
+          ? null
+          : computerActionPoint(result.text)
+    if (point && !realInput) await this.deps.moveCursor(point)
     // Only that it was sent: whether it landed is for the look that follows to say.
     return `${pressing ? `Click sent to ${pressing}. ` : ''}${(result.text || 'Sent.').replace(/^\W+/u, '')}`
   }
@@ -720,6 +765,30 @@ export class ComputerUseService {
   private imageScale(chat: string, app: ComputerApp, bounds: ComputerWindowBounds | null): number {
     const width = this.access(chat).snapshots.get(app.path.toLowerCase())?.imageWidth
     return width && bounds ? bounds.width / width : 1
+  }
+
+  /** Where on screen a step starts, or null without a pixel to go on. */
+  private aimedAt(
+    chat: string,
+    app: ComputerApp,
+    args: Record<string, unknown>,
+    bounds: ComputerWindowBounds | null,
+    scale: number
+  ): { x: number; y: number } | null {
+    if (args.from_x !== undefined) {
+      return pointOnScreen({ x: args.from_x, y: args.from_y }, bounds, scale)
+    }
+    if (args.from_zoom !== true) return pointOnScreen(args, bounds, scale)
+    const zoom = this.access(chat).snapshots.get(app.path.toLowerCase())?.zoom
+    if (!zoom || typeof args.x !== 'number' || typeof args.y !== 'number') return null
+    return pointOnScreen(
+      {
+        x: zoom.x + (args.x * zoom.width) / zoom.imageWidth,
+        y: zoom.y + (args.y * zoom.width) / zoom.imageWidth
+      },
+      bounds,
+      scale
+    )
   }
 
   /** What a click is about to press: a row's own line, or what Windows says is at the point. */
@@ -731,23 +800,16 @@ export class ComputerUseService {
     bounds: ComputerWindowBounds | null,
     scale: number
   ): Promise<string> {
-    const seen = this.access(chat).snapshots.get(app.path.toLowerCase())
     if (element !== undefined) {
-      const line = seen?.tree.split('\n').find((row) => row.includes(`[${element}] `))
+      const seen = this.access(chat).snapshots.get(app.path.toLowerCase())
+      // The driver's header line explains its tokens with a row number too, so only a line that
+      // starts with the number is that row.
+      const line = seen?.tree
+        .split('\n')
+        .find((row) => /^\W*\[(\d+)\] /.exec(row)?.[1] === String(element))
       return line?.replace(/^.*?\[\d+\]\s*/, '').replace(/\s*\[.*$/, '') ?? ''
     }
-    const zoom = args.from_zoom === true ? seen?.zoom : undefined
-    if (args.from_zoom === true && !zoom) return ''
-    const point = pointOnScreen(
-      zoom && typeof args.x === 'number' && typeof args.y === 'number'
-        ? {
-            x: zoom.x + (args.x * zoom.width) / zoom.imageWidth,
-            y: zoom.y + (args.y * zoom.width) / zoom.imageWidth
-          }
-        : args,
-      bounds,
-      scale
-    )
+    const point = this.aimedAt(chat, app, args, bounds, scale)
     return point ? this.deps.appWindows.controlAt(app.pid, point).catch(() => '') : ''
   }
 
@@ -783,8 +845,41 @@ export class ComputerUseService {
     driver: ComputerDriver,
     tool: Parameters<ComputerDriver['call']>[0],
     args: Record<string, unknown>,
+    aimedAt: { x: number; y: number } | null,
     signal: AbortSignal
   ): Promise<ComputerDriverResult> {
+    if ((await this.deps.appWindows.front()) !== args.window_id) {
+      await this.bringForward(app, driver, args, signal)
+    }
+    this.deps.hideCursor()
+    if (aimedAt) await this.deps.appWindows.glide(aimedAt)
+    if (aimedAt && tool === 'drag') {
+      await new Promise((resolve) => setTimeout(resolve, REAL_DRAG_HOVER_MS))
+    }
+    const input =
+      tool === 'scroll'
+        ? { ...args, amount: Math.max(Number(args.amount) || 0, MIN_REAL_WHEEL_TICKS) }
+        : args
+    // Real input reaches global shortcuts, so the agent's own Esc would stop the agent.
+    const pressesEsc = tool === 'press_key' && /^esc(ape)?$/i.test(String(args.key))
+    if (pressesEsc) this.setStopKeyArmed(false)
+    try {
+      return await driver.call(tool, { ...input, delivery_mode: 'foreground' }, signal)
+    } finally {
+      this.lastRealInput = Date.now()
+      if (pressesEsc) {
+        await new Promise((resolve) => setTimeout(resolve, REAL_INPUT_SETTLE_MS))
+        this.setStopKeyArmed(true)
+      }
+    }
+  }
+
+  private async bringForward(
+    app: ComputerApp,
+    driver: ComputerDriver,
+    args: Record<string, unknown>,
+    signal: AbortSignal
+  ): Promise<void> {
     const front = await driver.call(
       'bring_to_front',
       { pid: args.pid, window_id: args.window_id },
@@ -799,13 +894,6 @@ export class ComputerUseService {
         true
       )
     }
-    const input =
-      tool === 'scroll'
-        ? { ...args, amount: Math.max(Number(args.amount) || 0, MIN_REAL_WHEEL_TICKS) }
-        : args
-    // Real input reaches global shortcuts, so the agent's own Esc would stop the agent.
-    const pressesEsc = tool === 'press_key' && /^esc(ape)?$/i.test(String(args.key))
-    if (pressesEsc) this.setStopKeyArmed(false)
     const previous = Number.parseInt(String(state.previous_fg_hwnd), 16)
     if (
       !this.handBack &&
@@ -815,14 +903,16 @@ export class ComputerUseService {
     ) {
       this.handBack = { previous, app: Number(args.window_id) }
     }
-    try {
-      return await driver.call(tool, { ...input, delivery_mode: 'foreground' }, signal)
-    } finally {
-      if (pressesEsc) {
-        await new Promise((resolve) => setTimeout(resolve, REAL_INPUT_SETTLE_MS))
-        this.setStopKeyArmed(true)
-      }
-    }
+  }
+
+  /**
+   * Windows counts the agent's own real input as activity, which made every step wait out the whole
+   * idle time, so only input that came after the agent's is the user's.
+   */
+  private userIsActive(): boolean {
+    const idle = this.deps.userIdleSeconds()
+    const sinceOwnInput = (Date.now() - this.lastRealInput) / 1000
+    return idle < TAKEOVER_IDLE_SECONDS && idle < sinceOwnInput - OWN_INPUT_SLACK_SECONDS
   }
 
   /** Returns once the user has stepped away, unless a stray key could move a machine. */
@@ -833,7 +923,7 @@ export class ComputerUseService {
       )
     }
     const deadline = Date.now() + TAKEOVER_WAIT_MS
-    while (this.deps.userIdleSeconds() < TAKEOVER_IDLE_SECONDS) {
+    while (this.userIsActive()) {
       if (Date.now() >= deadline) {
         throw new ComputerUseRefusal(
           'The user is still using this computer, so nothing was sent. Try later, or tell them what you need done.'
@@ -909,7 +999,8 @@ export class ComputerUseService {
       text: `${UNTRUSTED}\nThis is a closer view. To click something in it, use click with x and y from this picture and from_zoom true.`,
       images: result.images,
       changed: null,
-      sameControls: false
+      sameControls: false,
+      controls: false
     }
   }
 
@@ -986,13 +1077,14 @@ export class ComputerUseService {
   async key(
     chat: string,
     name: string,
-    key: string,
-    modifiers: readonly string[],
+    written: string,
+    alsoHeld: readonly string[],
     signal: AbortSignal,
     realInput = false
   ): Promise<string> {
+    const { key, modifiers } = computerKeyCombination(written, alsoHeld)
     // The Windows key reaches the shell, not the app: Win+R alone opens a way to run anything.
-    if (modifiers.some((modifier) => /^(win|windows|cmd|meta|super)$/i.test(modifier))) {
+    if ([key, ...modifiers].some((name) => /^(win|windows|cmd|meta|super)$/i.test(name))) {
       throw new ComputerUseRefusal('The Windows key is not available.')
     }
     // Measured in Excel: posted in the background, Ctrl+S arrived as a plain "s", typed into a cell.

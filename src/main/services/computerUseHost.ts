@@ -81,6 +81,8 @@ export function computerUseService(): ComputerUseService | null {
     showActive: (target) => highlight.show(target),
     hideActive: () => highlight.hide(),
     moveCursor: (point) => highlight.moveCursor(point),
+    hideCursor: () => highlight.hideCursor(),
+    listApps: () => appWindows.apps(),
     showPreview: (image) => highlight.showPreview(image),
     driverPath,
     dataFolder: () => join(app.getPath('userData'), 'computer-use'),

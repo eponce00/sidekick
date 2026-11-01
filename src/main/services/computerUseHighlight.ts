@@ -92,7 +92,7 @@ window.ripple = () => {
 }
 `
 
-/** The agent's own pointer: bigger than the driver's, and in SideKick's colour. */
+/** The agent's own pointer, in SideKick's colour, for input that doesn't move the real one. */
 export function computerCursorPage(look: TrustedLook): string {
   const hash = createHash('sha256').update(CURSOR_SCRIPT).digest('base64')
   return `<!doctype html>
@@ -175,6 +175,7 @@ export class ComputerUseHighlight {
   private cursorAt: { x: number; y: number } | null = null
   private gliding: ReturnType<typeof setInterval> | null = null
   private center: { x: number; y: number } | null = null
+  private realPointer = false
   private mode: 'glow' | 'pill' = 'pill'
   private preview = ''
   private previewHeight = 0
@@ -195,6 +196,7 @@ export class ComputerUseHighlight {
     this.gliding = null
     this.cursorAt = null
     this.center = null
+    this.realPointer = false
     this.mode = 'pill'
     this.preview = ''
     this.previewHeight = 0
@@ -222,11 +224,20 @@ export class ComputerUseHighlight {
    */
   async moveCursor(point: { x: number; y: number }): Promise<void> {
     if (!this.target) return
+    this.realPointer = false
     if (this.mode !== 'glow') {
       this.cursorAt = screen.screenToDipPoint(point)
       return
     }
     await this.glide(screen.screenToDipPoint(point))
+  }
+
+  /** While the agent moves the real pointer, that is the pointer. Two on top of each other look wrong. */
+  hideCursor(): void {
+    this.realPointer = true
+    if (this.gliding) clearInterval(this.gliding)
+    this.gliding = null
+    if (this.cursor && !this.cursor.isDestroyed()) this.cursor.hide()
   }
 
   private async glide(to: { x: number; y: number }): Promise<void> {
@@ -243,6 +254,7 @@ export class ComputerUseHighlight {
       if (this.mode === 'glow') this.cursor.showInactive()
     }
     const cursor = this.cursor
+    if (!cursor.isVisible()) cursor.showInactive()
     const from = this.cursorAt ?? to
     if (this.gliding) clearInterval(this.gliding)
     const started = Date.now()
@@ -328,7 +340,9 @@ export class ComputerUseHighlight {
       }
       if (!window.isVisible()) window.showInactive()
     }
-    if (this.cursor && !this.cursor.isDestroyed()) {
+    if (this.realPointer) {
+      // Nothing to show until the agent goes back to input that leaves the real pointer alone.
+    } else if (this.cursor && !this.cursor.isDestroyed()) {
       if (mode === 'pill' && this.cursor.isVisible()) this.cursor.hide()
       else if (mode === 'glow' && !this.cursor.isVisible()) this.cursor.showInactive()
     } else if (mode === 'glow' && this.cursorAt) {

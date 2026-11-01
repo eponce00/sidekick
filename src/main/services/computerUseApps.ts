@@ -96,39 +96,21 @@ export function computerAppAccess(executablePath: string): ComputerAppAccess {
   return PHYSICAL.test(executablePath) ? { kind: 'physical' } : { kind: 'allowed' }
 }
 
-const LIST_WINDOWED_PROCESSES =
-  '[Console]::OutputEncoding=[Text.Encoding]::UTF8;' +
-  '@(Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.Path } | Select-Object Id,Path) | ConvertTo-Json -Compress'
-
-export function parseComputerApps(stdout: string): ComputerApp[] {
-  const trimmed = stdout.trim()
-  if (!trimmed) return []
-  const parsed = JSON.parse(trimmed) as unknown
-  const rows = (Array.isArray(parsed) ? parsed : [parsed]) as Array<{
-    Id?: unknown
-    Path?: unknown
-  }>
-  return rows.flatMap((row) =>
-    typeof row?.Id === 'number' && typeof row.Path === 'string'
-      ? [
-          {
-            pid: row.Id,
-            name: basename(row.Path.replaceAll('\\', '/')).replace(/\.exe$/i, ''),
-            path: row.Path,
-            access: computerAppAccess(row.Path)
-          }
-        ]
-      : []
-  )
-}
-
-/**
- * The apps with a window open. Window titles stay out: one can hold a document's name or an
- * email's subject, and the agent has not been given those apps. An elevated app reports no path,
- * so it is left out; Windows would refuse its input anyway.
- */
-export async function listComputerApps(signal?: AbortSignal): Promise<ComputerApp[]> {
-  return parseComputerApps(await runPowerShell(LIST_WINDOWED_PROCESSES, signal))
+/** The window helper's answer: "pid|path" for each app, each ending in a mark no path can hold. */
+export function parseComputerApps(answer: string): ComputerApp[] {
+  return answer.split('?').flatMap((row) => {
+    const found = /^(\d+)\|(.+)$/.exec(row)
+    if (!found) return []
+    const path = found[2]
+    return [
+      {
+        pid: Number(found[1]),
+        name: basename(path.replaceAll('\\', '/')).replace(/\.exe$/i, ''),
+        path,
+        access: computerAppAccess(path)
+      }
+    ]
+  })
 }
 
 const LIST_START_MENU_APPS =
