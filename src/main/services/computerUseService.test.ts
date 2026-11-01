@@ -468,6 +468,8 @@ describe('what the agent may reach', () => {
     expect(few.text).toContain('[1] Button "B2"')
     expect(few.text).not.toContain('Button "A"')
     expect((await service.look('chat', 'notes', true, signal)).text).toContain('Button "A"')
+    const searched = await service.look('chat', 'notes', true, signal, undefined, 'nothing')
+    expect(searched.controls).toBe(true)
     tree = ['- [0] Button "W"', '- [1] Button "X"', '- [2] Button "Y"', '- [3] Button "Z"']
     expect((await service.lookAfterAction('chat', 'notes', signal)).text).toContain('Button "W"')
   })

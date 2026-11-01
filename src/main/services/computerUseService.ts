@@ -204,12 +204,15 @@ async function picturesDiffer(a: string, b: string): Promise<boolean> {
   }
 }
 
+/** A numbered row of the driver's tree. Its header line mentions row numbers too. */
+const TREE_ROW = /^\W*\[\d+\]/m
+
 /**
  * The rows of a tree that differ from an earlier one, or null when most do. A row keeps its number
  * only if its whole line is the same, so whatever isn't listed can still be pressed by its number.
  */
 function changedRows(before: string, now: string): string | null {
-  const rows = (tree: string): string[] => tree.split('\n').filter((line) => /\[\d+\]/.test(line))
+  const rows = (tree: string): string[] => tree.split('\n').filter((line) => TREE_ROW.test(line))
   const [old, current] = [rows(before), rows(now)]
   const [oldSet, currentSet] = [new Set(old), new Set(current)]
   const added = current.filter((row) => !oldSet.has(row))
@@ -607,7 +610,7 @@ export class ComputerUseService {
       const image = state.images[0]?.data
       imageHash = image ? createHash('sha256').update(image).digest('hex') : undefined
       treeKey = state.text.replace(/snapshot_id=\S+/g, '').replace(/\d+/g, '#')
-      sameControls = /\[\d+\]/.test(state.text) && before?.treeKey === treeKey
+      sameControls = TREE_ROW.test(state.text) && before?.treeKey === treeKey
       if (before?.windowId === windowId && !find) {
         onlyChanged = changedRows(before.tree, state.text) ?? undefined
       }
@@ -636,17 +639,18 @@ export class ComputerUseService {
       counts?.truncated === true
         ? `This list is cut off: it shows ${String(counts.returned_element_count)} of ${String(counts.total_element_count)} controls, from the top of the app whatever is scrolled into view. Trust the picture for what is on screen, and use look with find to search all of them.\n`
         : ''
+    const noMatch = find && !TREE_ROW.test(state.text) ? `\nNo control matches "${find}".` : ''
     const otherWindows =
       windows.length > 1
         ? `This app has ${windows.length} windows; look with a window id to change:\n${windows.join('\n')}\n`
         : ''
     return {
       // The driver's line about how to spell a token is about its own API, not this tool's.
-      text: `${UNTRUSTED}\n${cutOff}${otherWindows}${state.text.replace(/^element_token for row.*$/m, '').trim()}`,
+      text: `${UNTRUSTED}\n${cutOff}${otherWindows}${state.text.replace(/^element_token for row.*$/m, '').trim()}${noMatch}`,
       images: state.images,
       changed,
       sameControls,
-      controls: /\[\d+\]/.test(state.text),
+      controls: Boolean(find) || TREE_ROW.test(state.text),
       onlyChanged: onlyChanged && `${UNTRUSTED}\n${cutOff}${onlyChanged}`
     }
   }
