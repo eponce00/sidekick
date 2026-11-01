@@ -302,11 +302,11 @@ export function chromeBrowser(): {
       ),
     confirmScript: (expression, origin, signal) =>
       confirm(
-        'Let the agent run this script in Chrome?',
-        'A script can read anything this page holds and act as you there.',
+        'Let the agent run this code on the page?',
+        'Looking at a page doesn’t need to ask. This could change something, or send what’s on the page somewhere, as you. Only allow it if you expected it.',
         [
           { label: 'Site', value: origin, code: true },
-          { label: 'Script', value: expression, code: true }
+          { label: 'Code', value: expression, code: true }
         ],
         'Run it',
         signal
@@ -345,7 +345,9 @@ export function chromeBrowser(): {
       networkPolicy: browserNetworkApprovals,
       certificatePolicy: browserCertificateApprovals,
       runtime: new ChromeBrowserRuntime(bridgeOf(), {
-        showPointer: (tabId, x, y) => rules.showPointer(tabId, x, y)
+        showPointer: (tabId, x, y) => rules.showPointer(tabId, x, y),
+        fitPicture: (picture, width, height) =>
+          nativeImage.createFromBuffer(picture).resize({ width, height, quality: 'best' }).toPNG()
       }),
       policy: rules,
       // Every tab it's given has been through the user: they shared it or the agent opened it.

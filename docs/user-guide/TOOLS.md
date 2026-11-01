@@ -124,8 +124,10 @@ the text.
 - **It asks you before pressing things like Buy, Send or Delete,** in SideKick's own dialog. Names can't
   catch everything, and a page can label a button anything. Pressing Enter in a form counts as pressing its
   button.
-- **It asks you each time before it runs a script, downloads or uploads.** A script is shown to you in full,
-  since one can read anything a page holds.
+- **It asks you each time before it downloads or uploads, or runs code that could change something.** Code
+  that only looks at the page runs without asking, because Chrome itself stops it at any change or network
+  call. Code that reads cookies, saved site data, or a page with a password or card filled in always asks, and
+  is shown to you in full. A determined page could still get a look at some of what a site's own scripts hold.
 - **It doesn't use the sign-ins stored in SideKick.** Chrome fills in your saved passwords itself.
 - **You can see it driving, and press Esc to stop it.** Its tab has a soft glow and SideKick's pointer, and a
   small window in the corner of your screen shows what it last saw. You can move it, resize it, or close it
