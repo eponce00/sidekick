@@ -229,6 +229,7 @@ export function followBottom(view: HTMLElement, options: FollowOptions = {}): Bo
     // Content shrinking under the view, or rows measured above it, move it too, and always change
     // the layout with it. A move with the layout as it was can only be the reader's.
     const relaidOut = view.scrollHeight !== lastHeight || view.clientHeight !== lastClient
+    const shrank = view.scrollHeight < lastHeight
     // Slow scrolling moves less than a pixel per event; those moves add up against the same mark.
     const baseline = movedUp || movedDown ? top : lastTop
     noteLayout()
@@ -238,7 +239,10 @@ export function followBottom(view: HTMLElement, options: FollowOptions = {}): Bo
     if (following) {
       // Dragging the scrollbar, selecting past the top, a swipe, or a scroll out of an embedded
       // frame.
-      if (movedUp && distance > AT_END_PX && (held || !relaidOut)) setFollowing(false)
+      // Over a frame, a chunk landing at the same moment must not hide the move: growth cannot
+      // explain a move up, and the next move to the end would cut the wheel off.
+      const overFrame = !shrank && view.querySelector('iframe:hover') !== null
+      if (movedUp && distance > AT_END_PX && (held || !relaidOut || overFrame)) setFollowing(false)
     } else if (movedDown) {
       const nearEnd =
         distance <= resumeWithin &&
