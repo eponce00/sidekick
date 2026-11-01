@@ -27,6 +27,7 @@ function harness(url = 'https://shop.example/page', answer = true, everySite = t
     show: vi.fn(),
     hide: vi.fn(),
     preview: vi.fn(),
+    replyEnded: vi.fn(),
     armStop: vi.fn((_stop: () => void) => disarm),
     notify: vi.fn(),
     accent: async () => '#86aee8'

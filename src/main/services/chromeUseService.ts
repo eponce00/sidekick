@@ -52,6 +52,7 @@ export interface ChromeUseDependencies {
     show: () => void
     hide: () => void
     preview: (image: { data: string }) => void
+    replyEnded: () => void
     /** Esc from anywhere, for as long as the agent can act. Returns how to take it back. */
     armStop: (stop: () => void) => () => void
     notify: () => void
@@ -189,6 +190,7 @@ export class ChromeUseService implements NativeBrowserPolicy {
 
   /** A finished reply takes the marks off and lets go of the debugger. Approvals last the chat. */
   runEnded(id: string): void {
+    this.deps.overlay.replyEnded()
     this.stopped.delete(id)
     if (!this.driving.delete(id) || this.driving.size) return
     this.takeMarksOff()

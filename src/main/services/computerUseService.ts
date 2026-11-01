@@ -111,6 +111,8 @@ export interface ComputerUseDependencies {
   moveCursor: (point: { x: number; y: number }) => Promise<void> | void
   /** The agent's latest look, for the user to see when the app is covered. */
   showPreview: (image: { data: string }) => void
+  /** A reply has finished, whatever state it left the marks in. */
+  replyEnded?: () => void
   listApps: () => Promise<ComputerApp[]>
   findInstalled?: (name: string, signal: AbortSignal) => Promise<ComputerApp | null>
   startDriver?: typeof startComputerDriver
@@ -854,6 +856,7 @@ export class ComputerUseService {
 
   /** A finished reply is done with the computer: other chats may have it, and Esc goes back. */
   runEnded(chat: string): void {
+    this.deps.replyEnded?.()
     const access = this.chats.get(chat)
     if (access) access.unchangedSteps = 0
     if (this.activeChat === chat) void this.release()

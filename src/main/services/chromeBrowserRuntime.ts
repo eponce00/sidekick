@@ -433,6 +433,8 @@ class ChromeSurface implements NativeBrowserSurface {
     // A clip is measured from the top of the page, not of what's on screen.
     const shot = await this.command<{ data: string }>('Page.captureScreenshot', {
       format: 'png',
+      // Left to its default, it lays the page out again to fit, a scrollbar narrower each time, in the user's own tab.
+      captureBeyondViewport: false,
       clip: { x: view?.pageX ?? 0, y: view?.pageY ?? 0, width, height, scale: 1 }
     })
     return { png: Buffer.from(shot.data, 'base64'), width, height }

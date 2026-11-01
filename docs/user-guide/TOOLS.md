@@ -128,8 +128,10 @@ the text.
   since one can read anything a page holds.
 - **It doesn't use the sign-ins stored in SideKick.** Chrome fills in your saved passwords itself.
 - **You can see it driving, and press Esc to stop it.** Its tab has a soft glow and SideKick's pointer, and a
-  label in the corner of your screen shows what it last saw. Esc works from anywhere, and ends what the chat
-  was allowed. While the label shows, for up to a minute after each step, other apps don't receive Esc.
+  small window in the corner of your screen shows what it last saw. You can move it, resize it, or close it
+  with its ×, and the agent keeps working. It comes back with the next reply, and stays out of the way while
+  you're in SideKick. Esc works from anywhere, and ends what the chat was allowed. For up to a minute after
+  each step, other apps don't receive Esc, even with that window closed.
 - **What it reads goes to your selected model.** Chrome shows a banner while the agent is working, until
   its reply ends.
 
