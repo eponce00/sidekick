@@ -33,7 +33,8 @@ export const AGENT_CAPABILITIES = [
   'credentials',
   'web.request',
   'schedules',
-  'computer'
+  'computer',
+  'chrome'
 ] as const
 
 export type AgentCapability = (typeof AGENT_CAPABILITIES)[number]

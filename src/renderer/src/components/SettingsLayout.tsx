@@ -70,6 +70,7 @@ export function SettingsSection({
  */
 export function SettingsRow({
   icon: Icon,
+  image,
   label,
   description,
   controlId,
@@ -80,6 +81,8 @@ export function SettingsRow({
   children
 }: {
   icon?: LucideIcon
+  /** An app's own icon, from a data URL, where a line icon wouldn't say which app it is. */
+  image?: string
   label: ReactNode
   description?: ReactNode
   controlId?: string
@@ -91,6 +94,7 @@ export function SettingsRow({
 }): React.JSX.Element {
   const classes = ['settings-row']
   if (Icon) classes.push('has-icon')
+  if (image) classes.push('has-image')
   if (stacked) classes.push('stacked')
   if (disabled) classes.push('disabled')
   if (className) classes.push(className)
@@ -101,6 +105,7 @@ export function SettingsRow({
           <Icon size={16} />
         </span>
       )}
+      {image && <img className="settings-row-image" src={image} alt="" />}
       <div className="settings-row-copy">
         {controlId ? (
           <label className="settings-row-label" htmlFor={controlId}>

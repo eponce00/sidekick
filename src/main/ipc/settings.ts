@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain, safeStorage, type WebContents } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, type WebContents } from 'electron'
 import { normalizePermissionMode } from '../../shared/permissions'
 import type { McpServerConfig } from '../../shared/types'
 import type { PinnedModel } from '../../shared/models'
@@ -404,12 +404,14 @@ export async function confirmSensitiveSettingsChange(
     Boolean(next.officeHelperInterpreter)
   const enablingComputerUse =
     next.computerUseEnabled === true && previous.computerUseEnabled !== true
+  const enablingChromeUse = next.chromeUseEnabled === true && previous.chromeUseEnabled !== true
   if (
     !enablingFullAccess &&
     !mcpChanged &&
     !disablingShellIsolation &&
     !officeInterpreterChanged &&
-    !enablingComputerUse
+    !enablingComputerUse &&
+    !enablingChromeUse
   )
     return true
 
@@ -426,6 +428,9 @@ export async function confirmSensitiveSettingsChange(
       : null,
     enablingComputerUse
       ? 'The agent will be able to ask to operate apps on this computer, each only after you allow it.'
+      : null,
+    enablingChromeUse
+      ? 'The agent will be able to work in your own Chrome, with your sign-ins, on most sites without asking. It asks before sites for email, money or your account.'
       : null,
     mcpChanged
       ? `These MCP connectors are new or changed. Local connectors launch processes with your account's permissions; remote connectors send requests to the listed endpoint. SideKick asks again whenever one changes.\n\n${mcpServers.map(describeMcpServer).join('\n\n')}`
@@ -503,9 +508,26 @@ export function registerSettingsHandlers(): void {
   })
 
   // Listing and forgetting only: nothing but SideKick's own dialog may add an app.
-  ipcMain.handle('computerUse:rememberedApps', async () =>
-    (await import('../services/computerUseHost')).rememberedApps.list()
+  ipcMain.handle('chromeUse:status', async () =>
+    (await import('../services/chromeUseHost')).chromeUseStatus()
   )
+  // Only ever opens SideKick's own question, which is what decides.
+  ipcMain.handle('chromeUse:setUp', async () =>
+    (await import('../services/chromeUseHost')).setUpChromeUse()
+  )
+  // Only ever takes access away, so it has nothing to ask.
+  ipcMain.handle('chromeUse:disconnect', async () =>
+    (await import('../services/chromeUseHost')).disconnectChromeUse()
+  )
+  ipcMain.handle('computerUse:rememberedApps', async () => {
+    const apps = await (await import('../services/computerUseHost')).rememberedApps.list()
+    return Promise.all(
+      apps.map(async (allowed) => {
+        const icon = await app.getFileIcon(allowed.path, { size: 'large' }).catch(() => null)
+        return icon && !icon.isEmpty() ? { ...allowed, iconDataUrl: icon.toDataURL() } : allowed
+      })
+    )
+  })
   ipcMain.handle('computerUse:forgetApp', async (_event, path: unknown) => {
     if (typeof path !== 'string') return
     await (await import('../services/computerUseHost')).rememberedApps.remove(path)

@@ -264,7 +264,7 @@ const CONTROLS_WAIT_MS = 3_000
 const SLOW_CONTROLS_WAIT_MS = 1_000
 // Words on a control that can't be taken back. A name can't catch everything, so this makes the agent
 // stop and think about what it is pressing rather than promising safety.
-const RISKY_CONTROL =
+export const RISKY_CONTROL =
   /\b(send|delete|remove|erase|buy|pay|purchase|order|checkout|submit|confirm|transfer|post|publish|uninstall|format|reset|sign out|log out)\b/i
 const NEEDS_FOREGROUND =
   /background_unavailable|Background delivery is not available|UIA pixel click timeout/i

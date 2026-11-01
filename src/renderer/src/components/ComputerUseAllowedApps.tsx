@@ -22,8 +22,13 @@ export function ComputerUseAllowedApps(): React.JSX.Element | null {
       {apps.map((app) => (
         <SettingsRow
           key={app.path}
+          image={app.iconDataUrl}
           label={app.name}
-          description={`Always allowed. ${app.path}`}
+          description={
+            <span className="settings-app-path" title={app.path}>
+              {app.path}
+            </span>
+          }
           control={
             <button
               type="button"

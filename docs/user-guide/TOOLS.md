@@ -99,6 +99,33 @@ For gestures that a drag can't make, it can keep a real mouse button down and mo
 key for up to 10 seconds. A held button lets go by itself when you move the mouse, press Esc, the reply
 ends or 30 seconds pass. A held key lets go as soon as the app stops being in front.
 
+## Your own Chrome
+
+On Windows, the agent can also work in your own Chrome, with your sign-ins and saved details, while you
+keep using your computer. Turn this on in **Settings › Chrome**, which is off by default.
+
+- **One yes sets it up.** The first time, SideKick asks, then opens a Chrome window, turns on Developer
+  mode and loads its extension from your computer. There's no store and nothing to maintain, and it updates by itself along with SideKick. It takes
+  about 10 seconds and uses your real mouse and keyboard. Work profiles aren't offered. If it can't
+  finish, SideKick shows you the steps. **Disconnect** in Settings removes the extension from Chrome,
+  or the next time Chrome is open if it's closed. Developer mode stays on, in case you use it yourself.
+- **It works in a tab group named SideKick,** in your Chrome window, without taking you off your tab. Say
+  "continue in the tab I have open" and SideKick shows you which tab that is and asks you to share it. The
+  agent then picks up from what you've done there, and your tab stays where it is.
+- **It asks where it matters.** Turning this on covers ordinary sites. Sites for your email, money or account
+  ask you once per chat, and you can choose to be asked about every site. Names can't catch everything,
+  so a page could still try to steer the agent to another site you're signed in to. Sharing a tab of yours
+  always asks. It can't see your other tabs, or Chrome's own pages, where saved passwords live.
+- **It can't type passwords or card details.** Chrome can still fill in what it has saved, and you can
+  fill in the rest.
+- **It asks you before pressing things like Buy, Send or Delete,** in SideKick's own dialog. Names can't
+  catch everything, and a page can label a button anything.
+- **You can see it driving, and press Esc to stop it.** Its tab has a soft glow and SideKick's pointer, and a
+  label in the corner of your screen shows what it last saw. Esc works from anywhere, and ends what the chat
+  was allowed. While the label shows, for up to a minute after each step, other apps don't receive Esc.
+- **What it reads goes to your selected model.** Chrome shows a banner while the agent is working, until
+  its reply ends.
+
 Before a click, SideKick checks what is being pressed where it can tell. A control named something
 like Send, Delete or Pay is refused until the agent confirms that you asked for it. Names can't catch
 everything: web-based apps may not name their controls, and a covered app can't be checked.
