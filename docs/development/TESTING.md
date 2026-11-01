@@ -5,6 +5,20 @@ The core suites remain reproducible without network access, provider credentials
 identities, or a graphical desktop. Supported macOS, Windows, and Linux runners additionally
 execute an isolated real-Electron journey and a packaged launch smoke test.
 
+## Browser bench
+
+`scripts/browser-bench` tries the agent's browser tools on what real sites do, with the real model: upload styles,
+frames, shadow DOM, editors, menus and endless lists, and pages that try to steer the agent somewhere it shouldn't
+go. The site keeps its own record of what it received, so a task is graded by that and not by what the model says.
+Run `node scripts/browser-bench/site.cjs` and a development instance with `--remoteDebuggingPort 9333`, then:
+
+```bash
+node scripts/browser-bench/run.cjs upload-dynamic hostile-url
+```
+
+Set `BENCH_BROWSER=built_in` for SideKick's own browser. It costs whatever the selected model costs, and takes about
+20 minutes for all of it. In Chrome someone has to answer the questions about downloads and uploads.
+
 ## Standard checks
 
 Install dependencies with `npm ci`, then use:

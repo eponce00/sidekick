@@ -65,6 +65,7 @@ const ALLOWED_COMMANDS = new Set([
   'Page.getLayoutMetrics',
   'Page.getNavigationHistory',
   'Page.navigateToHistoryEntry',
+  'Page.setInterceptFileChooserDialog',
   'Page.reload',
   'Page.stopLoading',
   'Runtime.callFunctionOn',
@@ -78,6 +79,7 @@ const ALLOWED_COMMANDS = new Set([
 
 // What the browser tools listen for. The rest is a lot of traffic with nothing in it for them.
 const FORWARDED_EVENTS = new Set([
+  'Page.fileChooserOpened',
   'Network.loadingFailed',
   'Network.loadingFinished',
   'Network.requestWillBeSent',

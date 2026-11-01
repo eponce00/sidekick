@@ -388,8 +388,9 @@ folder and its fixed origin. `chromeBrowserRuntime.ts` gives `NativeBrowserSessi
 place of its own, so there is one implementation of the tools, and its Chrome instance is kept apart from the
 Browser panel. `chromeUseService.ts` is that instance's `NativeBrowserPolicy`, deciding in the main process:
 sensitive sites asked about and checked again on every step, no typing in password or payment fields, and a
-trusted dialog before risky presses, downloads, uploads and any script Chromium's `throwOnSideEffect` check
-wouldn't let through as only looking. The extension passes on only an allowlist
+trusted dialog before risky presses, downloads and uploads. Scripts run only under Chromium's
+`throwOnSideEffect` check, and are refused if that or the service's own reading of them says they do more than
+look. The extension passes on only an allowlist
 of debugger commands, on tabs it was told about, with focus emulation so a covered window keeps working: no
 cookies, storage, or other targets. It lets go of the debugger when the reply ends and takes it again for the
 next. `chromeUseSetup.ts` does the one-time load with the computer-use driver, after the user's yes.

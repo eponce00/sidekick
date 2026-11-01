@@ -300,17 +300,6 @@ export function chromeBrowser(): {
         'Let it press this',
         signal
       ),
-    confirmScript: (expression, origin, signal) =>
-      confirm(
-        'Let the agent run this code on the page?',
-        'Looking at a page doesn’t need to ask. This could change something, or send what’s on the page somewhere, as you. Only allow it if you expected it.',
-        [
-          { label: 'Site', value: origin, code: true },
-          { label: 'Code', value: expression, code: true }
-        ],
-        'Run it',
-        signal
-      ),
     confirmDownload: (url, signal) =>
       confirm(
         'Let the agent download this?',
