@@ -15,6 +15,7 @@ import type {
 interface ChromeUseAPI {
   status: () => Promise<ChromeUseStatus>
   setUp: () => Promise<boolean>
+  disconnect: () => Promise<void>
 }
 
 interface ComputerUseAPI {

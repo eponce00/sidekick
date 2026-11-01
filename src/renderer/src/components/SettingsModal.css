@@ -492,6 +492,11 @@
   background: var(--accent-subtle);
 }
 
+.settings-chrome-actions {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
 .settings-chrome-status {
   display: inline-flex;
   flex-wrap: wrap;

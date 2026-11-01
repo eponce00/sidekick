@@ -876,7 +876,8 @@ export function installBrowserApiMock(): void {
     },
     chromeUse: {
       status: async () => ({ connected: false, installed: false }),
-      setUp: async () => false
+      setUp: async () => false,
+      disconnect: async () => undefined
     },
     computerUse: {
       rememberedApps: async () => [],

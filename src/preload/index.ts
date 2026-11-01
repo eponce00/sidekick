@@ -64,7 +64,8 @@ const api = {
   },
   chromeUse: {
     status: () => ipcRenderer.invoke('chromeUse:status'),
-    setUp: () => ipcRenderer.invoke('chromeUse:setUp')
+    setUp: () => ipcRenderer.invoke('chromeUse:setUp'),
+    disconnect: () => ipcRenderer.invoke('chromeUse:disconnect')
   },
   computerUse: {
     rememberedApps: () => ipcRenderer.invoke('computerUse:rememberedApps'),

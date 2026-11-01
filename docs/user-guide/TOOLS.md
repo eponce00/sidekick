@@ -105,9 +105,10 @@ On Windows, the agent can also work in your own Chrome, with your sign-ins and s
 keep using your computer. Turn this on in **Settings › Chrome**, which is off by default.
 
 - **One yes sets it up.** The first time, SideKick asks, then opens a Chrome window, turns on Developer
-  mode and loads its extension from your computer. There's no store and nothing to maintain. It takes
+  mode and loads its extension from your computer. There's no store and nothing to maintain, and it updates by itself along with SideKick. It takes
   about 10 seconds and uses your real mouse and keyboard. Work profiles aren't offered. If it can't
-  finish, SideKick shows you the steps. To remove it, use `chrome://extensions`.
+  finish, SideKick shows you the steps. **Disconnect** in Settings removes the extension from Chrome,
+  or the next time Chrome is open if it's closed. Developer mode stays on, in case you use it yourself.
 - **It works in a tab group named SideKick,** in your Chrome window, without taking you off your tab. Say
   "continue in the tab I have open" and SideKick shows you which tab that is and asks you to share it. The
   agent then picks up from what you've done there, and your tab stays where it is.

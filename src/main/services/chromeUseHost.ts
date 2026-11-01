@@ -20,6 +20,8 @@ import { trustedLook } from './trustedLook'
 const ALLOW_FOR_CHAT = 'Allow for this chat'
 const DONT_ALLOW = 'Don’t allow'
 const INSTALL_MARK = 'installed-profile'
+// Disconnected while Chrome was closed, so the extension still has to be told when it next shows up.
+const REMOVE_MARK = 'remove-when-seen'
 const PROFILE_PICTURE_PX = 96
 
 /**
@@ -39,9 +41,19 @@ function folder(): string {
 function bridgeOf(): ChromeUseBridge {
   bridge ??= new ChromeUseBridge(
     () => join(app.getAppPath(), 'resources', 'chrome-extension'),
-    folder
+    folder,
+    () => void removeIfAsked()
   )
   return bridge
+}
+
+async function removeIfAsked(): Promise<void> {
+  const mark = join(folder(), REMOVE_MARK)
+  const asked = await fs.access(mark).then(
+    () => true,
+    () => false
+  )
+  if (asked && bridge?.retire()) await fs.rm(mark, { force: true })
 }
 
 let bridge: ChromeUseBridge | null = null
@@ -110,6 +122,7 @@ async function installedProfile(): Promise<string | null> {
 
 /** The one yes: which profile, what will happen, and what it hands over. Then SideKick does the rest. */
 async function runSetup(signal: AbortSignal): Promise<boolean> {
+  await fs.rm(join(folder(), REMOVE_MARK), { force: true })
   const chrome = await chromePath()
   if (!chrome) {
     await ask(
@@ -129,7 +142,7 @@ async function runSetup(signal: AbortSignal): Promise<boolean> {
       iconDataUrl: await chromeIcon(),
       detail: [
         'It can then ask to work in the profile you pick, with its sign-ins and saved details. You approve each site and any tab you share, and it asks before pressing things like Buy, Send or Delete. It can’t see your other tabs, and what it reads goes to the model you selected.',
-        'SideKick will open a Chrome window, turn on Developer mode and load its extension from your computer. This takes about 10 seconds with your real mouse and keyboard, so please don’t touch them until the window closes. Chrome shows a banner while the agent works, and you can remove the extension at chrome://extensions.',
+        'SideKick will open a Chrome window, turn on Developer mode and load its extension from your computer. This takes about 10 seconds with your real mouse and keyboard, so please don’t touch them until the window closes. Chrome shows a banner while the agent works, and you can disconnect it at any time in Settings.',
         offered.length
           ? null
           : 'Work profiles can’t be used, because their data and rules belong to your organization.'
@@ -287,6 +300,15 @@ export async function chromeUseStatus(): Promise<ChromeUseStatus> {
         }
       : {})
   }
+}
+
+/** Stops whatever is driving and takes the extension out of Chrome, now or the next time it's open. */
+export async function disconnectChromeUse(): Promise<void> {
+  service?.stop()
+  const line = bridgeOf()
+  await line.start()
+  await fs.rm(join(folder(), INSTALL_MARK), { force: true })
+  if (!line.retire()) await fs.writeFile(join(folder(), REMOVE_MARK), '', 'utf8')
 }
 
 export function setUpChromeUse(): Promise<boolean> {

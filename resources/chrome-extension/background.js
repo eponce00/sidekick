@@ -258,6 +258,7 @@ function showOverlay(accent, x, y) {
   `
   let overlay = window.__sidekickOverlay
   if (!overlay?.host.isConnected) {
+    document.querySelector('sidekick-overlay')?.remove()
     const host = document.createElement('sidekick-overlay')
     host.style.cssText =
       'all: initial; position: fixed; inset: 0; z-index: 2147483647; display: block; pointer-events: none;'
@@ -307,8 +308,9 @@ function showOverlay(accent, x, y) {
   }, 300)
 }
 
+// By its tag: an extension reloaded since it showed this no longer has the reference.
 function removeOverlay() {
-  window.__sidekickOverlay?.host.remove()
+  document.querySelector('sidekick-overlay')?.remove()
   window.__sidekickOverlay = undefined
 }
 
@@ -460,6 +462,8 @@ const OPERATIONS = {
   detachAll,
   overlay: ({ tabId, accent, x, y }) => inPage(tabId, showOverlay, accent, x, y),
   overlaysOff,
+  // The user pressed Disconnect in SideKick, which needs no permission and nothing more from them.
+  uninstallSelf: () => chrome.management.uninstallSelf({ showConfirmDialog: false }),
   // SideKick has put a newer copy of these files in place.
   reload: () => setTimeout(() => chrome.runtime.reload(), 100)
 }

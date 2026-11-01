@@ -67,18 +67,34 @@ export function ChromeUseSetup({ saved }: { saved: boolean }): React.JSX.Element
           {!saved && <span>Press Save changes to finish.</span>}
         </span>
       }
-      // Once it's connected there's nothing to set up, and a dead button only looks broken.
       control={
-        status?.connected ? undefined : (
+        <span className="settings-chrome-actions">
+          {/* Once it's connected there's nothing to set up, and a dead button only looks broken. */}
+          {!status?.connected && (
+            <button
+              type="button"
+              className="settings-ghost-action is-small"
+              disabled={busy}
+              onClick={setUp}
+            >
+              {busy ? 'Setting up…' : 'Set up again'}
+            </button>
+          )}
           <button
             type="button"
             className="settings-ghost-action is-small"
             disabled={busy}
-            onClick={setUp}
+            onClick={() => {
+              setBusy(true)
+              void window.api.chromeUse.disconnect().finally(() => {
+                setBusy(false)
+                refresh()
+              })
+            }}
           >
-            {busy ? 'Setting up…' : 'Set up again'}
+            Disconnect
           </button>
-        )
+        </span>
       }
     />
   )

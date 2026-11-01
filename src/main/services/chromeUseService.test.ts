@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'fs'
 import { request } from 'http'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
@@ -273,6 +273,95 @@ describe('the line to the extension', () => {
     expect(await bridge.waitForNewWorker('old', 50, signal)).toBe(false)
     ask('new')
     expect(await bridge.waitForNewWorker('old', 2000, signal)).toBe(true)
+    await bridge.close()
+  })
+
+  it('tells Chrome to load new files once, and only when they changed', async () => {
+    const folder = mkdtempSync(join(tmpdir(), 'sk-chrome-'))
+    const start = async () => {
+      const bridge = new ChromeUseBridge(
+        () => BUNDLED,
+        () => folder
+      )
+      await bridge.start()
+      const { port, token } = JSON.parse(readFileSync(join(folder, 'pairing.json'), 'utf8')) as {
+        port: number
+        token: string
+      }
+      return { bridge, port, token }
+    }
+    const firstWork = (port: number, token: string, instance: string): Promise<string> =>
+      new Promise((done, fail) => {
+        request(
+          {
+            host: '127.0.0.1',
+            port,
+            path: '/next',
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${token}`,
+              origin,
+              'x-sidekick-instance': instance,
+              'x-sidekick-version': '1'
+            }
+          },
+          (response) => {
+            let body = ''
+            response.on('data', (chunk) => (body += chunk))
+            response.on('end', () => done(body))
+          }
+        )
+          .on('error', fail)
+          .end()
+      })
+    // A first install has nothing older to replace.
+    const first = await start()
+    expect(existsSync(join(folder, 'reload-needed'))).toBe(false)
+    await first.bridge.close()
+    // The same files again change nothing.
+    const same = await start()
+    expect(existsSync(join(folder, 'reload-needed'))).toBe(false)
+    await same.bridge.close()
+    // As after an update of SideKick: what Chrome has is older than what ships.
+    writeFileSync(join(folder, 'background.js'), '// older')
+    const updated = await start()
+    expect(readFileSync(join(folder, 'background.js'), 'utf8')).not.toContain('// older')
+    const answer = firstWork(updated.port, updated.token, 'old worker')
+    await vi.waitFor(() => expect(existsSync(join(folder, 'reload-needed'))).toBe(false))
+    expect(await answer).toContain('"op":"reload"')
+    // The worker it restarted asks next, and isn't told again.
+    const next = firstWork(updated.port, updated.token, 'new worker')
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    await updated.bridge.close()
+    expect(await next).not.toContain('reload')
+  })
+
+  it('stops counting a disconnected worker at once, and gives it nothing but its removal', async () => {
+    const { bridge, token, port } = await line()
+    const headers = {
+      authorization: `Bearer ${token}`,
+      origin,
+      'x-sidekick-instance': 'only',
+      'x-sidekick-version': manifest.version
+    }
+    const ask = (): Promise<{ status: number; body: string }> =>
+      new Promise((done, fail) => {
+        request({ host: '127.0.0.1', port, path: '/next', method: 'POST', headers }, (response) => {
+          let body = ''
+          response.on('data', (chunk) => (body += chunk))
+          response.on('end', () => done({ status: response.statusCode ?? 0, body }))
+        })
+          .on('error', fail)
+          .end()
+      })
+    const held = ask()
+    await vi.waitFor(() => expect(bridge.isConnected()).toBe(true))
+    expect(bridge.retire()).toBe(true)
+    expect(bridge.isConnected()).toBe(false)
+    expect((await held).body).toContain('uninstallSelf')
+    expect((await ask()).status).toBe(403)
+    expect(bridge.isConnected()).toBe(false)
+    expect(bridge.retire()).toBe(false)
     await bridge.close()
   })
 

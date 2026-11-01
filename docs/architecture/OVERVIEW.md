@@ -381,7 +381,8 @@ executables are checked against fixed SHA-256 hashes when packaging and again be
 
 The `chrome` tool works in the user's own Chrome through an extension in `resources/chrome-extension`,
 which SideKick copies to a folder in the user's home, since Chrome can't see into a Store-packaged app's
-AppData, so no store or native host is involved. The extension asks
+AppData, so no store or native host is involved. Chrome reads an unpacked extension's files only when told
+to, so when SideKick's copy changes it tells the extension to reload itself. The extension asks
 `chromeUseBridge.ts` for work over the loopback address, proving itself with a secret written in its own
 folder and its fixed origin. `chromeUseService.ts` decides everything in the main process: only tabs the
 chat opened or the user shared, approved sites checked again on every step, no typing in password or

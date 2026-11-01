@@ -515,6 +515,10 @@ export function registerSettingsHandlers(): void {
   ipcMain.handle('chromeUse:setUp', async () =>
     (await import('../services/chromeUseHost')).setUpChromeUse()
   )
+  // Only ever takes access away, so it has nothing to ask.
+  ipcMain.handle('chromeUse:disconnect', async () =>
+    (await import('../services/chromeUseHost')).disconnectChromeUse()
+  )
   ipcMain.handle('computerUse:rememberedApps', async () => {
     const apps = await (await import('../services/computerUseHost')).rememberedApps.list()
     return Promise.all(

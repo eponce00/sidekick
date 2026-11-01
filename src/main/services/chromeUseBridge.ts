@@ -9,11 +9,35 @@ const CONNECTED_WITHIN_MS = HOLD_REQUEST_MS + 15_000
 const OPERATION_TIMEOUT_MS = 45_000
 const MAX_BODY_BYTES = 64 * 1024 * 1024
 const POLL_MS = 250
+// Written beside the extension when its files change, until Chrome has been told to load them.
+const RELOAD_MARK = 'reload-needed'
 
 /** The id Chrome gives an extension with this public key, from its base64 `key`. */
 export function chromeExtensionId(publicKey: string): string {
   const hex = createHash('sha256').update(Buffer.from(publicKey, 'base64')).digest('hex')
   return [...hex.slice(0, 32)].map((c) => String.fromCharCode(97 + parseInt(c, 16))).join('')
+}
+
+/**
+ * The extension's files, from what ships with this SideKick to the folder Chrome loads them from. True if
+ * any of them changed. Listed file by file, as what ships can be inside an archive.
+ */
+async function installFiles(from: string, to: string): Promise<boolean> {
+  await fs.mkdir(to, { recursive: true })
+  let changed = false
+  for (const entry of await fs.readdir(from, { withFileTypes: true })) {
+    const [source, target] = [join(from, entry.name), join(to, entry.name)]
+    if (entry.isDirectory()) {
+      changed = (await installFiles(source, target)) || changed
+      continue
+    }
+    const wanted = await fs.readFile(source)
+    const present = await fs.readFile(target).catch(() => null)
+    if (present?.equals(wanted)) continue
+    await fs.writeFile(target, wanted)
+    changed = true
+  }
+  return changed
 }
 
 function same(a: string, b: string): boolean {
@@ -37,13 +61,15 @@ export class ChromeUseBridge {
   private secret = ''
   private port = 0
   private extensionId = ''
-  private bundledVersion = ''
   private starting: Promise<void> | null = null
   private newest: { instance: string; seen: number; version: string } | null = null
   private readonly queue: Work[] = []
   /** One held request for each extension worker, as each profile it is set up in has its own. */
   private readonly holding = new Map<string, (work: Work | null) => void>()
   private readonly knownInstances = new Set<string>()
+  /** Workers told to remove themselves, which get no more work and don't count as connected. */
+  private readonly retired = new Set<string>()
+  private retireWork: Work | null = null
   private readonly waiting = new Map<
     string,
     { resolve: (value: unknown) => void; reject: (reason: Error) => void }
@@ -71,16 +97,20 @@ export class ChromeUseBridge {
 
   private async begin(): Promise<void> {
     const folder = this.installFolder()
-    await fs.mkdir(folder, { recursive: true })
     const bundled = this.bundledFolder()
-    await fs.copyFile(join(bundled, 'manifest.json'), join(folder, 'manifest.json'))
-    await fs.copyFile(join(bundled, 'background.js'), join(folder, 'background.js'))
+    const installedBefore = await fs
+      .access(join(folder, 'manifest.json'))
+      .then(() => true)
+      .catch(() => false)
+    // This is what keeps it up to date: Chrome only reads an unpacked extension's files when told to.
+    // The mark outlasts this run, in case SideKick closes before Chrome shows up.
+    if ((await installFiles(bundled, folder)) && installedBefore) {
+      await fs.writeFile(join(folder, RELOAD_MARK), '', 'utf8')
+    }
     const manifest = JSON.parse(await fs.readFile(join(bundled, 'manifest.json'), 'utf8')) as {
       key: string
-      version: string
     }
     this.extensionId = chromeExtensionId(manifest.key)
-    this.bundledVersion = manifest.version
     this.secret = randomBytes(32).toString('hex')
     const server = createServer((request, response) => void this.handle(request, response))
     await new Promise<void>((resolve, reject) => {
@@ -138,12 +168,23 @@ export class ChromeUseBridge {
     const version = String(request.headers['x-sidekick-version'] ?? '')
     // A worker that has just started is the one to use, or any at all once that one has gone quiet.
     // Going by whichever asked last would flip between profiles.
+    if (this.retired.has(instance)) {
+      const work = this.retireWork
+      this.retireWork = null
+      if (!work) {
+        response.writeHead(403).end()
+        return
+      }
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end(JSON.stringify(work))
+      return
+    }
     const fresh = !this.knownInstances.has(instance)
     this.knownInstances.add(instance)
     if (fresh || !this.isConnected()) {
       this.newest = { instance, seen: Date.now(), version }
       this.onSeen()
-      if (version !== this.bundledVersion) this.enqueue('reload', {})
+      void this.reloadIfChanged()
     } else if (this.newest?.instance === instance) this.newest.seen = Date.now()
     const reply = (work: Work | null): void => {
       clearTimeout(timer)
@@ -162,6 +203,18 @@ export class ChromeUseBridge {
     if (ready) return reply(ready)
     this.holding.get(instance)?.(null)
     this.holding.set(instance, reply)
+  }
+
+  private async reloadIfChanged(): Promise<void> {
+    const mark = join(this.installFolder(), RELOAD_MARK)
+    const needed = await fs
+      .access(mark)
+      .then(() => true)
+      .catch(() => false)
+    if (!needed) return
+    // Gone first: if this were sent every time, a reload that changed nothing would never end.
+    await fs.rm(mark, { force: true })
+    this.enqueue('reload', {})
   }
 
   private settle(body: string): void {
@@ -201,6 +254,28 @@ export class ChromeUseBridge {
       await new Promise((resolve) => setTimeout(resolve, POLL_MS))
     }
     return true
+  }
+
+  /**
+   * Tells the extension to remove itself from Chrome, and stops counting it as connected at once. False
+   * if no worker has been heard from to tell.
+   */
+  retire(): boolean {
+    const worker = this.isConnected() ? this.newest : null
+    if (!worker) return false
+    this.retired.add(worker.instance)
+    this.newest = null
+    this.queue.length = 0
+    const work: Work = { id: 'retire', op: 'uninstallSelf', args: {} }
+    const held = this.holding.get(worker.instance)
+    if (held) held(work)
+    else this.retireWork = work
+    return true
+  }
+
+  /** The extension's version as the connected worker reports it, or null with none connected. */
+  workerVersion(): string | null {
+    return this.isConnected() ? (this.newest?.version ?? null) : null
   }
 
   /** Which worker was heard from last, to tell a new one from it. */
