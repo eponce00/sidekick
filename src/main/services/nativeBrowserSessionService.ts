@@ -687,8 +687,12 @@ export interface NativeBrowserPolicy {
 }
 
 /** What a control is, for the policy: read from the page, so a name can't be avoided by clicking by pixel. */
+/** What a password or payment field calls itself, in its type, name, id or label. */
+const SECRET_FIELD =
+  /password|passwd|passcode|one-time-code|cc-|card.?(num|number)|cvv|cvc|security.?code|ssn/i
+
 const POLICY_CONTROL_SCRIPT = `function () {
-  const SECRET = /password|passwd|passcode|one-time-code|cc-|card.?(num|number)|cvv|cvc|security.?code|ssn/i
+  const SECRET = ${SECRET_FIELD}
   const secret = (element) =>
     element?.type === 'password' ||
     SECRET.test([element?.autocomplete, element?.name, element?.id, element?.getAttribute?.('aria-label')].join(' '))
@@ -707,7 +711,7 @@ const QUIET_SCRIPT_TIMEOUT_MS = 5_000
 
 /** Whether a filled-in secret field is on the page, and what a script reading cookies would find. */
 const PAGE_SECRETS_SCRIPT = `(() => {
-  const SECRET = /password|passwd|passcode|one-time-code|cc-|card.?(num|number)|cvv|cvc|security.?code|ssn/i
+  const SECRET = ${SECRET_FIELD}
   const secret = (element) =>
     element.type === 'password' ||
     SECRET.test([element.autocomplete, element.name, element.id, element.getAttribute('aria-label')].join(' '))
@@ -3404,6 +3408,11 @@ export class NativeBrowserSessionService {
         output += `- note: the frame from ${quoteSnapshot(frame.url)} can't be read. Use a screenshot and coordinates to click in it.\n`
         continue
       }
+      // A sign-in or card form in a frame stays out of the agent's reach, all of it.
+      if (await this.holdsSecretField(tab, inFrame.nodes ?? [], signal)) {
+        output += `- note: the frame from ${quoteSnapshot(frame.url)} holds a sign-in or payment form, so it isn't read. Ask the user to fill it.\n`
+        continue
+      }
       allNodes = inFrame.nodes ?? []
       nodes = new Map(allNodes.map((node) => [node.nodeId, node]))
       visitRoots(1)
@@ -3412,6 +3421,27 @@ export class NativeBrowserSessionService {
       output += '... semantic snapshot truncated ...\n'
     }
     return { snapshot: output.trimEnd(), count: emitted }
+  }
+
+  private async holdsSecretField(
+    tab: TabState,
+    nodes: CDPAXNode[],
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    for (const node of nodes) {
+      if (valueOf(node.role) !== 'textbox' || !node.backendDOMNodeId) continue
+      const described = await abortable(
+        tab.surface.sendDebuggerCommand<{ node?: { attributes?: string[] } }>('DOM.describeNode', {
+          backendNodeId: node.backendDOMNodeId
+        }),
+        signal
+      ).catch(() => null)
+      // Not knowing is not the same as it being safe.
+      if (!described) return true
+      const words = [...(described.node?.attributes ?? []), valueOf(node.name)].join(' ')
+      if (SECRET_FIELD.test(words)) return true
+    }
+    return false
   }
 
   private async childFrames(
