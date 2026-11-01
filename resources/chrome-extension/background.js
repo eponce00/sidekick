@@ -4,7 +4,7 @@
 
 const instance = crypto.randomUUID()
 const version = chrome.runtime.getManifest().version
-const GROUP_TITLE = 'SideKick'
+const GROUP_TITLE = '🤖 SideKick'
 const LOAD_WAIT_MS = 15_000
 const CAPTURE_WAIT_MS = 6_000
 const WINDOW_WIDTH = 1100

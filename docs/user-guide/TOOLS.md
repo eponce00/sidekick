@@ -108,7 +108,7 @@ keep using your computer. Turn this on in **Settings › Chrome**, which is off 
   mode and loads its extension from your computer. There's no store and nothing to maintain, and it updates by itself along with SideKick. It takes about 10 seconds, with the same glow and pointer as when the agent works in an app, and Esc stops it. Work profiles aren't offered. If it can't
   finish, SideKick shows you the steps. **Disconnect** in Settings removes the extension from Chrome,
   or the next time Chrome is open if it's closed. Developer mode stays on, in case you use it yourself.
-- **It works in a tab group named SideKick,** in your Chrome window, without taking you off your tab. Say
+- **It works in a tab group named 🤖 SideKick,** in your Chrome window, without taking you off your tab. Say
   "continue in the tab I have open" and SideKick shows you which tab that is and asks you to share it. The
   agent then picks up from what you've done there, and your tab stays where it is.
 - **It asks where it matters.** Turning this on covers ordinary sites. Sites for your email, money or account
