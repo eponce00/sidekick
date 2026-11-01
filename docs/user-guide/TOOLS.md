@@ -71,7 +71,10 @@ back to minimized afterwards. Store apps such as Calculator work too, and open m
 show in what the agent sees.
 
 Some apps ignore background input for some steps. WhatsApp scrolls in the background, for example,
-but needs a real click to type, and Docker Desktop takes no background clicks at all. The agent then chooses: it can tell you what it needs, or wait until
+but needs a real click to type. Some web-based apps, such as Docker Desktop, ignore background clicks:
+the agent can still press a named control, which brings the app forward for about half a second so it
+can draw before what you had in front goes back, but anything else takes real input. A covered web-based
+app can stop drawing, so the picture in the chat may lag behind until it is uncovered. The agent then chooses: it can tell you what it needs, or wait until
 you have stepped away for 10 seconds, bring the app to the front, and use your real mouse and keyboard.
 SideKick's pointer stays the one to watch. Your real one goes to the spot only for as long as a step
 needs it and then goes back where you left it, and if you touch the mouse or keyboard the agent waits again.
@@ -79,6 +82,10 @@ The app stays in front until the reply ends, and then what you had open comes ba
 already moved on. This is never done for software that may control real
 equipment. If the app is covered or minimized, the glow gives way to a small label in the corner with a picture
 of what the agent last saw.
+
+A real click is refused if another app's window is on top at that point, since the click would land
+there. Shortcuts that belong to Windows, such as Alt+Tab, Alt+F4, Ctrl+Shift+Esc and the Windows key,
+aren't available.
 
 Three more things it can ask for, each with its own limits:
 
@@ -144,7 +151,9 @@ like Send, Delete or Pay is refused until the agent confirms that you asked for 
 everything: web-based apps may not name their controls, and a covered app can't be checked.
 
 After each step the agent sees the app again and is told if nothing changed. After a few such steps
-it is told to stop and explain, and SideKick stops sending more.
+it is told to stop and explain, and SideKick stops sending more. The app's list of controls says which
+boxes are checked and what is open or closed. In an app with a very long list, the agent first gets
+the outline and reads the rest as it needs it.
 
 The native browser catalog includes `browser_open`, `browser_observe`, `browser_screenshot`,
 `browser_click`, `browser_type`, `browser_sign_in`, `browser_select`, `browser_fill_form`, `browser_scroll`, `browser_hover`,

@@ -6,18 +6,19 @@ research inputs, not runtime dependencies or vendored source.
 
 ## Catalog
 
-| Project      | Repository                                                                      | Primary research areas                                     |
-| ------------ | ------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| Codex        | [openai/codex](https://github.com/openai/codex)                                 | agent loop, approvals, configuration, project instructions |
-| OpenCode     | [anomalyco/opencode](https://github.com/anomalyco/opencode)                     | sessions, tools, provider abstraction, desktop UX          |
-| DeepSeek     | [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) | agent loop, tool guards, plugin boundaries                 |
-| Cline        | [cline/cline](https://github.com/cline/cline)                                   | Plan/Act UX, MCP, checkpoints, providers, scheduled runs   |
-| Pi           | [badlogic/pi-mono](https://github.com/badlogic/pi-mono)                         | compact agent loop, tool filtering, extensions             |
-| Hermes Agent | [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent)       | skills, memory, tool orchestration                         |
-| Claude Code  | [anthropics/claude-code](https://github.com/anthropics/claude-code)             | command UX, hooks, permissions, project configuration      |
-| Grok Build   | [xai-org/grok-build](https://github.com/xai-org/grok-build)                     | planning transitions and review interaction                |
-| T3 Code      | [pingdotgg/t3code](https://github.com/pingdotgg/t3code)                         | multi-agent control surface, Electron desktop, remote UX   |
-| Pomerado     | [Pomerado/pomerado](https://github.com/Pomerado/pomerado)                       | browser pickers, date fields, settling after actions       |
+| Project       | Repository                                                                      | Primary research areas                                     |
+| ------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Codex         | [openai/codex](https://github.com/openai/codex)                                 | agent loop, approvals, configuration, project instructions |
+| OpenCode      | [anomalyco/opencode](https://github.com/anomalyco/opencode)                     | sessions, tools, provider abstraction, desktop UX          |
+| DeepSeek      | [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) | agent loop, tool guards, plugin boundaries                 |
+| Cline         | [cline/cline](https://github.com/cline/cline)                                   | Plan/Act UX, MCP, checkpoints, providers, scheduled runs   |
+| Pi            | [badlogic/pi-mono](https://github.com/badlogic/pi-mono)                         | compact agent loop, tool filtering, extensions             |
+| Hermes Agent  | [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent)       | skills, memory, tool orchestration                         |
+| Claude Code   | [anthropics/claude-code](https://github.com/anthropics/claude-code)             | command UX, hooks, permissions, project configuration      |
+| Grok Build    | [xai-org/grok-build](https://github.com/xai-org/grok-build)                     | planning transitions and review interaction                |
+| T3 Code       | [pingdotgg/t3code](https://github.com/pingdotgg/t3code)                         | multi-agent control surface, Electron desktop, remote UX   |
+| Pomerado      | [Pomerado/pomerado](https://github.com/Pomerado/pomerado)                       | browser pickers, date fields, settling after actions       |
+| agent-desktop | [vercel-labs/agent-desktop](https://github.com/vercel-labs/agent-desktop)       | desktop accessibility trees, measured Windows behavior     |
 
 The catalog must contain only public sources with licenses compatible with the intended use. A
 useful idea does not by itself authorize copying its implementation.
@@ -50,6 +51,10 @@ When a reference materially influences a design:
 Adapted code from Pomerado (MIT, commit `1bebf64`) is the browser picker, date filling and
 settle logic in `src/main/services/browserPicker.ts`, `browserDates.ts` and `browserSettle.ts`;
 its license notice is kept in `browserPicker.ts`.
+
+Computer use takes independently written ideas from agent-desktop (Apache-2.0, commit `9eb9b29`), with
+no code copied: pressing a control through UI Automation, a shortened first list with parts to read
+on demand, and checking what is on top before a real click.
 
 Do not publish local checkout paths, raw browsing logs, conversation transcripts, proprietary
 sources, private repository contents, or speculative claims about another product. Link to upstream

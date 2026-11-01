@@ -321,6 +321,10 @@ export function registerComputerToolHandlers(
           return first ? await showLook(first, `${answer}\n`, false, true) : await succeed(answer)
         }
         case 'look': {
+          const part = number(args, 'part')
+          if (part !== undefined) {
+            return await showLook(await service.lookPart(chat, app, part, signal))
+          }
           const find = text(args, 'find') || undefined
           return await showLook(
             await service.look(chat, app, true, signal, number(args, 'window'), find),
