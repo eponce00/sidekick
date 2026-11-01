@@ -174,6 +174,7 @@ export const EDITABLE_SETTINGS: readonly EditableSettingDescriptor[] = [
 // Typed as a complete record so a new setting cannot be added without listing it here.
 const KNOWN_STORED_KEYS: Record<keyof ProviderSettings | keyof PublicProviderSettings, true> = {
   maxConcurrentRuns: true,
+  computerUseEnabled: true,
   shellIsolation: true,
   officeHelperInterpreter: true,
   officeHelperConfigurationId: true,

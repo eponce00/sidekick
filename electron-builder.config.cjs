@@ -8,6 +8,7 @@ module.exports = {
   directories: {
     buildResources: 'build'
   },
+  beforePack: 'scripts/fetch-computer-driver.cjs',
   afterSign: 'scripts/after-sign.cjs',
   files: [
     // Ship only reviewed runtime roots; ignored reports and local agent state
@@ -47,6 +48,8 @@ module.exports = {
     icon: 'build/icon.ico',
     // `bin` beside the executable holds the `sidekick` command; the installer puts it on PATH.
     extraFiles: [{ from: 'build/cli/win', to: 'bin' }],
+    // The driver behind computer use, verified by scripts/fetch-computer-driver.cjs.
+    extraResources: [{ from: 'build/computer-driver', to: 'computer-driver' }],
     target: [
       {
         target: 'nsis',

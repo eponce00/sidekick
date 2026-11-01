@@ -6,7 +6,7 @@ import { promises as fs } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { promisify } from 'util'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   beginCheckpointCapture,
   configureCheckpointStorageRoot,
@@ -119,6 +119,17 @@ describe('private SideKick workspace history', () => {
     await expect(createCheckpoint(workspace, 'Duplicate recovery', captureId)).rejects.toThrow(
       'History capture expired'
     )
+  })
+
+  it('drops a capture whose folder is gone, rather than retrying it on every start', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await write(join(workspace, 'agent.txt'), 'before\n')
+    await beginCheckpointCapture(workspace, 'conversation-1', 'assistant-1')
+    await fs.rm(workspace, { recursive: true, force: true })
+
+    expect(await recoverInterruptedCheckpointCaptures()).toEqual([])
+    expect(warn).not.toHaveBeenCalled()
+    warn.mockRestore()
   })
 
   it('blocks the entire restore when an affected file changed later', async () => {

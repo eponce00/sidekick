@@ -16,6 +16,7 @@ import {
   KeyRound,
   LifeBuoy,
   MapPin,
+  MousePointerClick,
   Palette,
   RefreshCw,
   Repeat,
@@ -46,6 +47,7 @@ import { ACCENT_PALETTES, DEFAULT_ACCENT_PALETTE } from '../../../shared/accentP
 import { DEFAULT_TEXT_SCALE, nearestTextScale, steppedTextScale } from '../../../shared/textScale'
 import { applyAccentPalette } from '../constants/accentPalettes'
 import { CommandLineToolSettings } from './CommandLineToolSettings'
+import { ComputerUseAllowedApps } from './ComputerUseAllowedApps'
 import { CredentialSettings } from './CredentialSettings'
 import { McpServerSettings } from './McpServerSettings'
 import { ProviderSettingsPanel } from './ProviderSettingsPanel'
@@ -304,6 +306,21 @@ function SettingsModal({
               onChange={(webSearchEnabled) => setSettings({ ...settings, webSearchEnabled })}
             />
           </SettingsSection>
+          {window.api.app.platform === 'windows' && (
+            <SettingsSection
+              icon={MousePointerClick}
+              title="Computer use"
+              description="Lets the agent operate other apps on this computer. Each app needs your approval, for a chat or for good."
+            >
+              <ToggleField
+                label="Let the agent ask to use apps"
+                hint="Password managers, Windows security prompts and SideKick itself are never available. Press Esc to stop it. What an app shows goes to your selected model."
+                checked={settings.computerUseEnabled ?? false}
+                onChange={(computerUseEnabled) => setSettings({ ...settings, computerUseEnabled })}
+              />
+              <ComputerUseAllowedApps />
+            </SettingsSection>
+          )}
           <SettingsSection
             icon={MapPin}
             title="Location"

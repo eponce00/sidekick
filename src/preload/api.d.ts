@@ -1,3 +1,4 @@
+import type { ComputerRememberedApp } from '../shared/computerUse'
 import type { PinnedModel } from '../shared/models'
 import type { ProviderSettings, PublicProviderSettings } from '../shared/settings'
 import type {
@@ -10,6 +11,11 @@ import type {
   ProviderHealthChangedEvent,
   ProviderTarget
 } from '../shared/providerRuntime'
+
+interface ComputerUseAPI {
+  rememberedApps: () => Promise<ComputerRememberedApp[]>
+  forgetApp: (path: string) => Promise<void>
+}
 
 interface SettingsAPI {
   selectOfficeInterpreter: () => Promise<{ canceled: boolean; path?: string; error?: string }>
@@ -412,6 +418,7 @@ interface WorkspaceAPI {
 
 export interface DesktopApi {
   providers: ProvidersAPI
+  computerUse: ComputerUseAPI
   settings: SettingsAPI
   commandLine: CommandLineAPI
   memory: MemoryAPI

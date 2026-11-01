@@ -512,6 +512,8 @@
   font-size: var(--text-sm);
   font-weight: 400;
   line-height: 1.45;
+  /* A path has no spaces to wrap at, and would otherwise run off the card. */
+  overflow-wrap: anywhere;
 }
 
 .settings-row-description a {
