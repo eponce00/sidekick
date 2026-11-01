@@ -247,6 +247,77 @@ function focused() {
   }
 }
 
+// In the page: SideKick's glow and pointer, as it shows around an app. They take no clicks, sit in a closed
+// shadow root the page can't style or read, and are stylesheets it can't block.
+function showOverlay(accent, x, y) {
+  const STYLE = `
+    .glow { position: fixed; inset: 0; border: 2px solid var(--accent); box-shadow: inset 0 0 36px 2px color-mix(in srgb, var(--accent) 38%, transparent); animation: breathe 2.6s ease-in-out infinite; }
+    @keyframes breathe { 50% { opacity: 0.65; } }
+    svg { position: fixed; left: 0; top: 0; overflow: visible; transition: transform 300ms ease-in-out; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35)); }
+    .ring { position: fixed; left: -16px; top: -16px; width: 32px; height: 32px; box-sizing: border-box; border: 2px solid var(--accent); border-radius: 50%; opacity: 0; }
+  `
+  let overlay = window.__sidekickOverlay
+  if (!overlay?.host.isConnected) {
+    const host = document.createElement('sidekick-overlay')
+    host.style.cssText =
+      'all: initial; position: fixed; inset: 0; z-index: 2147483647; display: block; pointer-events: none;'
+    const root = host.attachShadow({ mode: 'closed' })
+    const sheet = new CSSStyleSheet()
+    sheet.replaceSync(STYLE)
+    root.adoptedStyleSheets = [sheet]
+    const glow = document.createElement('div')
+    glow.className = 'glow'
+    const ring = document.createElement('div')
+    ring.className = 'ring'
+    const SVG = 'http://www.w3.org/2000/svg'
+    const pointer = document.createElementNS(SVG, 'svg')
+    pointer.setAttribute('width', '26')
+    pointer.setAttribute('height', '30')
+    pointer.setAttribute('viewBox', '0 0 26 30')
+    pointer.style.visibility = 'hidden'
+    const arrow = document.createElementNS(SVG, 'path')
+    arrow.setAttribute(
+      'd',
+      'M3 4.4C3 2.6 5 1.6 6.4 2.7l15.5 12.4c1.5 1.2.7 3.6-1.2 3.7l-6.1.3c-.8 0-1.5.5-1.9 1.2l-3.1 5.9c-.9 1.7-3.5 1.3-3.8-.6z'
+    )
+    arrow.setAttribute('fill', 'var(--accent)')
+    arrow.setAttribute('stroke', '#ffffff')
+    arrow.setAttribute('stroke-width', '2')
+    arrow.setAttribute('stroke-linejoin', 'round')
+    pointer.append(arrow)
+    root.append(glow, ring, pointer)
+    document.documentElement.append(host)
+    overlay = window.__sidekickOverlay = { host, pointer, ring }
+  }
+  overlay.host.style.display = 'block'
+  overlay.host.style.setProperty('--accent', accent)
+  if (typeof x !== 'number') return
+  // The arrow's tip is 3 and 2 pixels into its picture.
+  overlay.pointer.style.transform = `translate(${x - 3}px, ${y - 2}px)`
+  overlay.pointer.style.visibility = 'visible'
+  overlay.ring.style.transform = `translate(${x}px, ${y}px)`
+  setTimeout(() => {
+    overlay.ring.animate(
+      [
+        { opacity: 0.9, transform: `translate(${x}px, ${y}px) scale(0.2)` },
+        { opacity: 0, transform: `translate(${x}px, ${y}px) scale(1.3)` }
+      ],
+      { duration: 460, easing: 'ease-out' }
+    )
+  }, 300)
+}
+
+function removeOverlay() {
+  window.__sidekickOverlay?.host.remove()
+  window.__sidekickOverlay = undefined
+}
+
+function overlayShown(shown) {
+  const host = window.__sidekickOverlay?.host
+  // Not visibility: the pointer sets its own, which would leave it in the model's picture.
+  if (host) host.style.display = shown ? 'block' : 'none'
+}
+
 async function inPage(tabId, func, ...args) {
   await webTab(tabId)
   const [result] = await chrome.scripting.executeScript({ target: { tabId }, func, args })
@@ -342,13 +413,23 @@ const withTimeout = (promise, ms, message) =>
     new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms))
   ])
 
-async function screenshot({ tabId }) {
+/** With `clean`, for the model: its own glow and pointer aren't part of the page. */
+async function screenshot({ tabId, clean }) {
   await webTab(tabId)
-  return withTimeout(
-    debug(tabId, 'Page.captureScreenshot', { format: 'jpeg', quality: 80 }),
-    CAPTURE_WAIT_MS,
-    'Chrome gave no picture of this tab in time.'
-  )
+  if (clean) await inPage(tabId, overlayShown, false)
+  try {
+    return await withTimeout(
+      debug(tabId, 'Page.captureScreenshot', { format: 'jpeg', quality: 80 }),
+      CAPTURE_WAIT_MS,
+      'Chrome gave no picture of this tab in time.'
+    )
+  } finally {
+    if (clean) await inPage(tabId, overlayShown, true).catch(() => undefined)
+  }
+}
+
+async function overlaysOff({ tabIds = [] }) {
+  for (const tabId of tabIds) await inPage(tabId, removeOverlay).catch(() => undefined)
 }
 
 async function detachAll() {
@@ -377,6 +458,8 @@ const OPERATIONS = {
   screenshot,
   closeTab: ({ tabId }) => chrome.tabs.remove(tabId),
   detachAll,
+  overlay: ({ tabId, accent, x, y }) => inPage(tabId, showOverlay, accent, x, y),
+  overlaysOff,
   // SideKick has put a newer copy of these files in place.
   reload: () => setTimeout(() => chrome.runtime.reload(), 100)
 }

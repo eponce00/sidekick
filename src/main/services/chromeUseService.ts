@@ -7,6 +7,10 @@ const MAX_WAIT_SECONDS = 30
 // A page takes a moment to show what an action did.
 const SETTLE_MS = 400
 const WAIT_FOR_CHROME_MS = 35_000
+// As for computer use: long enough to outlast a slow model's turn. Esc stays the user's otherwise.
+const STOP_KEY_HELD_MS = 60_000
+// The pointer gets there first, so a click doesn't happen ahead of it.
+const POINTER_GLIDE_MS = 320
 
 // Web vaults of what is blocked as an app: the same passwords, in a page.
 const NEVER_SITES = new Set([
@@ -67,6 +71,18 @@ export interface ChromeUseDependencies {
   confirmPress: (name: string, origin: string, signal: AbortSignal) => Promise<boolean>
   /** Opens Chrome if SideKick's extension was set up in it, or offers to set it up. */
   bringUpChrome: (signal: AbortSignal) => Promise<boolean>
+  /** The same marks computer use shows, so it is always clear that SideKick is driving. */
+  overlay: {
+    show: () => void
+    hide: () => void
+    preview: (image: { data: string }) => void
+    /** Esc from anywhere, for as long as the agent can act. Returns how to take it back. */
+    armStop: (stop: () => void) => () => void
+    notify: () => void
+    /** The colour of the glow and pointer inside a page. */
+    accent: () => Promise<string>
+  }
+  setTimer?: typeof setTimeout
 }
 
 interface ChromeChat {
@@ -76,6 +92,7 @@ interface ChromeChat {
   /** The window its tab group is in, once it has one. */
   windowId?: number
   current?: number
+  notified?: boolean
 }
 
 function originOf(url: string): string {
@@ -99,8 +116,85 @@ function refuseUnsafe(url: string): string {
 /** Drives the user's own Chrome: who may reach what. The extension only does as this decides. */
 export class ChromeUseService {
   private readonly chats = new Map<string, ChromeChat>()
+  /** Chats whose reply is still driving, and so what Esc stops. */
+  private readonly driving = new Set<string>()
+  /** Stopped with Esc. Their reply gets nowhere from here, whatever the model tries. */
+  private readonly stopped = new Set<string>()
+  private disarm: (() => void) | null = null
+  private disarmTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(private readonly deps: ChromeUseDependencies) {}
+
+  private refuseIfStopped(id: string): void {
+    if (this.stopped.has(id)) {
+      throw new ComputerUseRefusal(
+        'The user pressed Esc to stop this, so nothing was done. Do not continue: tell them how far you got.'
+      )
+    }
+  }
+
+  /** Each step renews the marks, as a page that has moved on has lost its own. */
+  private async markDriving(id: string, chat: ChromeChat, tabId: number): Promise<void> {
+    this.driving.add(id)
+    if (!chat.notified) {
+      chat.notified = true
+      this.deps.overlay.notify()
+    }
+    this.disarm ??= this.deps.overlay.armStop(() => void this.stop())
+    this.deps.overlay.show()
+    if (this.disarmTimer) clearTimeout(this.disarmTimer)
+    this.disarmTimer = (this.deps.setTimer ?? setTimeout)(
+      () => this.takeMarksOff(),
+      STOP_KEY_HELD_MS
+    )
+    const accent = await this.deps.overlay.accent()
+    await this.deps.bridge
+      .send('overlay', { tabId, accent }, new AbortController().signal)
+      .catch(() => undefined)
+  }
+
+  private takeMarksOff(): void {
+    if (this.disarmTimer) clearTimeout(this.disarmTimer)
+    this.disarmTimer = null
+    this.disarm?.()
+    this.disarm = null
+    this.deps.overlay.hide()
+    const tabIds = [...this.chats.values()].flatMap((chat) => [...chat.tabs])
+    const quiet = new AbortController().signal
+    void this.deps.bridge.send('overlaysOff', { tabIds }, quiet).catch(() => undefined)
+    void this.deps.bridge.send('detachAll', {}, quiet).catch(() => undefined)
+  }
+
+  /** Esc: everything those chats were allowed ends now, and asking again takes the user's answer. */
+  stop(): void {
+    const tabIds = [...this.driving].flatMap((id) => [...(this.chats.get(id)?.tabs ?? [])])
+    for (const id of this.driving) this.stopped.add(id)
+    this.takeMarksOff()
+    const quiet = new AbortController().signal
+    void this.deps.bridge.send('overlaysOff', { tabIds }, quiet).catch(() => undefined)
+    for (const id of this.driving) this.chats.delete(id)
+    this.driving.clear()
+  }
+
+  /** Where a click is about to land, ahead of it. */
+  private async pointAt(tabId: number, found: Located, signal: AbortSignal): Promise<void> {
+    const accent = await this.deps.overlay.accent()
+    await this.deps.bridge
+      .send('overlay', { tabId, accent, x: found.x, y: found.y }, signal)
+      .catch(() => undefined)
+    await new Promise((resolve) => setTimeout(resolve, POINTER_GLIDE_MS))
+  }
+
+  /** The latest look at the tab, for the corner label. It keeps the glow: it's for the user to see. */
+  async refreshPreview(id: string): Promise<void> {
+    const tabId = this.chats.get(id)?.current
+    if (tabId === undefined || !this.driving.has(id)) return
+    const shot = await this.deps.bridge
+      .send<{ data: string }>('screenshot', { tabId }, new AbortController().signal)
+      .catch(() => null)
+    // It may have been stopped while the picture was on its way.
+    if (shot?.data && this.driving.has(id)) this.deps.overlay.preview(shot)
+  }
 
   private chat(id: string): ChromeChat {
     let chat = this.chats.get(id)
@@ -138,6 +232,7 @@ export class ChromeUseService {
 
   /** The chat's tab, checked again where it is now: a click or a page can have gone somewhere else. */
   private async tab(id: string, signal: AbortSignal, wanted?: number): Promise<ChromeTab> {
+    this.refuseIfStopped(id)
     await this.ready(signal)
     const chat = this.chat(id)
     const tabId = wanted ?? chat.current
@@ -155,10 +250,12 @@ export class ChromeUseService {
       })
     await this.allowSite(chat, tab.url, signal)
     chat.current = tabId
+    await this.markDriving(id, chat, tabId)
     return tab
   }
 
   async open(id: string, url: string, signal: AbortSignal): Promise<ChromeTab> {
+    this.refuseIfStopped(id)
     await this.ready(signal)
     const chat = this.chat(id)
     await this.allowSite(chat, url, signal)
@@ -176,6 +273,7 @@ export class ChromeUseService {
 
   /** "Continue in the tab I have open": the user sees which one, and the model sees nothing until yes. */
   async useMyTab(id: string, signal: AbortSignal): Promise<ChromeTab> {
+    this.refuseIfStopped(id)
     await this.ready(signal)
     const tab = await this.deps.bridge.send<ChromeTab>('activeTab', {}, signal)
     const origin = refuseUnsafe(tab.url)
@@ -247,6 +345,8 @@ export class ChromeUseService {
     const tab = await this.tab(id, signal)
     const found = await this.located(tab, element, signal)
     await this.checkPress(found.name, tab, signal)
+    await this.pointAt(tab.id, found, signal)
+    this.refuseIfStopped(id)
     await this.deps.bridge.send('click', { tabId: tab.id, x: found.x, y: found.y }, signal)
     return `Clicked${found.name ? ` "${found.name}"` : ''}.`
   }
@@ -260,6 +360,8 @@ export class ChromeUseService {
         'That is a password or payment field, which only Chrome or the user may fill in. Ask the user to fill it.'
       )
     }
+    await this.pointAt(tab.id, found, signal)
+    this.refuseIfStopped(id)
     await this.deps.bridge.send('click', { tabId: tab.id, x: found.x, y: found.y }, signal)
     await this.deps.bridge.send('typeText', { tabId: tab.id, text }, signal)
     return 'Typed.'
@@ -316,7 +418,7 @@ export class ChromeUseService {
     const tab = await this.tab(id, signal)
     const shot = await this.deps.bridge.send<{ data: string }>(
       'screenshot',
-      { tabId: tab.id },
+      { tabId: tab.id, clean: true },
       signal
     )
     return shot.data
@@ -362,12 +464,10 @@ export class ChromeUseService {
     signal.throwIfAborted()
   }
 
-  /** A finished reply lets go of the debugger, so Chrome's banner goes away. Approvals last the chat. */
-  runEnded(): void {
-    if (this.deps.bridge.isConnected()) {
-      void this.deps.bridge
-        .send('detachAll', {}, new AbortController().signal)
-        .catch(() => undefined)
-    }
+  /** A finished reply takes the marks off and lets go of the debugger. Approvals last the chat. */
+  runEnded(id: string): void {
+    this.stopped.delete(id)
+    if (!this.driving.delete(id) || this.driving.size) return
+    this.takeMarksOff()
   }
 }

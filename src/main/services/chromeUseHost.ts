@@ -1,4 +1,4 @@
-import { app, nativeImage } from 'electron'
+import { app, nativeImage, Notification } from 'electron'
 import { existsSync, promises as fs } from 'fs'
 import { basename, join } from 'path'
 import type { ChromeUseStatus } from '../../shared/computerUse'
@@ -12,8 +12,10 @@ import {
   setUpChromeExtension,
   type ChromeProfile
 } from './chromeUseSetup'
+import { armEscape, computerOverlay } from './computerUseOverlay'
 import { ComputerUseWindows } from './computerUseWindows'
 import { showTrustedDialog, type TrustedDialogOptions } from './trustedDialog'
+import { trustedLook } from './trustedLook'
 
 const ALLOW_FOR_CHAT = 'Allow for this chat'
 const DONT_ALLOW = 'Don’t allow'
@@ -210,6 +212,26 @@ export function chromeUseService(): ChromeUseService | null {
   service ??= new ChromeUseService({
     bridge: bridgeOf(),
     bringUpChrome,
+    overlay: {
+      // What it means is shown inside the tab; this says so wherever the user is looking.
+      show: () =>
+        computerOverlay.show({
+          appName: 'Chrome',
+          visible: async () => false,
+          bounds: async () => null
+        }),
+      hide: () => computerOverlay.hide(),
+      preview: (image) => computerOverlay.showPreview(image),
+      armStop: armEscape,
+      notify: () => {
+        if (!Notification.isSupported()) return
+        new Notification({
+          title: 'SideKick is using Chrome',
+          body: 'The agent is working in Chrome. Press Esc to stop it.'
+        }).show()
+      },
+      accent: async () => (await trustedLook(appState.mainWindowRef)).accent
+    },
     confirmSite: (origin, signal) =>
       confirm(
         'Let the agent use this site in Chrome?',

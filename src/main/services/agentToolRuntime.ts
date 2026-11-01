@@ -818,7 +818,7 @@ export class AgentToolRuntime {
         releaseRun: (runId) => {
           this.credentials?.uses?.releaseRun(runId)
           input.computer?.service.runEnded(input.conversationId ?? runId)
-          input.chrome?.service.runEnded()
+          input.chrome?.service.runEnded(input.conversationId ?? runId)
         },
         ...(this.browser
           ? {

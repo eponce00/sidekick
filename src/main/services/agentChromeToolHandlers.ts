@@ -37,7 +37,9 @@ export function registerChromeToolHandlers(
     // Each step comes back with the page as it now stands, so the agent sees what it really did.
     const acted = async (result: string) => {
       await service.settle(signal)
-      return succeed(`${result}\n${await service.read(chat, signal)}`)
+      const page = await service.read(chat, signal)
+      void service.refreshPreview(chat)
+      return succeed(`${result}\n${page}`)
     }
     const needElement = (): number => {
       const element = number(args, 'element')

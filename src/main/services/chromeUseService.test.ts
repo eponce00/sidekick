@@ -25,6 +25,15 @@ function harness(url = 'https://shop.example/page', answer = true) {
   const confirmSite = vi.fn(async () => answer)
   const confirmSharedTab = vi.fn(async () => answer)
   const confirmPress = vi.fn(async () => answer)
+  const disarm = vi.fn()
+  const overlay = {
+    show: vi.fn(),
+    hide: vi.fn(),
+    preview: vi.fn(),
+    armStop: vi.fn((_stop: () => void) => disarm),
+    notify: vi.fn(),
+    accent: async () => '#86aee8'
+  }
   const service = new ChromeUseService({
     bridge: {
       send: send as never,
@@ -32,11 +41,23 @@ function harness(url = 'https://shop.example/page', answer = true) {
       waitForConnection: async () => true
     },
     bringUpChrome: async () => true,
+    overlay,
+    setTimer: (() => 0) as never,
     confirmSite,
     confirmSharedTab,
     confirmPress
   })
-  return { service, send, page, located, confirmSite, confirmSharedTab, confirmPress }
+  return {
+    service,
+    send,
+    page,
+    located,
+    overlay,
+    disarm,
+    confirmSite,
+    confirmSharedTab,
+    confirmPress
+  }
 }
 
 const sent = (send: ReturnType<typeof harness>['send'], op: string): boolean =>
@@ -132,6 +153,53 @@ describe('what the agent may reach in Chrome', () => {
     confirmPress.mockResolvedValue(false)
     await expect(service.key('chat', 'return', [], signal)).rejects.toThrow('did not allow')
     expect(sent(send, 'pressKey')).toBe(false)
+  })
+})
+
+describe('when it is driving', () => {
+  it('stops for good on Esc: the reply gets nowhere, and its approvals are gone', async () => {
+    const { service, send, overlay, disarm, confirmSite } = harness()
+    await service.open('chat', 'https://shop.example/', signal)
+    await service.read('chat', signal)
+    expect(overlay.armStop).toHaveBeenCalledTimes(1)
+    overlay.armStop.mock.calls[0][0]()
+    expect(disarm).toHaveBeenCalled()
+    expect(overlay.hide).toHaveBeenCalled()
+    expect(sent(send, 'detachAll')).toBe(true)
+    const reads = send.mock.calls.filter(([name]) => name === 'read').length
+    await expect(service.read('chat', signal)).rejects.toThrow('pressed Esc')
+    await expect(service.open('chat', 'https://shop.example/', signal)).rejects.toThrow(
+      'pressed Esc'
+    )
+    await expect(service.click('chat', 0, signal)).rejects.toThrow('pressed Esc')
+    expect(send.mock.calls.filter(([name]) => name === 'read').length).toBe(reads)
+    service.runEnded('chat')
+    await service.open('chat', 'https://shop.example/', signal)
+    expect(confirmSite).toHaveBeenCalledTimes(2)
+  })
+
+  it('takes the marks off when the reply ends, keeping what the user allowed', async () => {
+    const { service, send, overlay, disarm, confirmSite } = harness()
+    await service.open('chat', 'https://shop.example/', signal)
+    await service.read('chat', signal)
+    service.runEnded('chat')
+    expect(disarm).toHaveBeenCalled()
+    expect(overlay.hide).toHaveBeenCalled()
+    expect(sent(send, 'overlaysOff')).toBe(true)
+    await service.read('chat', signal)
+    expect(confirmSite).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves its glow and pointer out of the picture the model sees', async () => {
+    const { service, send } = harness()
+    send.mockImplementation(async (op: string) =>
+      op === 'tabInfo' || op === 'open'
+        ? { id: 7, title: 'Shop', url: 'https://shop.example/', active: true, windowId: 3 }
+        : ({ data: 'cGlj' } as never)
+    )
+    await service.open('chat', 'https://shop.example/', signal)
+    await service.screenshot('chat', signal)
+    expect(send).toHaveBeenCalledWith('screenshot', { tabId: 7, clean: true }, signal)
   })
 })
 

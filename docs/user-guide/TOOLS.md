@@ -117,6 +117,9 @@ keep using your computer. Turn this on in **Settings › Chrome**, which is off 
   fill in the rest.
 - **It asks you before pressing things like Buy, Send or Delete,** in SideKick's own dialog. Names can't
   catch everything, and a page can label a button anything.
+- **You can see it driving, and press Esc to stop it.** Its tab has a soft glow and SideKick's pointer, and a
+  label in the corner of your screen shows what it last saw. Esc works from anywhere, and ends what the chat
+  was allowed. While the label shows, for up to a minute after each step, other apps don't receive Esc.
 - **What it reads goes to your selected model.** Chrome shows a banner while the agent is working, until
   its reply ends.
 
