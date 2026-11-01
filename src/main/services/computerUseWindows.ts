@@ -42,6 +42,7 @@ public static class SideKickWindows {
   [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int c);
   [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int t, uint f);
   [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h, IntPtr dc, uint flags);
+  [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int i);
   [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] static extern bool GetCursorPos(out Point p);
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int a, out int v, int n);
@@ -166,28 +167,38 @@ public static class SideKickWindows {
       StringBuilder title = new StringBuilder(512);
       GetWindowText(h, title, 512);
       string text = title.ToString().Replace('\\r', ' ').Replace('\\n', ' ').Replace('\\u0001', ' ');
-      if (text == "" || text == "Program Manager") return true;
+      if (text == "" || text == "Program Manager" || IsPopup(h, true)) return true;
       all.Append(h.ToInt64()).Append(',').Append(OwnerOf(h)).Append(',').Append(r.L).Append(',').Append(r.T).Append(',').Append(r.R - r.L).Append(',').Append(r.B - r.T).Append(',').Append(text).Append('\\u0001');
       return true;
     }, IntPtr.Zero);
     return all.ToString();
   }
-  // A menu or dropdown is a window of its own, so a picture of the app leaves it out. Each is drawn
-  // here, wherever it is and whatever covers it, as "x,y,width,height,png", bottom-most first.
+  // A menu or dropdown rather than a dialog. WinUI's are titled PopupHost, so a title doesn't settle it,
+  // and a dialog is the one with a title bar. A window with neither is the app's own business.
+  static bool IsPopup(IntPtr h, bool titled) {
+    if ((GetWindowLong(h, -16) & 0x00C00000) == 0x00C00000) return false;
+    string name = ClassOf(h);
+    if (name == "#32768" || name.Contains("Popup")) return true;
+    return !titled && GetWindow(h, 4) != IntPtr.Zero;
+  }
+  // A picture of the app leaves these out. Each is drawn here, wherever it is and whatever covers it,
+  // as "x,y,width,height,png", bottom-most first.
   public static string Popups(long window) {
     IntPtr main = new IntPtr(window);
     uint pid = OwnerOf(main);
+    IntPtr mainStoreApp = StoreAppWindow(main);
+    uint appPid = mainStoreApp != IntPtr.Zero ? OwnerOf(mainStoreApp) : pid;
     Rect m;
     if (!GetWindowRect(main, out m)) return "";
     long mainArea = (long)(m.R - m.L) * (m.B - m.T);
     List<string> found = new List<string>();
     EnumWindows(delegate(IntPtr h, IntPtr l) {
-      if (h == main || found.Count >= 6 || OwnerOf(h) != pid || !IsWindowVisible(h) || IsIconic(h)) return true;
-      if (GetWindow(h, 4) == IntPtr.Zero && ClassOf(h) != "#32768") return true;
+      if (h == main || found.Count >= 6 || !IsWindowVisible(h) || IsIconic(h)) return true;
+      if (OwnerOf(h) != pid && OwnerOf(h) != appPid) return true;
       StringBuilder title = new StringBuilder(2);
       GetWindowText(h, title, 2);
       int cloaked;
-      if (title.Length > 0 || (DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0)) return true;
+      if (!IsPopup(h, title.Length > 0) || (DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0)) return true;
       Rect r;
       if (!GetWindowRect(h, out r)) return true;
       int w = r.R - r.L, t = r.B - r.T;
@@ -231,17 +242,11 @@ public static class SideKickWindows {
     return found.ToInt64();
   }
   public static bool MinimizeAgain(long window) { return ShowWindow(new IntPtr(window), 7); }
-  // The real pointer travels, so it never jumps and the app sees it arrive before anything is pressed.
-  public static bool Glide(int x, int y) {
-    Point from;
-    if (!GetCursorPos(out from)) return false;
-    for (int i = 1; i <= 16; i++) {
-      double t = i / 16.0, eased = t < 0.5 ? 2 * t * t : 1 - (2 - 2 * t) * (2 - 2 * t) / 2;
-      SetCursorPos(from.X + (int)((x - from.X) * eased), from.Y + (int)((y - from.Y) * eased));
-      System.Threading.Thread.Sleep(14);
-    }
-    return true;
+  public static string Pointer() {
+    Point at;
+    return GetCursorPos(out at) ? at.X + "," + at.Y : "";
   }
+  public static bool PointerTo(int x, int y) { return SetCursorPos(x, y); }
   public static long Front() { return GetForegroundWindow().ToInt64(); }
   public static bool Restore(long window) {
     IntPtr h = new IntPtr(window);
@@ -286,7 +291,8 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       'windows' { $answer = [SideKickWindows]::WindowsOf([uint32]$c.pid) }
       'path' { $answer = [SideKickWindows]::PathOf([uint32]$c.pid) }
       'popups' { $answer = [SideKickWindows]::Popups([long]$c.window) }
-      'glide' { $answer = [SideKickWindows]::Glide([int]$c.x, [int]$c.y) }
+      'pointer' { $answer = [SideKickWindows]::Pointer() }
+      'pointerTo' { $answer = [SideKickWindows]::PointerTo([int]$c.x, [int]$c.y) }
       'restoreBehind' { $answer = [SideKickWindows]::RestoreBehind([uint32]$c.pid) }
       'minimizeAgain' { $answer = [SideKickWindows]::MinimizeAgain([long]$c.window) }
       'start' {
@@ -499,9 +505,15 @@ export class ComputerUseWindows {
     return this.confirm({ op: 'minimizeAgain', window })
   }
 
-  /** Moves the real pointer to a screen point. Only for real input, once the user has stepped away. */
-  glide(point: { x: number; y: number }): Promise<boolean> {
-    return this.confirm({ op: 'glide', ...point })
+  /** Where the real pointer is, or null if Windows won't say. */
+  async pointer(): Promise<{ x: number; y: number } | null> {
+    const found = /^(-?\d+),(-?\d+)$/.exec(await this.ask({ op: 'pointer' }))
+    return found ? { x: Number(found[1]), y: Number(found[2]) } : null
+  }
+
+  /** Moves the real pointer. Only for real input, once the user has stepped away. */
+  pointerTo(point: { x: number; y: number }): Promise<boolean> {
+    return this.confirm({ op: 'pointerTo', ...point })
   }
 
   restore(window: number): Promise<boolean> {

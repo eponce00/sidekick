@@ -73,7 +73,8 @@ show in what the agent sees.
 Some apps ignore background input for some steps. WhatsApp scrolls in the background, for example,
 but needs a real click to type, and Docker Desktop takes no background clicks at all. The agent then chooses: it can tell you what it needs, or wait until
 you have stepped away for 10 seconds, bring the app to the front, and use your real mouse and keyboard.
-Your own pointer is then the one you see moving, and if you touch the mouse or keyboard it waits again.
+SideKick's pointer stays the one to watch. Your real one goes to the spot only for as long as a step
+needs it and then goes back where you left it, and if you touch the mouse or keyboard the agent waits again.
 The app stays in front until the reply ends, and then what you had open comes back, unless you have
 already moved on. This is never done for software that may control real
 equipment. If the app is covered or minimized, the glow gives way to a small label in the corner with a picture

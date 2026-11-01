@@ -198,7 +198,9 @@ export function registerComputerToolHandlers(
         try {
           const result = await perform(step, real)
           if (result === null) {
-            throw new ComputerUseRefusal(`${text(step, 'action') || '(none)'} can't be in a batch.`)
+            throw new ComputerUseRefusal(
+              `${text(step, 'action') || '(none)'} can't be in a batch, only click, double_click, right_click, type, set_value, key, scroll, drag and hover.`
+            )
           }
           done.push(`${index + 1}. ${result}`)
         } catch (error) {

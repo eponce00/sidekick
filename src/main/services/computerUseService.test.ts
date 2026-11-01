@@ -67,7 +67,8 @@ function harness(apps: ComputerApp[], confirm = true) {
         { id: 77, title: 'Window', bounds: null }
       ]
     ),
-    glide: vi.fn(async (_point: { x: number; y: number }) => true),
+    pointer: vi.fn(async () => ({ x: 900, y: 900 }) as { x: number; y: number } | null),
+    pointerTo: vi.fn(async (_point: { x: number; y: number }) => true),
     pathOf: vi.fn(async (_pid: number) => 'C:\\Windows\\System32\\ApplicationFrameHost.exe'),
     popups: vi.fn(async (_window: number) => [] as ComputerPopup[]),
     restoreBehind: vi.fn(async (_pid: number) => 0),
@@ -75,7 +76,6 @@ function harness(apps: ComputerApp[], confirm = true) {
   }
   const hideActive = vi.fn()
   const moveCursor = vi.fn()
-  const hideCursor = vi.fn()
   const service = new ComputerUseService({
     driverPath: 'C:\\driver\\cua-driver.exe',
     dataFolder: () => 'C:\\data',
@@ -88,7 +88,6 @@ function harness(apps: ComputerApp[], confirm = true) {
     showActive,
     hideActive,
     moveCursor,
-    hideCursor,
     showPreview: vi.fn(),
     listApps: async () => apps,
     findInstalled: async (name) => installed.find((a) => a.name.toLowerCase() === name) ?? null,
@@ -109,8 +108,7 @@ function harness(apps: ComputerApp[], confirm = true) {
     appWindows,
     showActive,
     hideActive,
-    moveCursor,
-    hideCursor
+    moveCursor
   }
 }
 
@@ -299,7 +297,7 @@ describe('what the agent may reach', () => {
       notes.push((await service.lookAfterAction('chat', 'notes', signal)).note)
     }
     expect(notes[0]).toContain('may not have landed')
-    expect(notes[2]).toContain('Stop trying')
+    expect(notes[2]).toContain('stop and tell the user')
     await expect(service.scroll('chat', 'notes', 'up', 3, {}, signal)).rejects.toThrow(
       'changed nothing'
     )
@@ -578,19 +576,20 @@ describe('what the agent may reach', () => {
     const { service, call, appWindows } = harness([app('notes')])
     const { createCanvas, loadImage } = await import('@napi-rs/canvas')
     const data = createCanvas(100, 50).toBuffer('image/png').toString('base64')
-    const menu = createCanvas(10, 10)
+    const menu = createCanvas(40, 40)
     const brush = menu.getContext('2d')
+    // A clear margin around it, as WinUI leaves for a shadow, which mustn't cover what is beneath.
     brush.fillStyle = '#ff0000'
-    brush.fillRect(0, 0, 10, 10)
+    brush.fillRect(10, 10, 20, 20)
     appWindows.windowsOf.mockResolvedValue([
       { id: 77, title: 'W', bounds: { x: 100, y: 100, width: 200, height: 100 } }
     ])
     appWindows.popups.mockResolvedValue([
       {
-        x: 120,
-        y: 120,
-        width: 20,
-        height: 20,
+        x: 110,
+        y: 110,
+        width: 40,
+        height: 40,
         data: menu.toBuffer('image/png').toString('base64')
       }
     ])
@@ -649,18 +648,80 @@ describe('what the agent may reach', () => {
   })
 
   it('rests the real pointer on a row, only once the user has stepped away', async () => {
-    const { service, call, appWindows, userIdleSeconds, hideCursor } = harness([app('notes')])
+    const { service, call, appWindows, userIdleSeconds, moveCursor } = harness([app('notes')])
     needsForeground(call, 'never refused')
     userIdleSeconds.mockReturnValue(60)
     await service.requestApp('chat', 'notes', signal)
     await service.hover('chat', 'notes', { x: 5, y: 6 }, signal).catch(() => undefined)
-    expect(appWindows.glide).not.toHaveBeenCalled()
+    expect(appWindows.pointerTo).not.toHaveBeenCalled()
     appWindows.windowsOf.mockResolvedValue([
       { id: 77, title: 'W', bounds: { x: 10, y: 20, width: 100, height: 100 } }
     ])
     await service.hover('chat', 'notes', { x: 5, y: 6 }, signal)
-    expect(appWindows.glide).toHaveBeenCalledWith({ x: 15, y: 26 })
-    expect(hideCursor).toHaveBeenCalled()
+    expect(appWindows.pointerTo).toHaveBeenCalledWith({ x: 15, y: 26 })
+    expect(moveCursor).toHaveBeenCalledWith({ x: 15, y: 26 })
+  })
+
+  it('keeps its own pointer the one to watch, and gives the real one back', async () => {
+    const { service, call, appWindows, moveCursor } = harness([app('notes')])
+    needsForeground(call, 'never refused')
+    appWindows.windowsOf.mockResolvedValue([
+      { id: 77, title: 'W', bounds: { x: 0, y: 0, width: 100, height: 100 } }
+    ])
+    await service.requestApp('chat', 'notes', signal)
+    // Where the step left it, so nobody else has touched it.
+    appWindows.pointer.mockResolvedValueOnce({ x: 900, y: 900 })
+    appWindows.pointer.mockResolvedValueOnce({ x: 5, y: 6 })
+    await service.click('chat', 'notes', { x: 5, y: 6 }, signal, true)
+    expect(moveCursor).toHaveBeenCalledWith({ x: 5, y: 6 })
+    expect(appWindows.pointerTo).toHaveBeenLastCalledWith({ x: 900, y: 900 })
+    // The driver put it back to where a drag began, which is still not where the user left it.
+    appWindows.pointerTo.mockClear()
+    appWindows.pointer.mockResolvedValueOnce({ x: 900, y: 900 })
+    appWindows.pointer.mockResolvedValueOnce({ x: 5, y: 6 })
+    await service.drag('chat', 'notes', { x: 5, y: 6 }, { x: 50, y: 60 }, signal, true)
+    expect(appWindows.pointerTo).toHaveBeenLastCalledWith({ x: 900, y: 900 })
+    // The user took the mouse during the step, so it is theirs now.
+    appWindows.pointerTo.mockClear()
+    appWindows.pointer.mockResolvedValueOnce({ x: 900, y: 900 })
+    appWindows.pointer.mockResolvedValueOnce({ x: 300, y: 300 })
+    await service.click('chat', 'notes', { x: 5, y: 6 }, signal, true)
+    expect(appWindows.pointerTo).not.toHaveBeenCalled()
+  })
+
+  it('notices a small change where a step happened, though not one elsewhere', async () => {
+    const { service, call, appWindows } = harness([app('notes')])
+    const { createCanvas } = await import('@napi-rs/canvas')
+    const picture = (mark?: { x: number; y: number }): string => {
+      const canvas = createCanvas(1000, 500)
+      const context = canvas.getContext('2d')
+      context.fillStyle = '#ffffff'
+      context.fillRect(0, 0, 1000, 500)
+      if (mark) {
+        context.fillStyle = '#000000'
+        context.fillRect(mark.x, mark.y, 10, 10)
+      }
+      return canvas.toBuffer('image/png').toString('base64')
+    }
+    appWindows.windowsOf.mockResolvedValue([
+      { id: 77, title: 'W', bounds: { x: 0, y: 0, width: 1000, height: 500 } }
+    ])
+    let shown = picture()
+    const answer = call.getMockImplementation()!
+    call.mockImplementation(async (tool, args) => ({
+      ...(await answer(tool, args)),
+      images: tool === 'get_window_state' ? [{ mimeType: 'image/png', data: shown }] : []
+    }))
+    await service.requestApp('chat', 'notes', signal)
+    await service.look('chat', 'notes', true, signal)
+    await service.click('chat', 'notes', { x: 100, y: 100 }, signal)
+    shown = picture({ x: 110, y: 110 })
+    expect((await service.lookAfterAction('chat', 'notes', signal)).changed).toBe(true)
+    shown = picture({ x: 800, y: 400 })
+    await service.look('chat', 'notes', true, signal)
+    await service.click('chat', 'notes', { x: 100, y: 100 }, signal)
+    shown = picture({ x: 810, y: 410 })
+    expect((await service.lookAfterAction('chat', 'notes', signal)).changed).toBe(false)
   })
 
   it('holds a key combination written as one key to the same limits', async () => {

@@ -92,7 +92,7 @@ window.ripple = () => {
 }
 `
 
-/** The agent's own pointer, in SideKick's colour, for input that doesn't move the real one. */
+/** The agent's own pointer, in SideKick's colour: the one the user sees it working with. */
 export function computerCursorPage(look: TrustedLook): string {
   const hash = createHash('sha256').update(CURSOR_SCRIPT).digest('base64')
   return `<!doctype html>
@@ -175,7 +175,6 @@ export class ComputerUseHighlight {
   private cursorAt: { x: number; y: number } | null = null
   private gliding: ReturnType<typeof setInterval> | null = null
   private center: { x: number; y: number } | null = null
-  private realPointer = false
   private mode: 'glow' | 'pill' = 'pill'
   private preview = ''
   private previewHeight = 0
@@ -196,7 +195,6 @@ export class ComputerUseHighlight {
     this.gliding = null
     this.cursorAt = null
     this.center = null
-    this.realPointer = false
     this.mode = 'pill'
     this.preview = ''
     this.previewHeight = 0
@@ -224,20 +222,14 @@ export class ComputerUseHighlight {
    */
   async moveCursor(point: { x: number; y: number }): Promise<void> {
     if (!this.target) return
-    this.realPointer = false
+    // Real input may have just brought the app forward, ahead of the next check.
+    if (this.mode !== 'glow') await this.follow()
+    if (!this.target) return
     if (this.mode !== 'glow') {
       this.cursorAt = screen.screenToDipPoint(point)
       return
     }
     await this.glide(screen.screenToDipPoint(point))
-  }
-
-  /** While the agent moves the real pointer, that is the pointer. Two on top of each other look wrong. */
-  hideCursor(): void {
-    this.realPointer = true
-    if (this.gliding) clearInterval(this.gliding)
-    this.gliding = null
-    if (this.cursor && !this.cursor.isDestroyed()) this.cursor.hide()
   }
 
   private async glide(to: { x: number; y: number }): Promise<void> {
@@ -340,15 +332,15 @@ export class ComputerUseHighlight {
       }
       if (!window.isVisible()) window.showInactive()
     }
-    if (this.realPointer) {
-      // Nothing to show until the agent goes back to input that leaves the real pointer alone.
-    } else if (this.cursor && !this.cursor.isDestroyed()) {
+    if (this.cursor && !this.cursor.isDestroyed()) {
       if (mode === 'pill' && this.cursor.isVisible()) this.cursor.hide()
       else if (mode === 'glow' && !this.cursor.isVisible()) this.cursor.showInactive()
     } else if (mode === 'glow' && this.cursorAt) {
       // The agent acted while the app was out of sight; show where, now that it can be seen.
       void this.glide(this.cursorAt)
     }
+    // A pointer move can also ask for this, and one timer is all there should ever be.
+    if (this.following) clearTimeout(this.following)
     this.following = setTimeout(() => void this.follow(), FOLLOW_MS)
   }
 }

@@ -59,7 +59,8 @@ export interface ComputerUseDependencies {
     | 'controlAt'
     | 'ignoresPostedClicks'
     | 'windowsOf'
-    | 'glide'
+    | 'pointer'
+    | 'pointerTo'
     | 'restoreBehind'
     | 'minimizeAgain'
     | 'pathOf'
@@ -75,8 +76,6 @@ export interface ComputerUseDependencies {
   hideActive: () => void
   /** Shows the agent's pointer reaching a screen point, in physical pixels. */
   moveCursor: (point: { x: number; y: number }) => Promise<void> | void
-  /** For while the real pointer is the one moving. */
-  hideCursor: () => void
   /** The agent's latest look, for the user to see when the app is covered. */
   showPreview: (image: { data: string }) => void
   listApps: () => Promise<ComputerApp[]>
@@ -122,6 +121,8 @@ interface ChatAccess {
   hosts: Set<string>
   /** A name the agent asked for that isn't an executable's, like Calculator, with the path it meant. */
   friendlyNames: Map<string, string>
+  /** Where the last action happened, in picture pixels, to look closely there for what it changed. */
+  actionArea?: PictureArea
   /** Steps in a row that changed nothing on screen. */
   unchangedSteps: number
   notified: boolean
@@ -161,6 +162,8 @@ const REAL_INPUT_SETTLE_MS = 150
 // Canvas apps show what can be grabbed only once the pointer has rested on it, as draw.io does for
 // the handles that draw an arrow.
 const REAL_DRAG_HOVER_MS = 350
+// Further than this from where a step left the real pointer, and someone else has moved it.
+const POINTER_TOLERANCE = 12
 // Some apps open an editor on the first key, as draw.io and spreadsheets do. The real keys right behind
 // it arrived before the editor did, and only the first letter of a label landed.
 const REAL_FIRST_KEY_PAUSE_MS = 150
@@ -171,8 +174,12 @@ const ACTION_SETTLE_MS = 300
 // The driver's own limit of 250 cut off a list of 21 containers. Searching can reach further, since
 // it returns only what matches.
 const MAX_CONTROLS = 500
-// Of a small copy of the picture. Live readings change less than this; anything a step does shows.
+// Of a small copy of the picture. Live readings change less than this.
 const PICTURE_CHANGE = 0.01
+// But a step can change very little: a small arrow on a large canvas is well under that. So around where
+// it happened, at full size, a few pixels count. Live readings are rarely right there.
+const ACTION_AREA_PADDING = 120
+const ACTION_AREA_CHANGE = 12
 const MAX_ZOOM_WIDTH = 500
 const MAX_CONTROLS_SEARCHED = 5_000
 // Some apps take over a second, so nothing changing yet doesn't mean nothing happened.
@@ -218,26 +225,48 @@ function pictureWidth(base64: string | undefined): number | undefined {
   return undefined
 }
 
+interface PictureArea {
+  x: number
+  y: number
+  toX: number
+  toY: number
+}
+
 /** Whether two pictures differ by more than live readings would. If they can't be read, assume so. */
-async function picturesDiffer(a: string, b: string): Promise<boolean> {
+async function picturesDiffer(a: string, b: string, area?: PictureArea): Promise<boolean> {
   try {
     const { createCanvas, loadImage } = await import('@napi-rs/canvas')
-    const [first, second] = await Promise.all(
-      [a, b].map(async (data) => {
-        const context = createCanvas(320, 180).getContext('2d')
-        context.drawImage(await loadImage(Buffer.from(data, 'base64')), 0, 0, 320, 180)
-        return context.getImageData(0, 0, 320, 180).data
-      })
-    )
-    let different = 0
-    for (let i = 0; i < first.length; i += 4) {
-      const distance =
-        Math.abs(first[i] - second[i]) +
-        Math.abs(first[i + 1] - second[i + 1]) +
-        Math.abs(first[i + 2] - second[i + 2])
-      if (distance > 48) different++
+    const pictures = await Promise.all([a, b].map((data) => loadImage(Buffer.from(data, 'base64'))))
+    const different = (first: Uint8ClampedArray, second: Uint8ClampedArray): number => {
+      let count = 0
+      for (let i = 0; i < first.length; i += 4) {
+        const distance =
+          Math.abs(first[i] - second[i]) +
+          Math.abs(first[i + 1] - second[i + 1]) +
+          Math.abs(first[i + 2] - second[i + 2])
+        if (distance > 48) count++
+      }
+      return count
     }
-    return different / (first.length / 4) > PICTURE_CHANGE
+    const [small, smallToo] = pictures.map((picture) => {
+      const context = createCanvas(320, 180).getContext('2d')
+      context.drawImage(picture, 0, 0, 320, 180)
+      return context.getImageData(0, 0, 320, 180).data
+    })
+    if (different(small, smallToo) / (small.length / 4) > PICTURE_CHANGE) return true
+    const { width, height } = pictures[0]
+    if (!area || pictures[1].width !== width || pictures[1].height !== height) return false
+    const x = Math.max(0, Math.floor(area.x))
+    const y = Math.max(0, Math.floor(area.y))
+    const w = Math.min(width, Math.ceil(area.toX)) - x
+    const h = Math.min(height, Math.ceil(area.toY)) - y
+    if (w <= 0 || h <= 0) return false
+    const [close, closeToo] = pictures.map((picture) => {
+      const context = createCanvas(width, height).getContext('2d')
+      context.drawImage(picture, 0, 0)
+      return context.getImageData(x, y, w, h).data
+    })
+    return different(close, closeToo) >= ACTION_AREA_CHANGE
   } catch {
     return true
   }
@@ -266,6 +295,32 @@ function changedRows(before: string, now: string): string | null {
   ].join('\n')
 }
 
+/**
+ * A popup without its margin. WinUI leaves a clear border around a menu for its shadow, which comes out
+ * black in a capture and would hide what is around the menu. Null if there is nothing else.
+ */
+function shownPart(
+  createCanvas: typeof import('@napi-rs/canvas').createCanvas,
+  image: { width: number; height: number }
+): { x: number; y: number; width: number; height: number } | null {
+  const { width, height } = image
+  const context = createCanvas(width, height).getContext('2d')
+  context.drawImage(image as never, 0, 0)
+  const { data } = context.getImageData(0, 0, width, height)
+  let [left, top, right, bottom] = [width, height, -1, -1]
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const at = (y * width + x) * 4
+      if (data[at + 3] === 0 || data[at] + data[at + 1] + data[at + 2] <= 6) continue
+      left = Math.min(left, x)
+      right = Math.max(right, x)
+      top = Math.min(top, y)
+      bottom = Math.max(bottom, y)
+    }
+  }
+  return right < 0 ? null : { x: left, y: top, width: right - left + 1, height: bottom - top + 1 }
+}
+
 /** A picture of the window with its open menus and dropdowns drawn on it, where they are on screen. */
 async function withPopups(
   data: string,
@@ -279,12 +334,19 @@ async function withPopups(
   const context = canvas.getContext('2d')
   context.drawImage(picture, 0, 0)
   for (const popup of popups) {
+    const image = await loadImage(Buffer.from(popup.data, 'base64'))
+    const part = shownPart(createCanvas, image)
+    if (!part) continue
     context.drawImage(
-      await loadImage(Buffer.from(popup.data, 'base64')),
-      (popup.x - bounds.x) * ratio,
-      (popup.y - bounds.y) * ratio,
-      popup.width * ratio,
-      popup.height * ratio
+      image,
+      part.x,
+      part.y,
+      part.width,
+      part.height,
+      (popup.x + part.x - bounds.x) * ratio,
+      (popup.y + part.y - bounds.y) * ratio,
+      part.width * ratio,
+      part.height * ratio
     )
   }
   return canvas.toBuffer('image/png').toString('base64')
@@ -781,7 +843,12 @@ export class ComputerUseService {
       if (imageHash && before?.imageHash && before.windowId === windowId) {
         changed =
           imageHash !== before.imageHash &&
-          !(sameControls && image && before.image && !(await picturesDiffer(before.image, image)))
+          !(
+            sameControls &&
+            image &&
+            before.image &&
+            !(await picturesDiffer(before.image, image, this.access(chat).actionArea))
+          )
       }
       this.access(chat).snapshots.set(key, {
         snapshot,
@@ -868,7 +935,7 @@ export class ComputerUseService {
     if (seen.changed !== false || step.mayShowNothing) return { ...seen, note: '' }
     const note =
       access.unchangedSteps >= WARN_UNCHANGED_STEPS
-        ? `The window has not changed in ${access.unchangedSteps} steps in a row, so these are not landing. Stop trying, and tell the user what you were trying to do and what happened.`
+        ? `Nothing has visibly changed in ${access.unchangedSteps} steps in a row. Zoom in to check, since a small change can go unnoticed. If they really aren't landing, stop and tell the user what you were trying to do and what happened.`
         : step.realInput
           ? 'The window looks as it did before this step. Check whether it did what you wanted before repeating it, or tell the user what you need done.'
           : 'The window looks as it did before this step, so it may not have landed. Do not assume it worked. Repeat it with real_input true, or tell the user what you need done.'
@@ -941,10 +1008,13 @@ export class ComputerUseService {
     if (realInput) await this.waitToUseRealInput(app, signal)
     // The pointer gets there first, so a click doesn't happen ahead of it.
     const aimedAt = this.aimedAt(chat, app, args, element, bounds, scaleNow)
+    const dragEnd =
+      tool === 'drag' ? pointOnScreen({ x: args.to_x, y: args.to_y }, bounds, scaleNow) : null
+    this.noteActionArea(chat, [aimedAt, dragEnd], bounds, scaleNow)
     if (aimedAt && !realInput) await this.deps.moveCursor(aimedAt)
     const frontBefore = realInput ? 0 : await this.deps.appWindows.front()
     const result = realInput
-      ? await this.sendRealInput(app, driver, tool, targetArgs, aimedAt, signal)
+      ? await this.sendRealInput(app, driver, tool, targetArgs, aimedAt, dragEnd, signal)
       : await driver.call(tool, targetArgs, signal)
     // A background click can still make an app bring itself forward, over what the user is doing.
     if (
@@ -979,16 +1049,36 @@ export class ComputerUseService {
         true
       )
     }
+    // A real drag's pointer already went along with it.
     const point =
-      tool === 'drag'
-        ? pointOnScreen({ x: args.to_x, y: args.to_y }, bounds, scaleNow)
-        : aimedAt
-          ? null
-          : computerActionPoint(result.text)
-    if (point && !realInput) await this.deps.moveCursor(point)
+      realInput && tool === 'drag'
+        ? null
+        : (dragEnd ?? (aimedAt ? null : computerActionPoint(result.text)))
+    if (point) await this.deps.moveCursor(point)
     // Only that it was sent: whether it landed is for the look that follows to say.
     // A pane is just what a web-based app's whole window calls itself, and says nothing about the click.
     return `${SENT[tool] ?? 'Sent'}${pressing && !/^Pane\b/.test(pressing) ? ` to ${pressing}` : ''}.`
+  }
+
+  private noteActionArea(
+    chat: string,
+    points: ReadonlyArray<{ x: number; y: number } | null>,
+    bounds: ComputerWindowBounds | null,
+    scale: number
+  ): void {
+    const inPicture = points.flatMap((point) =>
+      point && bounds ? [{ x: (point.x - bounds.x) / scale, y: (point.y - bounds.y) / scale }] : []
+    )
+    // Typing and keys have no place of their own, and land where the last click did.
+    if (!inPicture.length) return
+    const xs = inPicture.map((point) => point.x)
+    const ys = inPicture.map((point) => point.y)
+    this.access(chat).actionArea = {
+      x: Math.min(...xs) - ACTION_AREA_PADDING,
+      y: Math.min(...ys) - ACTION_AREA_PADDING,
+      toX: Math.max(...xs) + ACTION_AREA_PADDING,
+      toY: Math.max(...ys) + ACTION_AREA_PADDING
+    }
   }
 
   /** A point past the picture isn't in the window, so it would land on whatever is beside it. */
@@ -1091,15 +1181,22 @@ export class ComputerUseService {
     tool: Parameters<ComputerDriver['call']>[0],
     args: Record<string, unknown>,
     aimedAt: { x: number; y: number } | null,
+    dragEnd: { x: number; y: number } | null,
     signal: AbortSignal
   ): Promise<ComputerDriverResult> {
-    if ((await this.deps.appWindows.front()) !== args.window_id) {
+    const windows = this.deps.appWindows
+    const usesPointer = tool !== 'type_text' && tool !== 'press_key' && tool !== 'set_value'
+    const home = usesPointer ? await windows.pointer() : null
+    if ((await windows.front()) !== args.window_id) {
       await this.bringForward(app, driver, args, signal)
     }
-    this.deps.hideCursor()
-    if (aimedAt) await this.deps.appWindows.glide(aimedAt)
+    // The agent's pointer is the one to watch, whichever kind of input this is. The real one goes there
+    // only for as long as the step needs it, and then goes back to where the user left it.
+    if (aimedAt) await this.deps.moveCursor(aimedAt)
     if (aimedAt && tool === 'drag') {
+      await windows.pointerTo(aimedAt)
       await new Promise((resolve) => setTimeout(resolve, REAL_DRAG_HOVER_MS))
+      if (dragEnd) void this.deps.moveCursor(dragEnd)
     }
     const input =
       tool === 'scroll'
@@ -1111,12 +1208,29 @@ export class ComputerUseService {
     try {
       return await driver.call(tool, { ...input, delivery_mode: 'foreground' }, signal)
     } finally {
+      await this.putPointerBack(home, [dragEnd, aimedAt])
       this.lastRealInput = Date.now()
       if (pressesEsc) {
         await new Promise((resolve) => setTimeout(resolve, REAL_INPUT_SETTLE_MS))
         this.setStopKeyArmed(true)
       }
     }
+  }
+
+  /** Unless the user has moved it in the meantime, in which case it is theirs. */
+  private async putPointerBack(
+    home: { x: number; y: number } | null,
+    steps: ReadonlyArray<{ x: number; y: number } | null>
+  ): Promise<void> {
+    if (!home) return
+    const now = await this.deps.appWindows.pointer()
+    if (!now) return
+    const isAt = (point: { x: number; y: number }): boolean =>
+      Math.hypot(now.x - point.x, now.y - point.y) <= POINTER_TOLERANCE
+    if (isAt(home)) return
+    // The driver leaves it at the end of a step, or sometimes puts it back to where the step began.
+    const places = steps.flatMap((point) => (point ? [point] : []))
+    if (!places.length || places.some(isAt)) await this.deps.appWindows.pointerTo(home)
   }
 
   private async bringForward(
@@ -1253,8 +1367,8 @@ export class ComputerUseService {
     if ((await this.deps.appWindows.front()) !== windowId) {
       await this.bringForward(app, driver, { pid, window_id: windowId }, signal)
     }
-    this.deps.hideCursor()
-    await this.deps.appWindows.glide(point)
+    await this.deps.moveCursor(point)
+    await this.deps.appWindows.pointerTo(point)
     this.lastRealInput = Date.now()
     await new Promise((resolve) => setTimeout(resolve, REAL_DRAG_HOVER_MS))
     return 'The pointer is resting there.'
