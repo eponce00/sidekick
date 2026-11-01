@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'crypto'
 import { promises as fs } from 'fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http'
 import { join } from 'path'
+import type { ChromeEvent } from './chromeBrowserRuntime'
 
 // Short enough that a request never outlives what Chrome allows an extension's worker.
 const HOLD_REQUEST_MS = 20_000
@@ -70,6 +71,7 @@ export class ChromeUseBridge {
   /** Workers told to remove themselves, which get no more work and don't count as connected. */
   private readonly retired = new Set<string>()
   private retireWork: Work | null = null
+  private readonly eventListeners = new Set<(event: ChromeEvent) => void>()
   private readonly waiting = new Map<
     string,
     { resolve: (value: unknown) => void; reject: (reason: Error) => void }
@@ -146,6 +148,20 @@ export class ChromeUseBridge {
       this.hold(request, response)
       return
     }
+    if (request.url === '/event') {
+      const chunks: Buffer[] = []
+      let size = 0
+      request.on('data', (chunk: Buffer) => {
+        size += chunk.length
+        if (size > MAX_BODY_BYTES) request.destroy()
+        else chunks.push(chunk)
+      })
+      request.on('end', () => {
+        response.writeHead(204).end()
+        this.deliverEvents(Buffer.concat(chunks).toString('utf8'))
+      })
+      return
+    }
     if (request.url === '/answer') {
       const chunks: Buffer[] = []
       let size = 0
@@ -203,6 +219,25 @@ export class ChromeUseBridge {
     if (ready) return reply(ready)
     this.holding.get(instance)?.(null)
     this.holding.set(instance, reply)
+  }
+
+  private deliverEvents(body: string): void {
+    let events: unknown
+    try {
+      events = JSON.parse(body)
+    } catch {
+      return
+    }
+    if (!Array.isArray(events)) return
+    for (const event of events as ChromeEvent[]) {
+      for (const listener of this.eventListeners) listener(event)
+    }
+  }
+
+  /** What the extension says unasked: what its tabs and pages are doing. */
+  onEvent(listener: (event: ChromeEvent) => void): () => void {
+    this.eventListeners.add(listener)
+    return () => this.eventListeners.delete(listener)
   }
 
   private async reloadIfChanged(): Promise<void> {

@@ -64,6 +64,7 @@ it('rejects actual parent junction rebinding during the download network await',
     })
   }
   const service = {
+    options: {},
     getSession: () => ({}),
     withSessionLock: (_s: unknown, _o: unknown, body: (signal: AbortSignal) => unknown) =>
       body(new AbortController().signal),

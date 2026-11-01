@@ -379,17 +379,19 @@ folder. The Windows package ships the driver in `resources/computer-driver`, fet
 `scripts/fetch-computer-driver.cjs`, with its licence and notices. Only the pinned build starts: both
 executables are checked against fixed SHA-256 hashes when packaging and again before each start.
 
-The `chrome` tool works in the user's own Chrome through an extension in `resources/chrome-extension`,
+The `browser_*` tools also work in the user's own Chrome, through an extension in `resources/chrome-extension`,
 which SideKick copies to a folder in the user's home, since Chrome can't see into a Store-packaged app's
 AppData, so no store or native host is involved. Chrome reads an unpacked extension's files only when told
 to, so when SideKick's copy changes it tells the extension to reload itself. The extension asks
 `chromeUseBridge.ts` for work over the loopback address, proving itself with a secret written in its own
-folder and its fixed origin. `chromeUseService.ts` decides everything in the main process: only tabs the
-chat opened or the user shared, sensitive sites asked about and checked again on every step, no typing in password or
-payment fields, and a trusted dialog before risky presses. The extension reads pages from an isolated
-world, and takes the debugger for real input, pictures and its own tabs, with focus emulation so a covered
-window keeps working. There is no way for the model to run its own script or
-read cookies. `chromeUseSetup.ts` does the one-time load with the computer-use driver, after the user's yes.
+folder and its fixed origin. `chromeBrowserRuntime.ts` gives `NativeBrowserSessionService` Chrome's tabs in
+place of its own, so there is one implementation of the tools, and its Chrome instance is kept apart from the
+Browser panel. `chromeUseService.ts` is that instance's `NativeBrowserPolicy`, deciding in the main process:
+sensitive sites asked about and checked again on every step, no typing in password or payment fields, and a
+trusted dialog before risky presses, scripts, downloads and uploads. The extension passes on only an allowlist
+of debugger commands, on tabs it was told about, with focus emulation so a covered window keeps working: no
+cookies, storage, or other targets. It lets go of the debugger when the reply ends and takes it again for the
+next. `chromeUseSetup.ts` does the one-time load with the computer-use driver, after the user's yes.
 
 `read` gives a PDF the treatment the providers' own PDF input does, the same for every provider:
 each page's text from the bundled PDF.js (`pdfReader.ts`), plus page images on that path for the

@@ -102,7 +102,11 @@ ends or 30 seconds pass. A held key lets go as soon as the app stops being in fr
 ## Your own Chrome
 
 On Windows, the agent can also work in your own Chrome, with your sign-ins and saved details, while you
-keep using your computer. Turn this on in **Settings › Chrome**, which is off by default.
+keep using your computer. Turn this on in **Settings › Chrome**, which is off by default. It uses the same
+browser tools as SideKick's built-in browser, so it can do the same things there, and a chat stays in the
+browser it picked until it picks the other. It needs a model that can see images, as the built-in browser
+does. A PDF opens in Chrome's own viewer, where the agent sees it as a picture and can download it to read
+the text.
 
 - **One yes sets it up.** The first time, SideKick asks, then opens a Chrome window, turns on Developer
   mode and loads its extension from your computer. There's no store and nothing to maintain, and it updates by itself along with SideKick. It takes about 10 seconds, with the same glow and pointer as when the agent works in an app, and Esc stops it. Work profiles aren't offered. If it can't
@@ -118,7 +122,11 @@ keep using your computer. Turn this on in **Settings › Chrome**, which is off 
 - **It can't type passwords or card details.** Chrome can still fill in what it has saved, and you can
   fill in the rest.
 - **It asks you before pressing things like Buy, Send or Delete,** in SideKick's own dialog. Names can't
-  catch everything, and a page can label a button anything.
+  catch everything, and a page can label a button anything. Pressing Enter in a form counts as pressing its
+  button.
+- **It asks you each time before it runs a script, downloads or uploads.** A script is shown to you in full,
+  since one can read anything a page holds.
+- **It doesn't use the sign-ins stored in SideKick.** Chrome fills in your saved passwords itself.
 - **You can see it driving, and press Esc to stop it.** Its tab has a soft glow and SideKick's pointer, and a
   label in the corner of your screen shows what it last saw. Esc works from anywhere, and ends what the chat
   was allowed. While the label shows, for up to a minute after each step, other apps don't receive Esc.

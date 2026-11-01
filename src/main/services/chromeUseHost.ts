@@ -3,6 +3,10 @@ import { existsSync, promises as fs } from 'fs'
 import { basename, join } from 'path'
 import type { ChromeUseStatus } from '../../shared/computerUse'
 import { appState } from '../ipc/state'
+import { AgentBrowserSessionManager } from './agentBrowserToolHandlers'
+import { ChromeBrowserRuntime } from './chromeBrowserRuntime'
+import { browserCertificateApprovals } from './browserCertificateApprovals'
+import { browserNetworkApprovals } from './browserNetworkApprovals'
 import { ChromeUseBridge } from './chromeUseBridge'
 import { ChromeUseService } from './chromeUseService'
 import {
@@ -14,6 +18,7 @@ import {
 } from './chromeUseSetup'
 import { armEscape, computerOverlay } from './computerUseOverlay'
 import { ComputerUseWindows } from './computerUseWindows'
+import { NativeBrowserSessionService } from './nativeBrowserSessionService'
 import { showTrustedDialog, type TrustedDialogOptions } from './trustedDialog'
 import { trustedLook } from './trustedLook'
 
@@ -58,6 +63,7 @@ async function removeIfAsked(): Promise<void> {
 
 let bridge: ChromeUseBridge | null = null
 let service: ChromeUseService | null = null
+let manager: AgentBrowserSessionManager | null = null
 let settingUp: Promise<boolean> | null = null
 const windows = new ComputerUseWindows()
 
@@ -225,8 +231,15 @@ async function bringUpChrome(signal: AbortSignal): Promise<boolean> {
   return setUp(signal)
 }
 
-/** Null where SideKick can't do this: the driver that does the setup ships only with Windows builds. */
-export function chromeUseService(): ChromeUseService | null {
+/**
+ * The browser tools' own session service, with Chrome's tabs where it would have made its own, and the rules
+ * for the user's real browser. Null where SideKick can't do this: the driver that does the setup ships only
+ * with Windows builds.
+ */
+export function chromeBrowser(): {
+  service: ChromeUseService
+  manager: AgentBrowserSessionManager
+} | null {
   if (!existsSync(bundledDriver())) return null
   service ??= new ChromeUseService({
     bridge: bridgeOf(),
@@ -285,9 +298,61 @@ export function chromeUseService(): ChromeUseService | null {
         ],
         'Let it press this',
         signal
+      ),
+    confirmScript: (expression, origin, signal) =>
+      confirm(
+        'Let the agent run this script in Chrome?',
+        'A script can read anything this page holds and act as you there.',
+        [
+          { label: 'Site', value: origin, code: true },
+          { label: 'Script', value: expression, code: true }
+        ],
+        'Run it',
+        signal
+      ),
+    confirmDownload: (url, signal) =>
+      confirm(
+        'Let the agent download this?',
+        'It would be fetched with your sign-ins and saved for the agent to use.',
+        [{ label: 'Address', value: url, code: true }],
+        'Download',
+        signal
+      ),
+    confirmUpload: (files, origin, signal) =>
+      confirm(
+        'Let the agent upload this?',
+        'The site would receive the file, in your account.',
+        [
+          { label: 'Site', value: origin, code: true },
+          { label: files.length === 1 ? 'File' : 'Files', value: files.join('\n'), code: true }
+        ],
+        'Upload',
+        signal
       )
   })
-  return service
+  const rules = service
+  // Cancel on Chrome's own banner means the same as Esc.
+  if (!manager) {
+    bridgeOf().onEvent((event) => {
+      if (event.kind === 'detached' && event.reason === 'canceled_by_user') rules.stop()
+    })
+  }
+  manager ??= new AgentBrowserSessionManager(
+    new NativeBrowserSessionService({
+      artifactRoot: join(app.getPath('userData'), 'chrome-browser-artifacts'),
+      pdfOutputRoot: join(app.getPath('userData'), 'chrome-browser-pdfs'),
+      networkPolicy: browserNetworkApprovals,
+      certificatePolicy: browserCertificateApprovals,
+      runtime: new ChromeBrowserRuntime(bridgeOf(), {
+        showPointer: (tabId, x, y) => rules.showPointer(tabId, x, y)
+      }),
+      policy: rules,
+      // Every tab it's given has been through the user: they shared it or the agent opened it.
+      canAttachWebContents: () => true,
+      maxTotalSessions: 6
+    })
+  )
+  return { service, manager }
 }
 
 export async function chromeUseStatus(): Promise<ChromeUseStatus> {

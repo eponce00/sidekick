@@ -3,6 +3,8 @@ import { request } from 'http'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { describe, expect, it, vi } from 'vitest'
+import { getAgentToolDefinitions } from '../../shared/agentToolCatalog'
+import { ChromeBrowserRuntime } from './chromeBrowserRuntime'
 import { ChromeUseBridge, chromeExtensionId } from './chromeUseBridge'
 import { ChromeUseService } from './chromeUseService'
 import { parseChromeProfiles } from './chromeUseSetup'
@@ -12,34 +14,14 @@ const BUNDLED = resolve('resources/chrome-extension')
 
 function harness(url = 'https://shop.example/page', answer = true, everySite = true) {
   const page = { url }
-  const located = { x: 1, y: 2, name: 'Details', submit: '', secret: false }
-  const send = vi.fn(async (op: string, _args: Record<string, unknown>) => {
-    if (op === 'tabInfo' || op === 'open' || op === 'activeTab') {
-      return { id: 7, title: 'Shop', url: page.url, active: true, windowId: 3 }
-    }
-    if (op === 'locate') return located
-    if (op === 'focused') return { name: '', submit: located.submit, secret: located.secret }
-    if (op === 'read') {
-      return {
-        title: 'Shop',
-        url: page.url,
-        rows: [],
-        total: 0,
-        matching: 0,
-        text: 'hi',
-        textFrom: 0,
-        textTotal: 2,
-        excerpts: [],
-        matches: 0,
-        images: [],
-        imagesTotal: 0
-      }
-    }
-    return null
-  })
+  const surface = { webContentsId: 7, getURL: () => page.url } as never
+  const send = vi.fn(async (op: string, _args: Record<string, unknown>) =>
+    op === 'activeTab' ? { id: 7, title: 'Shop', url: page.url } : null
+  )
   const confirmSite = vi.fn(async () => answer)
   const confirmSharedTab = vi.fn(async () => answer)
   const confirmPress = vi.fn(async () => answer)
+  const confirmScript = vi.fn(async () => answer)
   const disarm = vi.fn()
   const overlay = {
     show: vi.fn(),
@@ -61,18 +43,24 @@ function harness(url = 'https://shop.example/page', answer = true, everySite = t
     askEverySite: () => everySite,
     confirmSite,
     confirmSharedTab,
-    confirmPress
+    confirmPress,
+    confirmScript,
+    confirmDownload: async () => answer,
+    confirmUpload: async () => answer
   })
+  const inChat = <T>(work: () => Promise<T>): Promise<T> => service.runInChat('chat', work)
   return {
     service,
+    inChat,
+    surface,
     send,
     page,
-    located,
     overlay,
     disarm,
     confirmSite,
     confirmSharedTab,
-    confirmPress
+    confirmPress,
+    confirmScript
   }
 }
 
@@ -82,14 +70,13 @@ const sent = (send: ReturnType<typeof harness>['send'], op: string): boolean =>
 describe('what the agent may reach in Chrome', () => {
   it('asks about a site once a chat, and takes no for an answer', async () => {
     const allowed = harness()
-    await allowed.service.open('chat', 'https://shop.example/a', signal)
-    await allowed.service.open('chat', 'https://shop.example/b', signal)
+    await allowed.inChat(() => allowed.service.beforeNavigate('https://shop.example/a', signal))
+    await allowed.inChat(() => allowed.service.beforeNavigate('https://shop.example/b', signal))
     expect(allowed.confirmSite).toHaveBeenCalledTimes(1)
     const refused = harness('https://shop.example/', false)
-    await expect(refused.service.open('chat', 'https://shop.example/', signal)).rejects.toThrow(
-      'did not allow'
-    )
-    expect(sent(refused.send, 'open')).toBe(false)
+    await expect(
+      refused.inChat(() => refused.service.beforeNavigate('https://shop.example/', signal))
+    ).rejects.toThrow('did not allow')
   })
 
   it.each([
@@ -98,140 +85,147 @@ describe('what the agent may reach in Chrome', () => {
     'file:///C:/x',
     'javascript:alert(1)'
   ])('never opens %s', async (url) => {
-    const { service, send } = harness()
-    await expect(service.open('chat', url, signal)).rejects.toThrow('Only web pages')
-    expect(sent(send, 'open')).toBe(false)
+    const { service, inChat } = harness()
+    await expect(inChat(() => service.beforeNavigate(url, signal))).rejects.toThrow(
+      'Only web pages'
+    )
   })
 
   it('asks about no ordinary site unless the user chose that, but always about sensitive ones', async () => {
-    const { service, page, send, confirmSite } = harness('https://shop.example/', false, false)
-    await service.open('chat', 'https://shop.example/', signal)
-    expect(confirmSite).not.toHaveBeenCalled()
-    expect(sent(send, 'open')).toBe(true)
-    await expect(service.navigate('chat', 'https://mail.google.com/', signal)).rejects.toThrow(
-      'did not allow'
+    const { service, inChat, surface, page, confirmSite } = harness(
+      'https://shop.example/',
+      false,
+      false
     )
+    await inChat(() => service.beforeNavigate('https://shop.example/', signal))
+    expect(confirmSite).not.toHaveBeenCalled()
+    await expect(
+      inChat(() => service.beforeNavigate('https://mail.google.com/', signal))
+    ).rejects.toThrow('did not allow')
     expect(confirmSite).toHaveBeenCalledWith('https://mail.google.com', true, signal)
-    expect(sent(send, 'navigate')).toBe(false)
-    // A click or a page can get there by itself, and what it shows isn't read until the user says.
+    // A click or a page can get there by itself, and no step happens on it until the user says.
     page.url = 'https://www.mybank.example/account'
-    await expect(service.read('chat', signal)).rejects.toThrow('did not allow')
-    expect(sent(send, 'read')).toBe(false)
+    await expect(inChat(() => service.beforeStep(surface, signal))).rejects.toThrow('did not allow')
   })
 
   it('never opens a web vault of saved passwords, even if the user would allow it', async () => {
-    const { service, send, confirmSite } = harness()
-    await expect(service.open('chat', 'https://passwords.google.com/', signal)).rejects.toThrow(
-      'saved passwords'
-    )
+    const { service, inChat, confirmSite } = harness()
+    await expect(
+      inChat(() => service.beforeNavigate('https://passwords.google.com/', signal))
+    ).rejects.toThrow('saved passwords')
     expect(confirmSite).not.toHaveBeenCalled()
-    expect(sent(send, 'open')).toBe(false)
   })
 
-  it("won't touch a tab that isn't the chat's", async () => {
-    const { service, send } = harness()
-    await service.open('mine', 'https://shop.example/', signal)
-    await expect(service.read('other', signal, 7)).rejects.toThrow("isn't one of this chat's")
-    await expect(service.read('mine', signal, 99)).rejects.toThrow("isn't one of this chat's")
-    expect(sent(send, 'read')).toBe(false)
+  it('takes no step for anything but a chat, whose answers it can tell apart', async () => {
+    const { service, surface } = harness()
+    await expect(service.beforeStep(surface, signal)).rejects.toThrow('did not come from a chat')
+    await expect(service.beforeNavigate('https://shop.example/', signal)).rejects.toThrow(
+      'did not come from a chat'
+    )
+  })
+
+  it('stays somewhere the agent can leave when an address fails, without asking about it', async () => {
+    const { service, inChat, surface, page, confirmSite } = harness()
+    page.url = 'chrome-error://chromewebdata/'
+    await inChat(() => service.beforeStep(surface, signal))
+    expect(confirmSite).not.toHaveBeenCalled()
   })
 
   it('shows the model nothing of the tab the user is on until they share it', async () => {
-    const { service, send, confirmSharedTab } = harness('https://bank.example/', false)
-    await expect(service.useMyTab('chat', signal)).rejects.toThrow('did not share')
+    const { service, inChat, confirmSharedTab } = harness('https://bank.example/', false)
+    await expect(inChat(() => service.shareMyTab(signal))).rejects.toThrow('did not share')
     expect(confirmSharedTab).toHaveBeenCalledWith(
       expect.objectContaining({ url: 'https://bank.example/' }),
       signal
     )
-    expect(sent(send, 'read')).toBe(false)
-    await expect(service.read('chat', signal)).rejects.toThrow('Open a page first')
   })
 
-  it('asks again when a tab has gone to a site that was not allowed', async () => {
-    const { service, page, confirmSite, send } = harness()
-    await service.open('chat', 'https://shop.example/', signal)
-    page.url = 'https://elsewhere.example/'
-    confirmSite.mockResolvedValue(false)
-    await expect(service.read('chat', signal)).rejects.toThrow('did not allow')
-    expect(sent(send, 'read')).toBe(false)
-  })
-
-  it('refuses a password or payment field, by typing or by keys', async () => {
-    const { service, send, located } = harness()
-    await service.open('chat', 'https://shop.example/', signal)
-    located.secret = true
-    await expect(service.type('chat', 1, 'hunter2', signal)).rejects.toThrow('password or payment')
-    await expect(service.key('chat', 'h', [], signal)).rejects.toThrow('password or payment')
-    expect(sent(send, 'typeText')).toBe(false)
-    expect(sent(send, 'pressKey')).toBe(false)
+  it('refuses a password or payment field', () => {
+    const { service } = harness()
+    expect(() => service.beforeTyping({ secret: true })).toThrow('password or payment')
+    expect(() => service.beforeTyping({ secret: false })).not.toThrow()
   })
 
   it('asks the user, not the model, before a press that may not be reversible', async () => {
-    const { service, send, located, confirmPress } = harness()
-    await service.open('chat', 'https://shop.example/', signal)
-    located.name = 'Buy now'
-    confirmPress.mockResolvedValue(false)
-    await expect(service.click('chat', 1, signal)).rejects.toThrow('did not allow')
-    expect(sent(send, 'click')).toBe(false)
-    confirmPress.mockResolvedValue(true)
-    await service.click('chat', 1, signal)
-    expect(sent(send, 'click')).toBe(true)
+    const { service, confirmPress } = harness('https://shop.example/', false)
+    await expect(service.beforePress('Buy now', 'https://shop.example/', signal)).rejects.toThrow(
+      'did not allow'
+    )
+    await service.beforePress('Details', 'https://shop.example/', signal)
+    expect(confirmPress).toHaveBeenCalledTimes(1)
   })
 
-  it('treats Enter as pressing the button of the form it is in', async () => {
-    const { service, send, located, confirmPress } = harness()
-    await service.open('chat', 'https://shop.example/', signal)
-    located.submit = 'Place order'
-    confirmPress.mockResolvedValue(false)
-    await expect(service.key('chat', 'return', [], signal)).rejects.toThrow('did not allow')
-    expect(sent(send, 'pressKey')).toBe(false)
+  it('shows the user every script, since one can read all a signed-in page holds', async () => {
+    const { service, confirmScript } = harness()
+    await service.beforeEvaluate('document.cookie', 'https://shop.example/', signal)
+    await service.beforeEvaluate('document.cookie', 'https://shop.example/', signal)
+    expect(confirmScript).toHaveBeenCalledTimes(2)
+    confirmScript.mockResolvedValue(false)
+    await expect(
+      service.beforeEvaluate('document.cookie', 'https://shop.example/', signal)
+    ).rejects.toThrow('did not allow')
   })
 })
 
 describe('when it is driving', () => {
   it('stops for good on Esc: the reply gets nowhere, and its approvals are gone', async () => {
-    const { service, send, overlay, disarm, confirmSite } = harness()
-    await service.open('chat', 'https://shop.example/', signal)
-    await service.read('chat', signal)
+    const { service, inChat, surface, send, overlay, disarm, confirmSite } = harness()
+    await inChat(() => service.beforeStep(surface, signal))
     expect(overlay.armStop).toHaveBeenCalledTimes(1)
     overlay.armStop.mock.calls[0][0]()
     expect(disarm).toHaveBeenCalled()
     expect(overlay.hide).toHaveBeenCalled()
     expect(sent(send, 'detachAll')).toBe(true)
-    const reads = send.mock.calls.filter(([name]) => name === 'read').length
-    await expect(service.read('chat', signal)).rejects.toThrow('pressed Esc')
-    await expect(service.open('chat', 'https://shop.example/', signal)).rejects.toThrow(
-      'pressed Esc'
-    )
-    await expect(service.click('chat', 0, signal)).rejects.toThrow('pressed Esc')
-    expect(send.mock.calls.filter(([name]) => name === 'read').length).toBe(reads)
+    await expect(inChat(() => service.beforeStep(surface, signal))).rejects.toThrow('pressed Esc')
+    await expect(
+      inChat(() => service.beforeNavigate('https://shop.example/', signal))
+    ).rejects.toThrow('pressed Esc')
+    await expect(inChat(() => service.ready(signal))).rejects.toThrow('pressed Esc')
     service.runEnded('chat')
-    await service.open('chat', 'https://shop.example/', signal)
+    await inChat(() => service.beforeStep(surface, signal))
     expect(confirmSite).toHaveBeenCalledTimes(2)
   })
 
   it('takes the marks off when the reply ends, keeping what the user allowed', async () => {
-    const { service, send, overlay, disarm, confirmSite } = harness()
-    await service.open('chat', 'https://shop.example/', signal)
-    await service.read('chat', signal)
+    const { service, inChat, surface, send, overlay, disarm, confirmSite } = harness()
+    await inChat(() => service.beforeStep(surface, signal))
     service.runEnded('chat')
     expect(disarm).toHaveBeenCalled()
     expect(overlay.hide).toHaveBeenCalled()
     expect(sent(send, 'overlaysOff')).toBe(true)
-    await service.read('chat', signal)
+    await inChat(() => service.beforeStep(surface, signal))
     expect(confirmSite).toHaveBeenCalledTimes(1)
   })
+})
 
-  it('leaves its glow and pointer out of the picture the model sees', async () => {
-    const { service, send } = harness()
-    send.mockImplementation(async (op: string) =>
-      op === 'tabInfo' || op === 'open'
-        ? { id: 7, title: 'Shop', url: 'https://shop.example/', active: true, windowId: 3 }
-        : ({ data: 'cGlj' } as never)
+describe('the browser tools in Chrome', () => {
+  it('offers Chrome only where the user turned it on, with no second set of tools', () => {
+    const names = (chromeEnabled: boolean) =>
+      getAgentToolDefinitions({
+        surface: 'conversation',
+        browserEnabled: true,
+        chromeEnabled
+      } as never).map((tool) => tool.function.name)
+    expect(names(false)).not.toContain('browser_use_my_tab')
+    expect(names(true)).toContain('browser_use_my_tab')
+    expect(names(true)).not.toContain('chrome')
+  })
+
+  it('takes the picture of what is on screen, wherever the page is scrolled to', async () => {
+    const send = vi.fn(async (op: string, args: Record<string, unknown>) => {
+      if (op === 'open') return { id: 7, title: '', url: 'about:blank', windowId: 1 }
+      return args.method === 'Page.getLayoutMetrics'
+        ? { cssVisualViewport: { clientWidth: 800, clientHeight: 600, pageX: 0, pageY: 2655 } }
+        : { data: 'cGlj' }
+    })
+    const runtime = new ChromeBrowserRuntime(
+      { send: send as never, onEvent: () => () => undefined },
+      { showPointer: () => undefined }
     )
-    await service.open('chat', 'https://shop.example/', signal)
-    await service.screenshot('chat', signal)
-    expect(send).toHaveBeenCalledWith('screenshot', { tabId: 7, clean: true }, signal)
+    const surface = await runtime.createSurface()
+    await surface.captureViewport()
+    const shot = send.mock.calls.find(([, args]) => args.method === 'Page.captureScreenshot')
+    expect(shot?.[1].params).toMatchObject({ clip: { x: 0, y: 2655, width: 800, height: 600 } })
   })
 })
 
@@ -407,10 +401,11 @@ describe('the line to the extension', () => {
 describe('the extension itself', () => {
   const source = readFileSync(join(BUNDLED, 'background.js'), 'utf8')
 
-  it('offers no way to run a script of the model’s or read cookies', () => {
-    const operations = /const OPERATIONS = \{[\s\S]*?\n\}/.exec(source)?.[0] ?? ''
-    expect(operations).not.toMatch(/evaluate|eval|cookie|debugger/i)
-    expect(source).not.toMatch(/Runtime\.evaluate|Network\.getCookies|Storage\.getCookies/)
+  it('passes on only what the browser tools use: no cookies, storage, or other tabs', () => {
+    const allowed = /const ALLOWED_COMMANDS = new Set\(\[([\s\S]*?)\]\)/.exec(source)?.[1] ?? ''
+    expect(allowed).toContain('Input.dispatchMouseEvent')
+    expect(allowed).not.toMatch(/cookie|'Storage\.|'Target\.|'Browser\.|'SystemInfo\.|'Debugger\./i)
+    expect(source).toContain('if (!ALLOWED_COMMANDS.has(method))')
     const manifest = JSON.parse(readFileSync(join(BUNDLED, 'manifest.json'), 'utf8')) as {
       permissions: string[]
     }

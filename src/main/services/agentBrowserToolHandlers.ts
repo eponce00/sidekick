@@ -16,6 +16,7 @@ import {
   type ToolExecutionResult,
   type ToolResultMediaAttachment
 } from '../../shared/agentRuntime'
+import type { ChromeUseService } from './chromeUseService'
 import type { RequestedAccess } from '../../shared/permissions'
 import type { AgentToolExecutionContext } from './agentToolRegistry'
 import type { AgentToolHandler, AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
@@ -50,6 +51,7 @@ import {
 
 export const AGENT_BROWSER_TOOL_NAMES = [
   'browser_open',
+  'browser_use_my_tab',
   'browser_observe',
   'browser_screenshot',
   'browser_click',
@@ -877,6 +879,56 @@ function errorResult(
  * global limit; their durable screenshots are intentionally retained for chat history.
  */
 export class AgentBrowserSessionManager {
+  /**
+   * Takes on a tab that's already open, for the conversation, in the session it has or a new one. The
+   * caller has already had the user's say-so for this exact tab.
+   */
+  async adoptTab(
+    scope: string,
+    runId: string,
+    tabId: number,
+    allowedFileRoots: string[],
+    signal: AbortSignal
+  ): Promise<{ observation: BrowserObservation; lease: BrowserSessionLease }> {
+    return this.locked(async () => {
+      const current = this.scopes.get(scope)
+      if (current) {
+        if (current.active > 0) {
+          throw new Error('Browser action in progress. Try again when it finishes.')
+        }
+        current.active++
+        current.lastUsed = this.now()
+        try {
+          const observation = await this.service.adoptTab(current.sessionId, tabId, { signal })
+          return { observation, lease: this.leaseForLockedEntry(current) }
+        } catch (error) {
+          current.active = Math.max(0, current.active - 1)
+          throw error
+        }
+      }
+      const observation = await this.service.open(
+        {
+          runId,
+          url: 'about:blank',
+          attachWebContentsId: tabId,
+          ...(allowedFileRoots.length ? { allowedFileRoots } : {})
+        },
+        { signal }
+      )
+      const entry: BrowserScopeEntry = {
+        sessionId: observation.sessionId,
+        lastUsed: this.now(),
+        active: 1,
+        waitingForUser: false,
+        consoleCursor: 0,
+        networkCursor: 0,
+        workspaceRootKey: workspaceRootKey(allowedFileRoots[0])
+      }
+      this.scopes.set(scope, entry)
+      return { observation, lease: this.leaseForLockedEntry(entry) }
+    })
+  }
+
   // Tracks observations invalidated by manual input, not an ownership lock.
   private readonly userControlled = new Set<string>()
 
@@ -1781,12 +1833,75 @@ export async function webMcpApprovalPreview(
 
 export function registerBrowserToolHandlers(
   registry: AgentToolHandlerRegistry,
-  manager: AgentBrowserSessionManager,
+  builtIn: AgentBrowserSessionManager,
   outputs: ToolOutputStore,
-  options: { credentials?: () => CredentialUses | undefined } = {}
+  options: {
+    credentials?: () => CredentialUses | undefined
+    /** The user's own Chrome, for a chat that has been pointed at it. */
+    chrome?: { manager: AgentBrowserSessionManager; service: ChromeUseService }
+  } = {}
 ): void {
-  const handler: AgentToolHandler = async ({ name, title, arguments: args, context }) => {
+  const { chrome } = options
+  const managerFor = (scope: string): AgentBrowserSessionManager =>
+    chrome?.service.inChrome.has(scope) ? chrome.manager : builtIn
+  const handler: AgentToolHandler = async (input) => {
+    const { name, title, arguments: args, context } = input
     const scope = browserScope(context)
+    if (name === 'browser_open' && chrome) {
+      if (args.browser === 'chrome') chrome.service.inChrome.add(scope)
+      else if (args.browser === 'built_in') chrome.service.inChrome.delete(scope)
+    }
+    if (name === 'browser_use_my_tab') {
+      if (!chrome) return errorResult(title, new Error('Chrome is not turned on.'), context)
+      chrome.service.inChrome.add(scope)
+    }
+    if (!chrome?.service.inChrome.has(scope)) return run(builtIn, input)
+    return chrome.service.runInChat(scope, async () => {
+      try {
+        await chrome.service.ready(context.signal)
+      } catch (error) {
+        return errorResult(title, error, context)
+      }
+      const result = await run(chrome.manager, input)
+      void chrome.service.refreshPreview(scope)
+      if (name === 'browser_close') chrome.service.inChrome.delete(scope)
+      return result
+    })
+  }
+  const run = async (
+    manager: AgentBrowserSessionManager,
+    { name, title, arguments: args, context }: Parameters<AgentToolHandler>[0]
+  ): ReturnType<AgentToolHandler> => {
+    const scope = browserScope(context)
+    if (name === 'browser_use_my_tab') {
+      let lease: BrowserSessionLease | undefined
+      try {
+        const tabId = await chrome!.service.shareMyTab(context.signal)
+        const adopted = await manager.adoptTab(
+          scope,
+          context.runId,
+          tabId,
+          context.workspaceRoot ? workspaceFolderRoots(context.workspaceRoot) : [],
+          context.signal
+        )
+        lease = adopted.lease
+        const data = publicObservation(adopted.observation)
+        return boundedVisualSuccess(
+          outputs,
+          manager,
+          title,
+          data,
+          data,
+          adopted.observation.screenshot,
+          context.signal,
+          'Chrome tab the user shared, for visual inspection'
+        )
+      } catch (error) {
+        return errorResult(title, error, context)
+      } finally {
+        await lease?.release()
+      }
+    }
     try {
       await manager.prepareAgentAction(scope, context.signal)
     } catch (error) {
@@ -2390,7 +2505,12 @@ export function registerBrowserToolHandlers(
   registry.register(AGENT_WEBMCP_TOOL_NAMES, handler, {
     preview: (args, context) =>
       context
-        ? webMcpApprovalPreview(manager, browserScope(context), args, context)
+        ? webMcpApprovalPreview(
+            managerFor(browserScope(context)),
+            browserScope(context),
+            args,
+            context
+          )
         : Promise.resolve(undefined)
   })
 }
