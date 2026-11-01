@@ -19,7 +19,22 @@ function harness(url = 'https://shop.example/page', answer = true, everySite = t
     }
     if (op === 'locate') return located
     if (op === 'focused') return { name: '', submit: located.submit, secret: located.secret }
-    if (op === 'read') return { title: 'Shop', url: page.url, rows: [], total: 0, text: 'hi' }
+    if (op === 'read') {
+      return {
+        title: 'Shop',
+        url: page.url,
+        rows: [],
+        total: 0,
+        matching: 0,
+        text: 'hi',
+        textFrom: 0,
+        textTotal: 2,
+        excerpts: [],
+        matches: 0,
+        images: [],
+        imagesTotal: 0
+      }
+    }
     return null
   })
   const confirmSite = vi.fn(async () => answer)
