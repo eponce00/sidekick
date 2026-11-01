@@ -166,6 +166,184 @@ export function computerRowPoints(structured: unknown): Map<number, { x: number;
   return points
 }
 
+/** What it takes to find a row's control again, without the driver. */
+export interface ComputerRowControl {
+  label: string
+  frame: ComputerWindowBounds
+  actions: string[]
+}
+
+/** The rows that can be found again and pressed, from a look's structured detail. */
+export function computerRowControls(structured: unknown): Map<number, ComputerRowControl> {
+  const elements = (structured as { elements?: unknown } | null | undefined)?.elements
+  const controls = new Map<number, ComputerRowControl>()
+  if (!Array.isArray(elements)) return controls
+  for (const element of elements as Array<{
+    element_index?: unknown
+    label?: unknown
+    actions?: unknown
+    frame?: { x?: unknown; y?: unknown; w?: unknown; h?: unknown }
+  }>) {
+    const { x, y, w, h } = element?.frame ?? {}
+    if (
+      typeof element?.element_index === 'number' &&
+      typeof element.label === 'string' &&
+      element.label &&
+      Array.isArray(element.actions) &&
+      typeof x === 'number' &&
+      typeof y === 'number' &&
+      typeof w === 'number' &&
+      typeof h === 'number'
+    ) {
+      controls.set(element.element_index, {
+        label: element.label,
+        frame: { x, y, width: w, height: h },
+        actions: element.actions.map(String)
+      })
+    }
+  }
+  return controls
+}
+
+/** A control that can open and close, in physical pixels. */
+export interface ComputerExpandState {
+  x: number
+  y: number
+  width: number
+  height: number
+  expanded: boolean
+  label: string
+}
+
+/** Whether any row of a look can open and close, which is worth asking Windows about. */
+export function computerHasExpandingRows(structured: unknown): boolean {
+  const elements = (structured as { elements?: unknown } | null | undefined)?.elements
+  return (
+    Array.isArray(elements) &&
+    (elements as Array<{ actions?: unknown }>).some(
+      (element) => Array.isArray(element?.actions) && element.actions.includes('expand')
+    )
+  )
+}
+
+/**
+ * A look's list with what each row is set to. The driver keeps whether a box is checked in its detail
+ * and leaves it out of the list, so a list read the same either way, and a model with no picture
+ * couldn't tell. Being in the list also makes a change of state count as the row changing.
+ */
+export function computerMarkRowStates(
+  text: string,
+  structured: unknown,
+  expanding: readonly ComputerExpandState[]
+): string {
+  const elements = (structured as { elements?: unknown } | null | undefined)?.elements
+  if (!Array.isArray(elements)) return text
+  const states = new Map<number, string>()
+  for (const element of elements as Array<{
+    element_index?: unknown
+    label?: unknown
+    selected?: unknown
+    actions?: unknown
+    frame?: { x?: unknown; y?: unknown; w?: unknown; h?: unknown }
+  }>) {
+    if (typeof element?.element_index !== 'number' || !Array.isArray(element.actions)) continue
+    const words: string[] = []
+    if (element.actions.includes('toggle') && typeof element.selected === 'boolean') {
+      words.push(element.selected ? 'checked' : 'not checked')
+    } else if (element.selected === true) {
+      words.push('selected')
+    }
+    const frame = element.frame
+    if (element.actions.includes('expand') && frame) {
+      // By name where there is one: an older app's controls can report a different place to each asker.
+      const named = element.label
+        ? expanding.filter((control) => control.label === element.label)
+        : []
+      const found =
+        named.length === 1
+          ? named[0]
+          : (named.length ? named : expanding).find(
+              (control) =>
+                Math.abs(control.x - Number(frame.x)) <= 3 &&
+                Math.abs(control.y - Number(frame.y)) <= 3 &&
+                Math.abs(control.width - Number(frame.w)) <= 3 &&
+                Math.abs(control.height - Number(frame.h)) <= 3
+            )
+      if (found) words.push(found.expanded ? 'expanded' : 'collapsed')
+    }
+    if (words.length) states.set(element.element_index, words.join(', '))
+  }
+  if (!states.size) return text
+  return text
+    .split('\n')
+    .map((line) => {
+      const state = states.get(Number(/^\W*\[(\d+)\] /.exec(line)?.[1]))
+      return state ? `${line} (${state})` : line
+    })
+    .join('\n')
+}
+
+// Below this many lines the whole list is short enough to read. What takes it over is a dense app's
+// long lists and toolbars, where the first look alone is thousands of tokens.
+const SHORT_LIST_ABOVE = 120
+const SHORT_LIST_LINES = 70
+
+/**
+ * A long list with its deepest parts left out, from the top down, so the shape of the app stays and what
+ * is left out can be read by asking. Each one left out joins `parts`, and says which it is. Rows keep
+ * their numbers, listed or not. Null if the list is short enough as it is.
+ */
+export function computerShortList(tree: string, parts: string[]): string | null {
+  const lines = tree.split('\n')
+  interface Row {
+    at: number
+    indent: number
+    children: Row[]
+    /** The first line past it and everything under it. */
+    end: number
+  }
+  const rows: Row[] = []
+  const roots: Row[] = []
+  const open: Row[] = []
+  lines.forEach((line, at) => {
+    if (!/^\s*- /.test(line)) return
+    const row: Row = { at, indent: line.search(/\S/), children: [], end: lines.length }
+    while (open.length && open[open.length - 1].indent >= row.indent) {
+      open.pop()!.end = at
+    }
+    ;(open[open.length - 1]?.children ?? roots).push(row)
+    open.push(row)
+    rows.push(row)
+  })
+  if (rows.length <= SHORT_LIST_ABOVE) return null
+  const shown = new Set<Row>(roots)
+  const queue = [...roots]
+  const leftOut = new Set<Row>()
+  for (const row of queue) {
+    if (!row.children.length) continue
+    if (shown.size + row.children.length > SHORT_LIST_LINES) {
+      leftOut.add(row)
+      continue
+    }
+    for (const child of row.children) shown.add(child)
+    queue.push(...row.children)
+  }
+  const kept: string[] = lines.slice(0, roots[0]?.at ?? 0)
+  rows.forEach((row, index) => {
+    if (!shown.has(row)) return
+    if (leftOut.has(row)) {
+      const inside = lines.slice(row.at + 1, row.end)
+      parts.push(inside.join('\n'))
+      const more = inside.filter((line) => /^\s*- /.test(line)).length
+      kept.push(`${lines[row.at]} (${more} more inside: part ${parts.length})`)
+    } else {
+      // Whatever belongs to a row and isn't a row of its own, up to the next one.
+      kept.push(...lines.slice(row.at, rows[index + 1]?.at ?? lines.length))
+    }
+  })
+  return kept.join('\n')
+}
+
 /** Where an action landed, from what the driver reports. Typing has no such place. */
 export function computerActionPoint(text: string): { x: number; y: number } | null {
   const points = [...text.matchAll(/(?:screen |\bat )\((\d+),\s*(\d+)\)|→ \((\d+),\s*(\d+)\)/g)]
