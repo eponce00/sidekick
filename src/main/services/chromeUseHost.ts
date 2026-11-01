@@ -137,12 +137,12 @@ async function runSetup(signal: AbortSignal): Promise<boolean> {
   const result = await ask(
     {
       type: 'warning',
-      title: 'Let the agent use Chrome?',
-      message: 'Let the agent work in your own Chrome?',
+      title: 'Set up Chrome for the agent?',
+      message: 'Set up Chrome for the agent?',
       iconDataUrl: await chromeIcon(),
       detail: [
-        'It can then work in the profile you pick, with its sign-ins and saved details. It asks you before using sites for email, money or your account, before pressing things like Buy, Send or Delete, and before using a tab of yours. It can’t see your other tabs, and what it reads goes to the model you selected.',
-        'SideKick will open a Chrome window, turn on Developer mode and load its extension from your computer. This takes about 10 seconds with your real mouse and keyboard, so please don’t touch them until the window closes. Chrome shows a banner while the agent works, and you can disconnect it at any time in Settings.',
+        'The agent will work in the profile you pick, with its sign-ins. It asks before anything sensitive.',
+        'Setup takes about 10 seconds. You’ll see it working, and Esc stops it.',
         offered.length
           ? null
           : 'Work profiles can’t be used, because their data and rules belong to your organization.'
@@ -152,9 +152,7 @@ async function runSetup(signal: AbortSignal): Promise<boolean> {
       choices: profiles.map((profile) => ({
         ...(profile.managed ? {} : { index: offered.indexOf(profile) + 1 }),
         label: profile.name,
-        detail: profile.managed
-          ? `Work profile, ${profile.domain}: not available`
-          : 'Personal profile',
+        detail: profile.managed ? 'Work profile: not available' : 'Personal profile',
         pictureDataUrl: profilePicture(profile),
         color: profile.color
       })),
@@ -170,6 +168,8 @@ async function runSetup(signal: AbortSignal): Promise<boolean> {
   const line = bridgeOf()
   await line.start()
   const before = line.latestWorker()
+  const stopped = new AbortController()
+  const disarm = armEscape(() => stopped.abort())
   const failed = await setUpChromeExtension({
     chrome,
     profile: choice.directory,
@@ -177,9 +177,14 @@ async function runSetup(signal: AbortSignal): Promise<boolean> {
     driverPath: bundledDriver(),
     dataFolder: join(app.getPath('userData'), 'chrome-extension-setup'),
     windows,
+    overlay: computerOverlay,
     waitForConnection: (ms, wait) => line.waitForNewWorker(before, ms, wait),
-    signal
-  }).catch((error: unknown) => (error instanceof Error ? error.message : String(error)))
+    signal: AbortSignal.any([signal, stopped.signal])
+  })
+    .catch((error: unknown) => (error instanceof Error ? error.message : String(error)))
+    .finally(disarm)
+  // They pressed Esc, so there's nothing to explain.
+  if (stopped.signal.aborted) return false
   if (failed === null) {
     await fs.writeFile(join(folder(), INSTALL_MARK), choice.directory, 'utf8')
     return true

@@ -1,7 +1,8 @@
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import type { ComputerDriver } from './computerUseDriver'
-import { startComputerDriver } from './computerUseDriver'
+import { computerRowPoints, startComputerDriver } from './computerUseDriver'
+import type { ComputerHighlightTarget } from './computerUseHighlight'
 import type { ComputerUseWindows } from './computerUseWindows'
 
 const STEP_WAIT_MS = 10_000
@@ -115,18 +116,34 @@ interface SetupParts {
     | 'pointerTo'
     | 'launch'
     | 'restore'
+    | 'visible'
   >
+  /** The same marks as when the agent is driving: this is SideKick at the controls too. */
+  overlay: {
+    show: (target: ComputerHighlightTarget) => void
+    hide: () => void
+    moveCursor: (point: { x: number; y: number }) => Promise<void> | void
+  }
   waitForConnection: (ms: number, signal: AbortSignal) => Promise<boolean>
   signal: AbortSignal
 }
 
+interface FoundRow {
+  token: string
+  /** Where it is on screen, for the pointer to get there first. */
+  point?: { x: number; y: number }
+}
+
 /** The first row whose line has this text, or null, with what is needed to press it. */
-function rowWith(text: string, wanted: RegExp): { token: string } | null {
-  const snapshot = /snapshot_id=(\S+)/.exec(text)?.[1]
+function rowWith(state: { text: string; structured?: unknown }, wanted: RegExp): FoundRow | null {
+  const snapshot = /snapshot_id=(\S+)/.exec(state.text)?.[1]
   if (!snapshot) return null
-  for (const line of text.split('\n')) {
+  const points = computerRowPoints(state.structured)
+  for (const line of state.text.split('\n')) {
     const found = /^\W*\[(\d+)\] (.*)$/.exec(line)
-    if (found && wanted.test(found[2])) return { token: `${snapshot}:${found[1]}` }
+    if (found && wanted.test(found[2])) {
+      return { token: `${snapshot}:${found[1]}`, point: points.get(Number(found[1])) }
+    }
   }
   return null
 }
@@ -180,6 +197,15 @@ export async function setUpChromeExtension(parts: SetupParts): Promise<string | 
   let driver: ComputerDriver | null = null
   let picker: number | null = null
   let done = false
+  parts.overlay.show({
+    appName: 'Chrome',
+    visible: () => windows.visible(mine.id),
+    bounds: async () =>
+      (await windows.windowsOf(mine.pid)).find((window) => window.id === mine.id)?.bounds ?? null
+  })
+  const pointAt = async (row: FoundRow): Promise<void> => {
+    if (row.point) await parts.overlay.moveCursor(row.point)
+  }
   try {
     driver = await startComputerDriver(parts.driverPath, parts.dataFolder, [chrome])
     const target = { pid: mine.pid, window_id: mine.id }
@@ -193,39 +219,49 @@ export async function setUpChromeExtension(parts: SetupParts): Promise<string | 
       await new Promise((resolve) => setTimeout(resolve, WINDOW_SETTLE_MS))
       if ((await windows.front()) !== mine.id) return "Chrome's window didn't come to the front."
     }
+    // About where the address bar is, as that's what the keys below go to.
+    const frame = (await windows.windowsOf(mine.pid)).find(
+      (window) => window.id === mine.id
+    )?.bounds
+    if (frame) {
+      await parts.overlay.moveCursor({
+        x: Math.round(frame.x + frame.width * 0.3),
+        y: Math.round(frame.y + frame.height * 0.07)
+      })
+    }
     await call('press_key', { ...target, key: 'l', modifiers: ['ctrl'], ...real }, signal)
     await call('type_text', { ...target, text: 'chrome://extensions', ...real }, signal)
     await call('press_key', { ...target, key: 'return', modifiers: [], ...real }, signal)
-    const search = async (window: number, query: string, pid = mine.pid): Promise<string> =>
-      (
-        await call(
-          'get_window_state',
-          {
-            pid,
-            window_id: window,
-            tree_format: 'both',
-            include_screenshot: true,
-            max_elements: 5000,
-            timeout_ms: 3000,
-            query
-          },
-          signal
-        )
-      ).text
+    const search = (window: number, query: string, pid = mine.pid): ReturnType<typeof call> =>
+      call(
+        'get_window_state',
+        {
+          pid,
+          window_id: window,
+          tree_format: 'both',
+          include_screenshot: true,
+          max_elements: 5000,
+          timeout_ms: 3000,
+          query
+        },
+        signal
+      )
     const press = (window: number, token: string, pid = mine.pid): Promise<unknown> =>
       call('click', { pid, window_id: window, element_token: token }, signal)
-    const loadUnpacked = (): Promise<{ token: string } | null> =>
-      search(mine.id, 'Load unpacked').then((text) => rowWith(text, /Load unpacked/i))
+    const loadUnpacked = (): Promise<FoundRow | null> =>
+      search(mine.id, 'Load unpacked').then((state) => rowWith(state, /Load unpacked/i))
     if (!(await loadUnpacked())) {
       const toggle = await until(
-        () => search(mine.id, 'Developer mode').then((text) => rowWith(text, /Developer mode/i)),
+        () => search(mine.id, 'Developer mode').then((state) => rowWith(state, /Developer mode/i)),
         signal
       )
       if (!toggle) return "Chrome's extensions page didn't show its Developer mode switch."
+      await pointAt(toggle)
       await press(mine.id, toggle.token)
     }
     const button = await until(loadUnpacked, signal)
     if (!button) return "Chrome didn't show its Load unpacked button."
+    await pointAt(button)
     // Not waited for: pressing a button can last for as long as the dialog it opens.
     void press(mine.id, button.token).catch(() => undefined)
     const opened = await until(async () => (await windows.ownedBy(mine.id))[0] ?? null, signal)
@@ -239,12 +275,13 @@ export async function setUpChromeExtension(parts: SetupParts): Promise<string | 
     await new Promise((resolve) => setTimeout(resolve, WINDOW_SETTLE_MS))
     const field = await until(
       () =>
-        search(opened.id, 'Folder', pickerPid).then((text) =>
-          rowWith(text, /Edit.*Folder|Folder.*Edit/i)
+        search(opened.id, 'Folder', pickerPid).then((state) =>
+          rowWith(state, /Edit.*Folder|Folder.*Edit/i)
         ),
       signal
     )
     if (!field) return "Couldn't find the folder box in Chrome's folder picker."
+    await pointAt(field)
     await call(
       'set_value',
       {
@@ -257,14 +294,16 @@ export async function setUpChromeExtension(parts: SetupParts): Promise<string | 
     )
     const select = await until(
       () =>
-        search(opened.id, 'Select Folder', pickerPid).then((text) =>
-          rowWith(text, /Select Folder/i)
+        search(opened.id, 'Select Folder', pickerPid).then((state) =>
+          rowWith(state, /Select Folder/i)
         ),
       signal
     )
     // Enter does the same in the box, should the button go by another name.
-    if (select) void press(opened.id, select.token, pickerPid).catch(() => undefined)
-    else {
+    if (select) {
+      await pointAt(select)
+      void press(opened.id, select.token, pickerPid).catch(() => undefined)
+    } else {
       await call(
         'press_key',
         { pid: pickerPid, window_id: opened.id, key: 'return', modifiers: [], ...real },
@@ -282,6 +321,7 @@ export async function setUpChromeExtension(parts: SetupParts): Promise<string | 
     if (picker && !done) await windows.closeWindow(picker).catch(() => false)
     await new Promise((resolve) => setTimeout(resolve, WINDOW_SETTLE_MS))
     await windows.closeWindow(mine.id).catch(() => false)
+    parts.overlay.hide()
     await driver?.close().catch(() => undefined)
     if (home) await windows.pointerTo(home).catch(() => false)
     if (handBack) await windows.restore(handBack).catch(() => false)
