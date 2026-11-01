@@ -64,6 +64,12 @@ function harness(apps: ComputerApp[], confirm = true) {
     front: vi.fn(async () => 0),
     controlAt: vi.fn(async (_pid: number, _point: { x: number; y: number }) => ''),
     ignoresPostedClicks: vi.fn(async (_window: number) => false),
+    isWebBased: vi.fn(async (_window: number) => false),
+    pressControl: vi.fn(
+      async (_window: number, _control: { label: string; actions: readonly string[] }) => true
+    ),
+    expandStates: vi.fn(async (_window: number) => []),
+    otherAppAt: vi.fn(async (_window: number, _point: { x: number; y: number }) => false),
     windowsOf: vi.fn(
       async (_pid: number): Promise<ComputerAppWindow[]> => [
         { id: 77, title: 'Window', bounds: null }
@@ -641,6 +647,121 @@ describe('what the agent may reach', () => {
       expect.objectContaining({ delivery_mode: 'foreground' }),
       signal
     )
+  })
+
+  it('presses a named row in an app that ignores clicks, and hands the front back', async () => {
+    const { service, call, appWindows, restoreForeground } = harness([app('notes')])
+    const answer = call.getMockImplementation()!
+    call.mockImplementation(async (tool, args) => ({
+      ...(await answer(tool, args)),
+      structured: {
+        elements: [
+          {
+            element_index: 0,
+            label: 'OK',
+            actions: ['invoke'],
+            frame: { x: 10, y: 10, w: 20, h: 20 }
+          }
+        ]
+      }
+    }))
+    appWindows.ignoresPostedClicks.mockResolvedValue(true)
+    appWindows.front.mockResolvedValueOnce(5).mockResolvedValue(77)
+    await service.requestApp('chat', 'notes', signal)
+    await service.look('chat', 'notes', false, signal)
+    await expect(service.click('chat', 'notes', { element: 0 }, signal)).resolves.toContain(
+      'Click sent'
+    )
+    expect(appWindows.pressControl).toHaveBeenCalledWith(
+      77,
+      expect.objectContaining({ label: 'OK', actions: ['invoke'] })
+    )
+    expect(restoreForeground).toHaveBeenCalledWith(5)
+    expect(call).not.toHaveBeenCalledWith('click', expect.anything(), signal)
+    // A press that finds nothing sent nothing, so the agent still gets to choose.
+    appWindows.pressControl.mockResolvedValue(false)
+    await expect(service.click('chat', 'notes', { element: 0 }, signal)).rejects.toThrow(
+      'ignores clicks'
+    )
+  })
+
+  it('sends no real click where another app is on top', async () => {
+    const { service, call, appWindows } = harness([app('notes')])
+    needsForeground(call, 'never refused')
+    appWindows.front.mockResolvedValue(77)
+    appWindows.windowsOf.mockResolvedValue([
+      { id: 77, title: 'W', bounds: { x: 0, y: 0, width: 100, height: 100 } }
+    ])
+    await service.requestApp('chat', 'notes', signal)
+    appWindows.otherAppAt.mockResolvedValueOnce(true)
+    await expect(service.click('chat', 'notes', { x: 5, y: 5 }, signal, true)).rejects.toThrow(
+      'on top of notes'
+    )
+    expect(call).not.toHaveBeenCalledWith('click', expect.anything(), signal)
+    await service.click('chat', 'notes', { x: 5, y: 5 }, signal, true)
+    expect(call).toHaveBeenCalledWith('click', expect.anything(), signal)
+  })
+
+  it('stops a real click on something risky once the app is in front to say what it is', async () => {
+    const { service, call, appWindows } = harness([app('notes')])
+    needsForeground(call, 'never refused')
+    appWindows.front.mockResolvedValue(77)
+    appWindows.windowsOf.mockResolvedValue([
+      { id: 77, title: 'W', bounds: { x: 0, y: 0, width: 100, height: 100 } }
+    ])
+    await service.requestApp('chat', 'notes', signal)
+    // Covered, so nothing could be said about the pixel the first time it was asked.
+    appWindows.controlAt.mockResolvedValueOnce('').mockResolvedValueOnce('Button Delete')
+    await expect(service.click('chat', 'notes', { x: 5, y: 5 }, signal, true)).rejects.toThrow(
+      'Delete'
+    )
+    expect(call).not.toHaveBeenCalledWith('click', expect.anything(), signal)
+  })
+
+  it('refuses the shortcuts that belong to Windows, and leaves others alone', async () => {
+    const { service, call } = harness([app('notes')])
+    needsForeground(call, 'never refused')
+    await service.requestApp('chat', 'notes', signal)
+    for (const combination of [
+      'alt+tab',
+      'alt+shift+tab',
+      'alt+f4',
+      'ctrl+shift+esc',
+      'ctrl+esc'
+    ]) {
+      await expect(service.key('chat', 'notes', combination, [], signal, true)).rejects.toThrow(
+        'belongs to Windows'
+      )
+    }
+    await service.key('chat', 'notes', 'ctrl+s', [], signal, true)
+    await service.key('chat', 'notes', 'f4', [], signal, true)
+    expect(call.mock.calls.filter(([tool]) => tool === 'press_key')).toHaveLength(2)
+  })
+
+  it('keeps the numbers of rows a long list leaves out, and can read them back', async () => {
+    const { service, call } = harness([app('notes')])
+    const rows = Array.from({ length: 150 }, (_, row) => `    - [${row}] Button "B${row}"`)
+    const long = ['window_id=77 pid=10 snapshot_id=s1', '- Window "W"', '  - Pane "All"', ...rows]
+    call.mockImplementation(async () => ({
+      isError: false,
+      images: [] as Array<{ mimeType: string; data: string }>,
+      structured: undefined as unknown,
+      text: long.join('\n')
+    }))
+    await service.requestApp('chat', 'notes', signal)
+    const seen = await service.look('chat', 'notes', false, signal)
+    expect(seen.text).toContain('Pane "All" (150 more inside: part 1)')
+    expect(seen.text).not.toContain('B149')
+    const part = await service.lookPart('chat', 'notes', 1, signal)
+    expect(part.text).toContain('[149] Button "B149"')
+    // Not listed, and still there to press.
+    await service.click('chat', 'notes', { element: 149 }, signal)
+    expect(call).toHaveBeenLastCalledWith(
+      'click',
+      expect.objectContaining({ element_token: 's1:149' }),
+      signal
+    )
+    await expect(service.lookPart('chat', 'notes', 2, signal)).rejects.toThrow('no part 2')
   })
 
   it('stops before pressing something risky, whether by row or by pixel', async () => {

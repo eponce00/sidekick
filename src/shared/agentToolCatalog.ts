@@ -877,6 +877,11 @@ const computer = definition(
         type: 'string',
         description: 'For look: list only the controls containing this text, across all of them.'
       },
+      part: {
+        type: 'number',
+        description:
+          'For look: read what a long list left out, by the part number on its "more inside" row.'
+      },
       element: {
         type: 'number',
         description:

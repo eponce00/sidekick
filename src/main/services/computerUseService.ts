@@ -8,11 +8,16 @@ import {
 } from './computerUseApps'
 import {
   computerActionPoint,
+  computerHasExpandingRows,
+  computerMarkRowStates,
+  computerRowControls,
   computerRowPoints,
   computerRowValues,
+  computerShortList,
   startComputerDriver,
   type ComputerDriver,
   type ComputerDriverResult,
+  type ComputerRowControl,
   type ComputerWindowBounds
 } from './computerUseDriver'
 import type { ComputerHighlightTarget } from './computerUseHighlight'
@@ -82,6 +87,10 @@ export interface ComputerUseDependencies {
     | 'front'
     | 'controlAt'
     | 'ignoresPostedClicks'
+    | 'isWebBased'
+    | 'pressControl'
+    | 'expandStates'
+    | 'otherAppAt'
     | 'windowsOf'
     | 'pointer'
     | 'pointerTo'
@@ -142,6 +151,10 @@ interface ChatAccess {
       rowPoints: Map<number, { x: number; y: number }>
       /** What each field that can be set holds now. */
       rowValues: Map<number, string>
+      /** What it takes to press each row without the driver. */
+      rowControls: Map<number, ComputerRowControl>
+      /** What a long list left out, by the number it gave each part. */
+      parts: string[]
       /** The last zoom into this picture, to say where a click on the zoomed picture is. */
       zoom?: { x: number; y: number; width: number; imageWidth: number }
       /** It gave no controls in time, so looks don't wait as long for them. */
@@ -250,6 +263,13 @@ const ACTION_AREA_PADDING = 120
 const ACTION_AREA_CHANGE = 12
 const MAX_ZOOM_WIDTH = 500
 const MAX_CONTROLS_SEARCHED = 5_000
+// A web engine builds its list of controls only once something asks, so the first read of a page often
+// has just the window's frame, and an agent would plan from that. A second read a moment later has it.
+const WEB_SETTLE_MS = 6_000
+const WEB_SETTLE_PAUSE_MS = 700
+// Pressing a control can bring its app forward a moment after the press returns.
+const RAISE_WATCH_MS = 500
+const RAISE_CHECK_MS = 50
 // Some apps take over a second, so nothing changing yet doesn't mean nothing happened.
 const SLOW_APP_SETTLE_MS = 900
 const WARN_UNCHANGED_STEPS = 3
@@ -344,6 +364,13 @@ async function picturesDiffer(a: string, b: string, area?: PictureArea): Promise
 const TREE_ROW = /^\W*\[\d+\]/m
 /** Any row of the tree, numbered or not: a disabled button or a line of text has no number. */
 const TREE_LINE = /^\s*- /
+
+/** Whether a web engine's list has got as far as the page: a document with something in it. */
+function webPageListed(tree: string): boolean {
+  const rows = tree.split('\n').filter((line) => TREE_LINE.test(line))
+  const page = rows.findIndex((line) => /^\s*- (\[\d+\] )?Document\b/.test(line))
+  return page >= 0 && (rows[page + 1]?.search(/\S/) ?? 0) > rows[page].search(/\S/)
+}
 
 /**
  * The rows of a tree that differ from an earlier one, or null when most do. A row keeps its number
@@ -471,6 +498,20 @@ export function computerKeyCombination(
         key: parts.at(-1) || '+',
         modifiers: [...modifiers, ...parts.slice(0, -1).filter(Boolean)]
       }
+}
+
+/**
+ * Shortcuts that belong to Windows rather than the app: they switch away from it, close it unasked or
+ * open Task Manager or Start, which the agent was never given. Extra modifiers don't change that.
+ */
+function computerLeavesTheApp(key: string, modifiers: readonly string[]): boolean {
+  const held = modifiers.map((name) => name.trim().toLowerCase())
+  const pressed = key.trim().toLowerCase()
+  const escape = pressed === 'esc' || pressed === 'escape'
+  return (
+    (held.includes('alt') && (pressed === 'tab' || pressed === 'f4' || escape)) ||
+    ((held.includes('ctrl') || held.includes('control')) && escape)
+  )
 }
 
 /** What can be held during a click. The Windows key reaches the shell, not the app. */
@@ -887,22 +928,42 @@ export class ComputerUseService {
       chosenWindow
     )
     const earlier = this.access(chat).snapshots.get(app.path.toLowerCase())
-    const state = await driver.call(
-      'get_window_state',
-      {
-        pid,
-        window_id: windowId,
-        // A read with no picture would leave clicks by pixel with nothing to go by, even for a search.
-        include_screenshot: includeImage || Boolean(find),
-        tree_format: 'both',
-        timeout_ms: earlier?.slowControls ? SLOW_CONTROLS_WAIT_MS : CONTROLS_WAIT_MS,
-        max_elements: find ? MAX_CONTROLS_SEARCHED : MAX_CONTROLS,
-        ...(find ? { query: find } : {}),
-        ...(includeImage ? { max_image_dimension: 1280 } : {})
-      },
-      signal
-    )
+    const read = (): Promise<ComputerDriverResult> =>
+      driver.call(
+        'get_window_state',
+        {
+          pid,
+          window_id: windowId,
+          // A read with no picture would leave clicks by pixel with nothing to go by, even for a search.
+          include_screenshot: includeImage || Boolean(find),
+          tree_format: 'both',
+          timeout_ms: earlier?.slowControls ? SLOW_CONTROLS_WAIT_MS : CONTROLS_WAIT_MS,
+          max_elements: find ? MAX_CONTROLS_SEARCHED : MAX_CONTROLS,
+          ...(find ? { query: find } : {}),
+          ...(includeImage ? { max_image_dimension: 1280 } : {})
+        },
+        signal
+      )
+    let state = await read()
     if (state.isError) throw new ComputerUseRefusal(state.text, true)
+    if (
+      !find &&
+      earlier?.windowId !== windowId &&
+      !webPageListed(state.text) &&
+      (await this.deps.appWindows.isWebBased(windowId))
+    ) {
+      const deadline = Date.now() + WEB_SETTLE_MS
+      while (!webPageListed(state.text) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, WEB_SETTLE_PAUSE_MS))
+        const next = await read()
+        if (next.isError) break
+        state = next
+      }
+    }
+    const expanding = computerHasExpandingRows(state.structured)
+      ? await this.deps.appWindows.expandStates(windowId).catch(() => [])
+      : []
+    state.text = computerMarkRowStates(state.text, state.structured, expanding)
     const popups = state.images[0] && bounds ? await this.deps.appWindows.popups(windowId) : []
     if (popups.length && bounds) {
       state.images[0] = {
@@ -917,6 +978,9 @@ export class ComputerUseService {
     let treeKey = ''
     let sameControls = false
     let onlyChanged: string | undefined
+    // The whole list stays behind this, for what a row is and what has changed. Only the reading is short.
+    const parts: string[] = []
+    const shortened = find ? null : computerShortList(state.text, parts)
     const counts = state.structured as
       | {
           truncated?: unknown
@@ -961,6 +1025,8 @@ export class ComputerUseService {
         fullTree: find ? (before?.fullTree ?? '') : state.text,
         rowPoints: computerRowPoints(state.structured),
         rowValues: computerRowValues(state.structured),
+        rowControls: computerRowControls(state.structured),
+        parts,
         slowControls: gaveNoControls,
         zoom: find ? before?.zoom : undefined
       })
@@ -986,15 +1052,40 @@ export class ComputerUseService {
       windows.length > 1
         ? `This app has ${windows.length} windows; look with a window id to change:\n${windows.join('\n')}\n`
         : ''
+    const shortNote = shortened
+      ? 'This list is long, so it leaves out what a row marked "more inside" holds. Look with part for one of those, or with find to search them all. Rows left out can still be used by number, and the picture shows what is on screen.\n'
+      : ''
     return {
       // The driver's line about how to spell a token is about its own API, not this tool's.
-      text: `${UNTRUSTED}\n${size}${popupNote}${cutOff}${otherWindows}${state.text.replace(/^element_token for row.*$/m, '').trim()}${noMatch}`,
+      text: `${UNTRUSTED}\n${size}${popupNote}${cutOff}${otherWindows}${shortNote}${(shortened ?? state.text).replace(/^element_token for row.*$/m, '').trim()}${noMatch}`,
       // A search answers in words, and the model already has a picture of the window.
       images: find ? [] : state.images,
       changed,
       sameControls,
       controls: Boolean(find) || gaveNoControls || TREE_ROW.test(state.text),
       onlyChanged: onlyChanged && `${UNTRUSTED}\n${size}${popupNote}${cutOff}${onlyChanged}`
+    }
+  }
+
+  /** What a long list left out, from the last look, so the numbers in it still hold. */
+  async lookPart(
+    chat: string,
+    name: string,
+    part: number,
+    signal: AbortSignal
+  ): Promise<ComputerLook> {
+    const { app } = await this.target(chat, name, signal)
+    const seen = this.access(chat).snapshots.get(app.path.toLowerCase())
+    const inside = seen?.parts[part - 1]
+    if (!seen || inside === undefined) {
+      throw new ComputerUseRefusal(`The last look at ${app.name} has no part ${part}.`, true)
+    }
+    return {
+      text: `${UNTRUSTED}\n${computerShortList(inside, seen.parts) ?? inside}`,
+      images: [],
+      changed: null,
+      sameControls: false,
+      controls: true
     }
   }
 
@@ -1096,9 +1187,19 @@ export class ComputerUseService {
         ? await this.controlBeingClicked(chat, app, args, element, bounds, scaleNow)
         : '')
     if (!confirmRisky) this.refuseIfRisky(app, pressing)
+    // Only that it was sent: whether it landed is for the look that follows to say.
+    // A pane is just what a web-based app's whole window calls itself, and says nothing about the click.
+    const sentNote = `${SENT[tool] ?? 'Sent'}${pressing && !/^Pane\b/.test(pressing) ? ` to ${pressing}` : ''}.`
     const isClick =
       tool === 'click' || tool === 'double_click' || tool === 'right_click' || tool === 'drag'
     if (!realInput && isClick && (await this.deps.appWindows.ignoresPostedClicks(windowId))) {
+      if (
+        tool === 'click' &&
+        element !== undefined &&
+        (await this.pressRow(chat, app, element, windowId, bounds, scaleNow))
+      ) {
+        return sentNote
+      }
       throw new ComputerUseRefusal(
         `${app.name} ignores clicks sent in the background, so nothing was sent. You decide: repeat it with real_input true, which waits until the user has stepped away and then briefly uses their real mouse, or tell the user what you need done.`
       )
@@ -1118,7 +1219,17 @@ export class ComputerUseService {
     if (aimedAt && !realInput) await this.deps.moveCursor(aimedAt)
     const frontBefore = realInput ? 0 : await this.deps.appWindows.front()
     const result = realInput
-      ? await this.sendRealInput(app, driver, tool, targetArgs, aimedAt, dragEnd, signal)
+      ? await this.sendRealInput(
+          app,
+          driver,
+          tool,
+          targetArgs,
+          aimedAt,
+          dragEnd,
+          signal,
+          // Nothing can say what a pixel is while the app is covered, so that waits until it isn't.
+          !confirmRisky && !pressing && (tool === 'click' || tool === 'double_click')
+        )
       : await driver.call(tool, targetArgs, signal)
     // A background click can still make an app bring itself forward, over what the user is doing.
     if (
@@ -1159,9 +1270,57 @@ export class ComputerUseService {
         ? null
         : (dragEnd ?? (aimedAt ? null : computerActionPoint(result.text)))
     if (point) await this.deps.moveCursor(point)
-    // Only that it was sent: whether it landed is for the look that follows to say.
-    // A pane is just what a web-based app's whole window calls itself, and says nothing about the click.
-    return `${SENT[tool] ?? 'Sent'}${pressing && !/^Pane\b/.test(pressing) ? ` to ${pressing}` : ''}.`
+    return sentNote
+  }
+
+  /**
+   * An app that ignores posted clicks can still have a named control pressed through UI Automation,
+   * whatever covers it. That brings the app forward, so the front goes straight back to what had it.
+   */
+  private async pressRow(
+    chat: string,
+    app: ComputerApp,
+    element: number,
+    windowId: number,
+    bounds: ComputerWindowBounds | null,
+    scale: number
+  ): Promise<boolean> {
+    const control = this.access(chat)
+      .snapshots.get(app.path.toLowerCase())
+      ?.rowControls.get(element)
+    if (!control) return false
+    const windows = this.deps.appWindows
+    const aimedAt = this.aimedAt(chat, app, {}, element, bounds, scale)
+    this.noteActionArea(chat, [aimedAt], bounds, scale)
+    if (aimedAt) await this.deps.moveCursor(aimedAt)
+    const before = await windows.front()
+    if (!(await windows.pressControl(windowId, control))) return false
+    if (!before || before === windowId) return true
+    const deadline = Date.now() + RAISE_WATCH_MS
+    while (Date.now() < deadline) {
+      if ((await windows.front()) === windowId) {
+        await windows.restore(before)
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, RAISE_CHECK_MS))
+    }
+    return true
+  }
+
+  /** A real click would land on whatever is on top there, which the agent may not have been given. */
+  private async refuseIfAnotherAppAt(
+    app: ComputerApp,
+    windowId: number,
+    points: ReadonlyArray<{ x: number; y: number } | null>
+  ): Promise<void> {
+    for (const point of points) {
+      if (point && (await this.deps.appWindows.otherAppAt(windowId, point))) {
+        throw new ComputerUseRefusal(
+          `Another app's window is on top of ${app.name} at that point, so nothing was sent. Try again once it has gone, or tell the user what is in the way.`,
+          true
+        )
+      }
+    }
   }
 
   private noteActionArea(
@@ -1315,13 +1474,20 @@ export class ComputerUseService {
     args: Record<string, unknown>,
     aimedAt: { x: number; y: number } | null,
     dragEnd: { x: number; y: number } | null,
-    signal: AbortSignal
+    signal: AbortSignal,
+    checkPressing = false
   ): Promise<ComputerDriverResult> {
     const windows = this.deps.appWindows
     const usesPointer = tool !== 'type_text' && tool !== 'press_key' && tool !== 'set_value'
     const home = usesPointer ? await windows.pointer() : null
     if ((await windows.front()) !== args.window_id) {
       await this.bringForward(app, driver, args, signal)
+    }
+    if (usesPointer) {
+      await this.refuseIfAnotherAppAt(app, Number(args.window_id), [aimedAt, dragEnd])
+    }
+    if (checkPressing && aimedAt) {
+      this.refuseIfRisky(app, await windows.controlAt(app.pid, aimedAt).catch(() => ''))
     }
     // The agent's pointer is the one to watch, whichever kind of input this is. The real one goes there
     // only for as long as the step needs it, and then goes back to where the user left it.
@@ -1617,6 +1783,7 @@ export class ComputerUseService {
     if ((await windows.front()) !== windowId) {
       await this.bringForward(app, driver, { pid, window_id: windowId }, signal)
     }
+    await this.refuseIfAnotherAppAt(app, windowId, [point])
     // Only now can Windows say what a pixel is, with the app on top.
     const pressing = await this.controlBeingClicked(
       chat,
@@ -2202,6 +2369,11 @@ export class ComputerUseService {
     // The Windows key reaches the shell, not the app: Win+R alone opens a way to run anything.
     if ([key, ...modifiers].some((name) => /^(win|windows|cmd|meta|super)$/i.test(name))) {
       throw new ComputerUseRefusal('The Windows key is not available.')
+    }
+    if (computerLeavesTheApp(key, modifiers)) {
+      throw new ComputerUseRefusal(
+        `${[...modifiers, key].join('+')} belongs to Windows and would leave the app, so nothing was sent. Use the app's own controls, or tell the user what you need done.`
+      )
     }
     // The driver types a name it doesn't know: "scroll_lock" put an "s" into a cell in Excel.
     if ([...key].length > 1 && computerVirtualKey(key) === null) {

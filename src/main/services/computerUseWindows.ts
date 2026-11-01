@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { createInterface } from 'readline'
 import { parseComputerApps, powershellPath, type ComputerApp } from './computerUseApps'
-import type { ComputerWindowBounds } from './computerUseDriver'
+import type { ComputerExpandState, ComputerWindowBounds } from './computerUseDriver'
 
 // Starting it compiles its code, which takes a second or two, and a model's turn can outlast a minute.
 const HELPER_IDLE_MS = 3 * 60_000
@@ -14,8 +14,8 @@ const HELPER_SCRIPT = `
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase, System.Drawing
-Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
-using System; using System.IO; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices;
+Add-Type -ReferencedAssemblies System.Drawing, UIAutomationClient, UIAutomationTypes, WindowsBase -TypeDefinition @'
+using System; using System.IO; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices; using System.Windows.Automation;
 public static class SideKickWindows {
   delegate bool EnumProc(IntPtr h, IntPtr l);
   [StructLayout(LayoutKind.Sequential)] public struct Rect { public int L, T, R, B; }
@@ -480,6 +480,92 @@ public static class SideKickWindows {
       }
     }
   }
+  // Whether a window is drawn by a web engine, itself or in a window inside it.
+  public static bool IsWebBased(long window) {
+    IntPtr top = new IntPtr(window);
+    if (ClassOf(top).StartsWith("Chrome_")) return true;
+    bool found = false;
+    EnumChildWindows(top, delegate(IntPtr c, IntPtr l) {
+      found = ClassOf(c).StartsWith("Chrome_");
+      return !found;
+    }, IntPtr.Zero);
+    return found;
+  }
+  // Presses a control by what it is, which needs no focus and works whatever covers the app. The first
+  // of its actions it takes. Two alike in the same place are one thing to a person, so either will do.
+  // Past the wait it counts as sent once it has begun: an app can sit on a press, and it may still land.
+  public static bool PressControl(long window, string name, int x, int y, int w, int t, string actions) {
+    bool began = false, pressed = false;
+    System.Threading.Thread work = new System.Threading.Thread(delegate() {
+      try {
+        AutomationElement root = AutomationElement.FromHandle(new IntPtr(window));
+        foreach (AutomationElement found in root.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, name))) {
+          System.Windows.Rect r = found.Current.BoundingRectangle;
+          if (Math.Abs(r.X - x) > 3 || Math.Abs(r.Y - y) > 3 || Math.Abs(r.Width - w) > 3 || Math.Abs(r.Height - t) > 3) continue;
+          foreach (string action in actions.Split(',')) {
+            object p;
+            if (action == "invoke" && found.TryGetCurrentPattern(InvokePattern.Pattern, out p)) { began = true; ((InvokePattern)p).Invoke(); pressed = true; return; }
+            if (action == "toggle" && found.TryGetCurrentPattern(TogglePattern.Pattern, out p)) { began = true; ((TogglePattern)p).Toggle(); pressed = true; return; }
+            if (action == "select" && found.TryGetCurrentPattern(SelectionItemPattern.Pattern, out p)) { began = true; ((SelectionItemPattern)p).Select(); pressed = true; return; }
+            if (action == "expand" && found.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out p)) {
+              began = true;
+              ExpandCollapsePattern opens = (ExpandCollapsePattern)p;
+              if (opens.Current.ExpandCollapseState == ExpandCollapseState.Collapsed) opens.Expand(); else opens.Collapse();
+              pressed = true;
+              return;
+            }
+          }
+        }
+      } catch { }
+    });
+    work.IsBackground = true;
+    work.Start();
+    work.Join(6000);
+    return pressed || began;
+  }
+  // "x,y,width,height,e or c,name" for each control that can open and close. A stuck app must
+  // not hold up every other request here, so it answers with what it has in time, which may be nothing.
+  public static string ExpandStates(long window) {
+    string states = "";
+    System.Threading.Thread work = new System.Threading.Thread(delegate() {
+      try {
+        AutomationElement root = AutomationElement.FromHandle(new IntPtr(window));
+        CacheRequest cache = new CacheRequest();
+        cache.AutomationElementMode = AutomationElementMode.None;
+        cache.Add(AutomationElement.BoundingRectangleProperty);
+        cache.Add(AutomationElement.NameProperty);
+        cache.Add(ExpandCollapsePattern.ExpandCollapseStateProperty);
+        AutomationElementCollection all;
+        using (cache.Activate()) all = root.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.IsExpandCollapsePatternAvailableProperty, true));
+        List<string> rows = new List<string>();
+        foreach (AutomationElement found in all) {
+          object state = found.GetCachedPropertyValue(ExpandCollapsePattern.ExpandCollapseStateProperty);
+          if (!(state is ExpandCollapseState)) continue;
+          ExpandCollapseState now = (ExpandCollapseState)state;
+          if (now == ExpandCollapseState.LeafNode) continue;
+          System.Windows.Rect r = (System.Windows.Rect)found.GetCachedPropertyValue(AutomationElement.BoundingRectangleProperty);
+          rows.Add((int)r.X + "," + (int)r.Y + "," + (int)r.Width + "," + (int)r.Height + "," + (now == ExpandCollapseState.Collapsed ? "c" : "e") + "," + ((string)found.GetCachedPropertyValue(AutomationElement.NameProperty)).Replace('\\r', ' ').Replace('\\n', ' '));
+        }
+        states = string.Join("\\u0001", rows);
+      } catch { }
+    });
+    work.IsBackground = true;
+    work.Start();
+    work.Join(1500);
+    return states;
+  }
+  // Whether a window of another app is on top at a point. With the app in front, a real click still
+  // lands on an always-on-top window there, and that app was never given to the agent.
+  public static bool OtherAppAt(long window, int x, int y) {
+    IntPtr top = new IntPtr(window);
+    IntPtr at = WindowFromPoint(new Point(x, y));
+    if (at == IntPtr.Zero) return false;
+    IntPtr root = GetAncestor(at, 2);
+    if (root == top) return false;
+    uint owner = OwnerOf(root);
+    IntPtr storeApp = StoreAppWindow(top);
+    return owner != OwnerOf(top) && (storeApp == IntPtr.Zero || owner != OwnerOf(storeApp));
+  }
   public static long Front() { return GetForegroundWindow().ToInt64(); }
   public static bool Restore(long window) {
     IntPtr h = new IntPtr(window);
@@ -545,6 +631,10 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
         $answer = $true
       }
       'ignoresClicks' { $answer = [SideKickWindows]::IgnoresPostedClicks([long]$c.window) }
+      'webBased' { $answer = [SideKickWindows]::IsWebBased([long]$c.window) }
+      'press' { $answer = [SideKickWindows]::PressControl([long]$c.window, [string]$c.label, [int]$c.x, [int]$c.y, [int]$c.width, [int]$c.height, [string]$c.actions) }
+      'expandStates' { $answer = [SideKickWindows]::ExpandStates([long]$c.window) }
+      'otherAppAt' { $answer = [SideKickWindows]::OtherAppAt([long]$c.window, [int]$c.x, [int]$c.y) }
       'at' {
         $found = [System.Windows.Automation.AutomationElement]::FromPoint((New-Object System.Windows.Point ([double]$c.x), ([double]$c.y)))
         $info = $found.Current
@@ -937,6 +1027,39 @@ export class ComputerUseWindows {
 
   ignoresPostedClicks(window: number): Promise<boolean> {
     return this.confirm({ op: 'ignoresClicks', window })
+  }
+
+  isWebBased(window: number): Promise<boolean> {
+    return this.confirm({ op: 'webBased', window })
+  }
+
+  /** Presses a row's control through UI Automation. False if it isn't there to press. */
+  pressControl(
+    window: number,
+    control: { label: string; frame: ComputerWindowBounds; actions: readonly string[] }
+  ): Promise<boolean> {
+    return this.confirm({
+      op: 'press',
+      window,
+      label: control.label,
+      ...control.frame,
+      actions: control.actions.join(',')
+    })
+  }
+
+  /** The state of a window's controls that can open and close, if it answers in time. */
+  async expandStates(window: number): Promise<ComputerExpandState[]> {
+    return (await this.ask({ op: 'expandStates', window })).split('\u0001').flatMap((row) => {
+      const found = /^(-?\d+),(-?\d+),(\d+),(\d+),([ec]),(.*)$/s.exec(row)
+      if (!found) return []
+      const [x, y, width, height] = found.slice(1, 5).map(Number)
+      return [{ x, y, width, height, expanded: found[5] === 'e', label: found[6] }]
+    })
+  }
+
+  /** Whether another app's window would take a real click at a screen point. */
+  otherAppAt(window: number, point: { x: number; y: number }): Promise<boolean> {
+    return this.confirm({ op: 'otherAppAt', window, ...point })
   }
 
   /** The window in front, or 0 when that can't be told. */
