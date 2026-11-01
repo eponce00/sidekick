@@ -574,7 +574,17 @@ export async function recoverInterruptedCheckpointCaptures(): Promise<
           checkpoint
         })
     } catch (error) {
-      console.warn('[History] Could not recover interrupted capture:', error)
+      // Its folder is gone with its chat, so there is nothing to recover, now or on any later start.
+      const folderIsGone = await fs.stat(capture.workspaceRoot).then(
+        () => false,
+        () => true
+      )
+      if (folderIsGone) {
+        captureSessions.delete(capture.id)
+        await fs.rm(captureMetadataPath(capture.id), { force: true }).catch(() => undefined)
+      } else {
+        console.warn('[History] Could not recover interrupted capture:', error)
+      }
     }
   }
   return recovered

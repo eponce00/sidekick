@@ -874,6 +874,10 @@ export function installBrowserApiMock(): void {
       getGenerationStats: async () => ({ ok: false, error: 'UI preview' }),
       onHealthChanged: () => () => undefined
     },
+    computerUse: {
+      rememberedApps: async () => [],
+      forgetApp: async () => undefined
+    },
     settings: {
       selectOfficeInterpreter: async () => ({ canceled: true }),
       save: async () => ({ success: true }),

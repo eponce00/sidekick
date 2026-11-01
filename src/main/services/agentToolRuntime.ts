@@ -102,6 +102,8 @@ import type { ArtifactInspectorLike } from './artifactInspector'
 import type { InspectedArtifactType } from '../../shared/artifactInspection'
 import { registerMcpToolHandlers } from './agentMcpToolHandlers'
 import { registerVisionToolHandlers } from './agentVisionToolHandlers'
+import { registerComputerToolHandlers } from './agentComputerToolHandlers'
+import type { ComputerUseService } from './computerUseService'
 import { externalImageApprovalForMode } from './externalImageApproval'
 import type { PermissionMode } from '../../shared/permissions'
 import {
@@ -185,6 +187,8 @@ export interface AgentToolRuntimeSessionInput {
   webSearchEnabled: boolean
   /** Enable SideKick's built-in visual browser for this model/run. */
   browserEnabled?: boolean
+  /** Operating other apps on this computer. Only ever set from the user's settings. */
+  computer?: { service: ComputerUseService; vision: boolean }
   /** Page images one PDF read may attach: the provider's image budget, or 0 for a text model. */
   pageImages?: number
   /** The previous reply made an artifact, so the web-artifacts guidance is already in history. */
@@ -498,6 +502,7 @@ export class AgentToolRuntime {
     this.browser = browser ? new AgentBrowserSessionManager(browser) : undefined
   }
 
+  private computerUse: ComputerUseService | undefined
   /** Waits in a run that end when the user sends it a message. */
   private readonly userMessageWaiters = new Map<string, Set<() => void>>()
   /**
@@ -592,6 +597,12 @@ export class AgentToolRuntime {
       credentials: () => this.credentials?.uses
     })
     registerVisionToolHandlers(handlers, externalImageApprovalForMode(input.permissionMode))
+    if (input.computer) {
+      this.computerUse = input.computer.service
+      registerComputerToolHandlers(handlers, input.computer.service, this.outputs, {
+        vision: input.computer.vision
+      })
+    }
     if (input.browserEnabled === true && this.browser) {
       registerBrowserToolHandlers(handlers, this.browser, this.outputs, {
         credentials: () => this.credentials?.uses
@@ -720,6 +731,7 @@ export class AgentToolRuntime {
       workspaceRoot: input.workspaceRoot,
       webSearchEnabled: input.webSearchEnabled,
       browserEnabled: input.browserEnabled === true && Boolean(this.browser),
+      computerEnabled: Boolean(input.computer),
       activeSkillIds: [...activeSkillIds],
       officeHelpersAvailable: officeSession?.available() ?? false,
       capabilities: input.capabilities,
@@ -793,7 +805,10 @@ export class AgentToolRuntime {
             this.credentials?.uses?.denied(request)
           }
         },
-        releaseRun: (runId) => this.credentials?.uses?.releaseRun(runId),
+        releaseRun: (runId) => {
+          this.credentials?.uses?.releaseRun(runId)
+          input.computer?.service.runEnded(input.conversationId ?? runId)
+        },
         ...(this.browser
           ? {
               reserveBrowserForHumanCheck: (conversationId: string) =>
@@ -1767,6 +1782,10 @@ export class AgentToolRuntime {
   }
 
   async close(): Promise<void> {
-    await Promise.all([this.languageIntelligence.close(), this.browser?.dispose()])
+    await Promise.all([
+      this.languageIntelligence.close(),
+      this.browser?.dispose(),
+      this.computerUse?.close()
+    ])
   }
 }

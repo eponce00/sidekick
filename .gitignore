@@ -84,6 +84,9 @@ __pycache__/
 !.env.example
 !.env.agent-eval.example
 
+# Fetched and verified by scripts/fetch-computer-driver.cjs
+build/computer-driver/
+
 # Local Netlify folder
 .netlify
 artifact-smoke/

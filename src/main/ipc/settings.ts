@@ -402,7 +402,15 @@ export async function confirmSensitiveSettingsChange(
   const officeInterpreterChanged =
     previous.officeHelperInterpreter !== next.officeHelperInterpreter &&
     Boolean(next.officeHelperInterpreter)
-  if (!enablingFullAccess && !mcpChanged && !disablingShellIsolation && !officeInterpreterChanged)
+  const enablingComputerUse =
+    next.computerUseEnabled === true && previous.computerUseEnabled !== true
+  if (
+    !enablingFullAccess &&
+    !mcpChanged &&
+    !disablingShellIsolation &&
+    !officeInterpreterChanged &&
+    !enablingComputerUse
+  )
     return true
 
   const reasons = [
@@ -415,6 +423,9 @@ export async function confirmSensitiveSettingsChange(
       : null,
     enablingFullAccess
       ? 'Full access lets in-scope agent operations run without approval prompts.'
+      : null,
+    enablingComputerUse
+      ? 'The agent will be able to ask to operate apps on this computer, each only after you allow it.'
       : null,
     mcpChanged
       ? `These MCP connectors are new or changed. Local connectors launch processes with your account's permissions; remote connectors send requests to the listed endpoint. SideKick asks again whenever one changes.\n\n${mcpServers.map(describeMcpServer).join('\n\n')}`
@@ -489,6 +500,15 @@ export function registerSettingsHandlers(): void {
     } catch {
       return { canceled: false, error: 'Selected interpreter is unavailable or invalid' }
     }
+  })
+
+  // Listing and forgetting only: nothing but SideKick's own dialog may add an app.
+  ipcMain.handle('computerUse:rememberedApps', async () =>
+    (await import('../services/computerUseHost')).rememberedApps.list()
+  )
+  ipcMain.handle('computerUse:forgetApp', async (_event, path: unknown) => {
+    if (typeof path !== 'string') return
+    await (await import('../services/computerUseHost')).rememberedApps.remove(path)
   })
 
   // A save names only the settings it changes; every other setting keeps what is stored.

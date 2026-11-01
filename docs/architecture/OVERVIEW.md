@@ -356,6 +356,29 @@ event.
 tablet, and mobile criteria can be checked explicitly. `view_image` applies the same native
 multimodal result path to raster files inside the active project.
 
+The `computer` tool operates other apps on Windows through a child process of
+[cua-driver](https://github.com/trycua/cua), which SideKick starts in its `bounded` mode with a
+manifest written per chat (`computerUseDriver.ts`). The manifest lists only the executables the user
+approved, in a trusted dialog, and only the driver tools SideKick uses. Those leave out starting
+apps: once approved, SideKick starts a Start Menu app's executable itself, with no arguments.
+`computerUseService.ts` resolves an app from its real executable path on every call, keeps one chat in
+control at a time, and clears a chat's approvals when the user presses Esc. Input goes in the
+background unless the driver reports that an app can't take it there. The real mouse and keyboard then
+need a pause in the user's own input, and are refused for equipment software. SideKick lists apps and
+windows through its own long-lived helper (`computerUseWindows.ts`) rather than the driver, since this
+happens on every step, and draws the agent's pointer itself with the driver's turned off.
+While Esc is armed, `computerUseHighlight.ts` outlines the app with a click-through window that runs no
+script and stays out of screen captures. The end of a run gives back the driver, Esc and the one-chat
+lock, lets go of a held mouse button, and puts back what the user had copied. The helper keeps that copy
+itself and lets go of anything still held when it exits. A picture of the whole screen is made and blanked
+inside the helper too, so hidden windows' pixels never reach the main process, and it gives no way to act.
+A walkthrough step is the one overlay that takes a click; it never takes focus, and shows the model's
+words only as text.
+The driver's telemetry and update checks are turned off, and its files stay in SideKick's
+folder. The Windows package ships the driver in `resources/computer-driver`, fetched at build time by
+`scripts/fetch-computer-driver.cjs`, with its licence and notices. Only the pinned build starts: both
+executables are checked against fixed SHA-256 hashes when packaging and again before each start.
+
 `read` gives a PDF the treatment the providers' own PDF input does, the same for every provider:
 each page's text from the bundled PDF.js (`pdfReader.ts`), plus page images on that path for the
 pages whose text misses something. A page counts as scanned when it has almost no text and

@@ -37,8 +37,9 @@ export function pdfPagesShownBy(tool: ToolExecution): AgentShownImage[] {
 }
 
 /**
- * What the model looked at in a stretch of work: PDF pages and images it opened. Browser
- * screenshots stay with their own rows: a run can take dozens, and the Browser panel shows them.
+ * What the model looked at in a stretch of work: PDF pages and images it opened, and the latest
+ * look at each app it operated. Browser screenshots stay with their own rows: a run can take dozens,
+ * and the Browser panel shows them.
  */
 export function agentShownImages(segments: readonly ContentSegment[] = []): AgentShownImage[] {
   const shown = new Map<string, AgentShownImage>()
@@ -49,7 +50,20 @@ export function agentShownImages(segments: readonly ContentSegment[] = []): Agen
       shown.delete(page.key)
       shown.set(page.key, page)
     }
-    const data = tool.data as { path?: unknown; previewUrl?: unknown } | null | undefined
+    const data = tool.data as
+      | { path?: unknown; previewUrl?: unknown; app?: unknown }
+      | null
+      | undefined
+    if (
+      tool.name === 'computer' &&
+      typeof data?.previewUrl === 'string' &&
+      data.previewUrl.startsWith(LOCAL_IMAGE)
+    ) {
+      const app = String(data.app)
+      const key = `computer:${app.toLowerCase()}`
+      shown.delete(key)
+      shown.set(key, { src: data.previewUrl, alt: `The ${app} window`, caption: app, key })
+    }
     if (
       tool.name === 'view_image' &&
       typeof data?.previewUrl === 'string' &&

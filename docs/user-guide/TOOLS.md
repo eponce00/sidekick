@@ -39,6 +39,73 @@ recognition, so they stay in the conversation: the recognizer built into Windows
 Tesseract on Linux when it is installed. It runs on your computer, and the pages never leave it for
 that.
 
+## Computer use
+
+On Windows, the agent can operate other apps on this computer when you turn this on in
+**Settings › Computer use**. It is off by default, and there is nothing else to install.
+
+- **You approve each app.** The agent asks, and SideKick shows you the app and its path. Allow it
+  for this chat, or always. An app you always allow asks again if its program changes, and you can
+  remove it in Settings. Software that may control real equipment asks every time. A denial is final
+  for that request. If the app isn't open and has a Start Menu entry, SideKick
+  starts it once you allow it.
+- **Some apps are never available:** password managers, Windows security and sign-in prompts, and
+  SideKick itself.
+- **Some apps come with a warning,** because allowing one hands over much more than one app:
+  browsers hold your signed-in accounts, terminals and code editors run commands without SideKick's
+  approvals or Docker isolation, and system tools and File Explorer can change your computer's setup
+  and reach any file.
+- **Software that may control real equipment,** such as TwinCAT, gets an extra warning. A wrong click
+  or value could move a machine.
+- **Press Esc to stop it.** Everything the chat was allowed ends, and it has to ask you again. While
+  the border shows, for up to a minute after each action, other apps don't receive Esc.
+- **One chat at a time,** until its reply ends, and never in a scheduled chat.
+- **What the app shows goes to your selected model,** including any personal details on screen. A
+  model that can't see images works from the app's list of controls alone.
+
+The agent normally works in the background without moving your mouse or taking focus. While it works,
+a soft glow and a label mark the app, SideKick's own pointer shows where it is acting, and the chat
+shows its latest look at the app. Clicks pass through all of this, and it ends when the reply does.
+An app you have minimized comes back behind your other windows while the agent works in it, and goes
+back to minimized afterwards. Store apps such as Calculator work too, and open menus and dropdowns
+show in what the agent sees.
+
+Some apps ignore background input for some steps. WhatsApp scrolls in the background, for example,
+but needs a real click to type, and Docker Desktop takes no background clicks at all. The agent then chooses: it can tell you what it needs, or wait until
+you have stepped away for 10 seconds, bring the app to the front, and use your real mouse and keyboard.
+SideKick's pointer stays the one to watch. Your real one goes to the spot only for as long as a step
+needs it and then goes back where you left it, and if you touch the mouse or keyboard the agent waits again.
+The app stays in front until the reply ends, and then what you had open comes back, unless you have
+already moved on. This is never done for software that may control real
+equipment. If the app is covered or minimized, the glow gives way to a small label in the corner with a picture
+of what the agent last saw.
+
+Three more things it can ask for, each with its own limits:
+
+- **Your clipboard.** It can put text there to paste it, and what you had copied comes back when the
+  reply ends, unless you have copied something else by then. Neither reaches your clipboard history.
+  It keeps text there only if you asked for that. It can read what it copied from an app you gave it;
+  for anything you copied elsewhere it asks you first, once per chat. Anything from a password manager,
+  or that the app copying it marked as private, stays out of its reach.
+- **Your whole screen.** It asks you first, once per chat, and can then look at a display but not act
+  on it: to click or type in an app, it still has to ask for that app. Windows of password managers,
+  Windows security prompts and SideKick are blanked out before the picture leaves your computer, and
+  the chat shows you the picture it got. Passwords shown inside another app, such as a browser, are not.
+- **Showing you how.** Ask it to walk you through something in an app. It brings the app forward, points
+  at the step, and waits beside it with **Next** and **Exit**. If Next will do something in the app,
+  the step says so first.
+
+For gestures that a drag can't make, it can keep a real mouse button down and move with it, and hold a
+key for up to 10 seconds. A held button lets go by itself when you move the mouse, press Esc, the reply
+ends or 30 seconds pass. A held key lets go as soon as the app stops being in front.
+
+Before a click, SideKick checks what is being pressed where it can tell. A control named something
+like Send, Delete or Pay is refused until the agent confirms that you asked for it. Names can't catch
+everything: web-based apps may not name their controls, and a covered app can't be checked.
+
+After each step the agent sees the app again and is told if nothing changed. After a few such steps
+it is told to stop and explain, and SideKick stops sending more.
+
 The native browser catalog includes `browser_open`, `browser_observe`, `browser_screenshot`,
 `browser_click`, `browser_type`, `browser_sign_in`, `browser_select`, `browser_fill_form`, `browser_scroll`, `browser_hover`,
 `browser_wait`, `browser_navigate`, `browser_tabs`, `browser_console`, `browser_network`,
