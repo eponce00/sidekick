@@ -67,15 +67,18 @@ export function ChromeUseSetup({ saved }: { saved: boolean }): React.JSX.Element
           {!saved && <span>Press Save changes to finish.</span>}
         </span>
       }
+      // Once it's connected there's nothing to set up, and a dead button only looks broken.
       control={
-        <button
-          type="button"
-          className="settings-ghost-action is-small"
-          disabled={busy || status?.connected === true}
-          onClick={setUp}
-        >
-          {busy ? 'Setting up…' : 'Set up again'}
-        </button>
+        status?.connected ? undefined : (
+          <button
+            type="button"
+            className="settings-ghost-action is-small"
+            disabled={busy}
+            onClick={setUp}
+          >
+            {busy ? 'Setting up…' : 'Set up again'}
+          </button>
+        )
       }
     />
   )

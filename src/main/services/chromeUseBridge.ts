@@ -203,6 +203,24 @@ export class ChromeUseBridge {
     return true
   }
 
+  /** Which worker was heard from last, to tell a new one from it. */
+  latestWorker(): string | null {
+    return this.newest?.instance ?? null
+  }
+
+  /**
+   * Whether an extension worker other than this one connects in that time. Setup goes by this: a worker
+   * heard from a moment ago would otherwise count as proof that what it just loaded had worked.
+   */
+  async waitForNewWorker(other: string | null, ms: number, signal: AbortSignal): Promise<boolean> {
+    const deadline = Date.now() + ms
+    while (!this.isConnected() || this.newest?.instance === other) {
+      if (Date.now() >= deadline || signal.aborted) return false
+      await new Promise((resolve) => setTimeout(resolve, POLL_MS))
+    }
+    return true
+  }
+
   send<T>(op: string, args: Record<string, unknown>, signal: AbortSignal): Promise<T> {
     signal.throwIfAborted()
     return new Promise<T>((resolve, reject) => {

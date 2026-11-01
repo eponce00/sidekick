@@ -206,6 +206,7 @@ describe('when it is driving', () => {
 describe('the line to the extension', () => {
   const manifest = JSON.parse(readFileSync(join(BUNDLED, 'manifest.json'), 'utf8')) as {
     key: string
+    version: string
   }
   const origin = `chrome-extension://${chromeExtensionId(manifest.key)}`
 
@@ -246,6 +247,32 @@ describe('the line to the extension', () => {
     // A page that points its own name at this address.
     expect(await call({ authorization: bearer, origin, host: 'evil.example' })).toBe(403)
     expect(await call({ authorization: bearer, origin, host: `127.0.0.1:${port}` })).toBe(204)
+    await bridge.close()
+  })
+
+  it('only takes a new worker as proof that setup loaded the extension', async () => {
+    const { bridge, token, port } = await line()
+    const ask = (instance: string): void => {
+      request({
+        host: '127.0.0.1',
+        port,
+        path: '/next',
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          origin,
+          'x-sidekick-instance': instance,
+          'x-sidekick-version': manifest.version
+        }
+      })
+        .on('error', () => undefined)
+        .end()
+    }
+    ask('old')
+    await vi.waitFor(() => expect(bridge.latestWorker()).toBe('old'))
+    expect(await bridge.waitForNewWorker('old', 50, signal)).toBe(false)
+    ask('new')
+    expect(await bridge.waitForNewWorker('old', 2000, signal)).toBe(true)
     await bridge.close()
   })
 

@@ -1,5 +1,5 @@
 import { promises as fs } from 'fs'
-import { basename, join } from 'path'
+import { join } from 'path'
 import type { ComputerDriver } from './computerUseDriver'
 import { startComputerDriver } from './computerUseDriver'
 import type { ComputerUseWindows } from './computerUseWindows'
@@ -48,8 +48,7 @@ export function parseChromeProfiles(localState: string): ChromeProfile[] {
       managed,
       ...(managed ? { domain: info.hosted_domain } : {}),
       // Only a file name: it is read from inside this profile's folder and nowhere else.
-      ...(info.gaia_picture_file_name &&
-      basename(info.gaia_picture_file_name) === info.gaia_picture_file_name
+      ...(info.gaia_picture_file_name && /^[^\\/:]+$/.test(info.gaia_picture_file_name)
         ? { pictureFile: info.gaia_picture_file_name }
         : {}),
       // Stored as a signed number holding alpha, red, green and blue.

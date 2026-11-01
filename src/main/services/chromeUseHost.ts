@@ -156,6 +156,7 @@ async function runSetup(signal: AbortSignal): Promise<boolean> {
   if (!choice) return false
   const line = bridgeOf()
   await line.start()
+  const before = line.latestWorker()
   const failed = await setUpChromeExtension({
     chrome,
     profile: choice.directory,
@@ -163,7 +164,7 @@ async function runSetup(signal: AbortSignal): Promise<boolean> {
     driverPath: bundledDriver(),
     dataFolder: join(app.getPath('userData'), 'chrome-extension-setup'),
     windows,
-    waitForConnection: (ms, wait) => line.waitForConnection(ms, wait),
+    waitForConnection: (ms, wait) => line.waitForNewWorker(before, ms, wait),
     signal
   }).catch((error: unknown) => (error instanceof Error ? error.message : String(error)))
   if (failed === null) {
