@@ -2,7 +2,7 @@
   "conversation": {
     "systemPromptBytes": 16693,
     "toolCount": 60,
-    "toolJsonBytes": 49845,
+    "toolJsonBytes": 49810,
     "toolBytes": {
       "apply_patch": 1850,
       "ask_user": 1358,
@@ -11,7 +11,7 @@
       "browser_close": 226,
       "browser_console": 330,
       "browser_download": 521,
-      "browser_evaluate": 567,
+      "browser_evaluate": 539,
       "browser_fill_form": 2152,
       "browser_hold": 1558,
       "browser_hover": 811,
@@ -29,7 +29,7 @@
       "browser_sign_in": 1087,
       "browser_tabs": 328,
       "browser_type": 1245,
-      "browser_upload": 620,
+      "browser_upload": 613,
       "browser_verify": 810,
       "browser_wait": 501,
       "cancel_background_task": 267,

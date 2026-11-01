@@ -408,6 +408,12 @@ function compactAction(result: BrowserActionResult, screenshotAttached: boolean)
     quiescence: result.quiescence,
     loopProtection: result.loopProtection,
     ...(result.effect ? { effect: result.effect } : {}),
+    ...(result.fileChooserOpened
+      ? {
+          fileChooserOpened: true,
+          next: 'The page is asking for a file. Call browser_upload with the paths and no ref to answer it.'
+        }
+      : {}),
     observation: compactObservation(result.observation, screenshotAttached)
   }
 }
@@ -2173,7 +2179,7 @@ export function registerBrowserToolHandlers(
             sessionId: lease.sessionId,
             workspaceRoot: context.workspaceRoot,
             paths,
-            target: targetFromArguments(args, { required: true, coordinates: false })!
+            target: targetFromArguments(args, { required: false, coordinates: false })
           },
           { signal: context.signal }
         )

@@ -21,7 +21,6 @@ function harness(url = 'https://shop.example/page', answer = true, everySite = t
   const confirmSite = vi.fn(async () => answer)
   const confirmSharedTab = vi.fn(async () => answer)
   const confirmPress = vi.fn(async () => answer)
-  const confirmScript = vi.fn(async () => answer)
   const disarm = vi.fn()
   const overlay = {
     show: vi.fn(),
@@ -45,7 +44,6 @@ function harness(url = 'https://shop.example/page', answer = true, everySite = t
     confirmSite,
     confirmSharedTab,
     confirmPress,
-    confirmScript,
     confirmDownload: async () => answer,
     confirmUpload: async () => answer
   })
@@ -60,8 +58,7 @@ function harness(url = 'https://shop.example/page', answer = true, everySite = t
     disarm,
     confirmSite,
     confirmSharedTab,
-    confirmPress,
-    confirmScript
+    confirmPress
   }
 }
 
@@ -155,17 +152,6 @@ describe('what the agent may reach in Chrome', () => {
     await service.beforePress('Details', 'https://shop.example/', signal)
     expect(confirmPress).toHaveBeenCalledTimes(1)
   })
-
-  it('shows the user every script, since one can read all a signed-in page holds', async () => {
-    const { service, confirmScript } = harness()
-    await service.beforeEvaluate('document.cookie', 'https://shop.example/', signal)
-    await service.beforeEvaluate('document.cookie', 'https://shop.example/', signal)
-    expect(confirmScript).toHaveBeenCalledTimes(2)
-    confirmScript.mockResolvedValue(false)
-    await expect(
-      service.beforeEvaluate('document.cookie', 'https://shop.example/', signal)
-    ).rejects.toThrow('did not allow')
-  })
 })
 
 describe('scripts that only look', () => {
@@ -192,7 +178,7 @@ describe('scripts that only look', () => {
     "eval('1')",
     "[].constructor.constructor('return 1')()",
     'await 1'
-  ])('asks about %s', (script) => {
+  ])('won’t run %s', (script) => {
     expect(readsLikeALook(script)).toBe(false)
   })
 })

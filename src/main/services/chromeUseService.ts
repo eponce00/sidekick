@@ -25,8 +25,8 @@ const NOT_A_LOOK =
   /\\u|\\x|\b(cookies?|localStorage|sessionStorage|indexedDB|caches|credentials|eval|Function|Reflect|getOwnPropertyDescriptors?|__lookupGetter__|__proto__|prototype|constructor|with|await|async|then)\b/
 
 /**
- * Whether a script can be left to Chromium's check, as far as its words go. Failing here only costs the user a
- * question, so anything that could be naming a property some other way does.
+ * Whether a script can be left to Chromium's check, as far as its words go. Failing here only costs the agent
+ * a script, so anything that could be naming a property some other way does.
  */
 export function readsLikeALook(expression: string): boolean {
   if (NOT_A_LOOK.test(expression)) return false
@@ -62,7 +62,6 @@ export interface ChromeUseDependencies {
   askEverySite: () => boolean
   confirmSharedTab: (tab: { title: string; url: string }, signal: AbortSignal) => Promise<boolean>
   confirmPress: (name: string, origin: string, signal: AbortSignal) => Promise<boolean>
-  confirmScript: (expression: string, origin: string, signal: AbortSignal) => Promise<boolean>
   confirmDownload: (url: string, signal: AbortSignal) => Promise<boolean>
   confirmUpload: (files: readonly string[], origin: string, signal: AbortSignal) => Promise<boolean>
   /** Opens Chrome if SideKick's extension was set up in it, or offers to set it up. */
@@ -131,6 +130,10 @@ export class ChromeUseService implements NativeBrowserPolicy {
   private disarm: (() => void) | null = null
   private disarmTimer: ReturnType<typeof setTimeout> | null = null
   private readonly quiet = new AbortController().signal
+
+  /** No question about it: nobody should be asked to judge code, and the page tools do the rest. */
+  readonly scriptRefusal =
+    "That script wasn't run. In the user's own Chrome a script can only look at a page, and this one could change something or reach cookies, saved site data or a filled-in password. Use browser_observe, browser_click, browser_type or browser_scroll."
 
   /** SideKick's stored logins are for its own browser. Chrome has the user's own. */
   readonly signInRefusal =
@@ -300,17 +303,8 @@ export class ChromeUseService implements NativeBrowserPolicy {
     }
   }
 
-  mayRunQuietly(expression: string): boolean {
+  mayRunScript(expression: string): boolean {
     return readsLikeALook(expression)
-  }
-
-  /** One that could change something or send it somewhere is shown to the user, as it acts as them there. */
-  async beforeEvaluate(expression: string, pageUrl: string, signal?: AbortSignal): Promise<void> {
-    if (!(await this.deps.confirmScript(expression, originOf(pageUrl), signal ?? this.quiet))) {
-      throw new ComputerUseRefusal(
-        'The user did not allow running that script. Read the page with browser_observe instead.'
-      )
-    }
   }
 
   async beforeDownload(url: string, signal?: AbortSignal): Promise<void> {

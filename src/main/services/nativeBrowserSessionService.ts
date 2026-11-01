@@ -237,6 +237,8 @@ export interface BrowserActionResult {
   targetMode: 'ref' | 'semantic' | 'selector' | 'coordinates' | 'page'
   coordinateFallbackUsed: boolean
   durationMs: number
+  /** The page asked for a file, and is waiting on browser_upload. */
+  fileChooserOpened?: boolean
   quiescence: BrowserQuiescenceResult
   loopProtection: {
     unchangedRepeatCount: number
@@ -674,9 +676,10 @@ export interface NativeBrowserPolicy {
   beforePress(name: string, pageUrl: string, signal?: AbortSignal): Promise<void>
   /** Before text goes into a field. */
   beforeTyping(field: { secret: boolean }): void
-  /** Whether a script can go ahead without asking, as long as Chromium finds it only looks. */
-  mayRunQuietly(expression: string): boolean
-  beforeEvaluate(expression: string, pageUrl: string, signal?: AbortSignal): Promise<void>
+  /** Whether a script can be run at all, as long as Chromium finds it only looks. */
+  mayRunScript(expression: string): boolean
+  /** What the agent is told about one that can't. */
+  readonly scriptRefusal: string
   beforeDownload(url: string, signal?: AbortSignal): Promise<void>
   beforeUpload(files: readonly string[], pageUrl: string, signal?: AbortSignal): Promise<void>
   /** Why SideKick's stored credentials can't be used here, if they can't. */
@@ -684,8 +687,12 @@ export interface NativeBrowserPolicy {
 }
 
 /** What a control is, for the policy: read from the page, so a name can't be avoided by clicking by pixel. */
+/** What a password or payment field calls itself, in its type, name, id or label. */
+const SECRET_FIELD =
+  /password|passwd|passcode|one-time-code|cc-|card.?(num|number)|cvv|cvc|security.?code|ssn/i
+
 const POLICY_CONTROL_SCRIPT = `function () {
-  const SECRET = /password|passwd|passcode|one-time-code|cc-|card.?(num|number)|cvv|cvc|security.?code|ssn/i
+  const SECRET = ${SECRET_FIELD}
   const secret = (element) =>
     element?.type === 'password' ||
     SECRET.test([element?.autocomplete, element?.name, element?.id, element?.getAttribute?.('aria-label')].join(' '))
@@ -704,7 +711,7 @@ const QUIET_SCRIPT_TIMEOUT_MS = 5_000
 
 /** Whether a filled-in secret field is on the page, and what a script reading cookies would find. */
 const PAGE_SECRETS_SCRIPT = `(() => {
-  const SECRET = /password|passwd|passcode|one-time-code|cc-|card.?(num|number)|cvv|cvc|security.?code|ssn/i
+  const SECRET = ${SECRET_FIELD}
   const secret = (element) =>
     element.type === 'password' ||
     SECRET.test([element.autocomplete, element.name, element.id, element.getAttribute('aria-label')].join(' '))
@@ -830,6 +837,8 @@ interface TabState {
   secretFields?: number[]
   /** The WebMCP tools the tab's top-level document offers. */
   webMcp: WebMcpPageTools
+  /** A file chooser the agent's own click opened, which is waiting for browser_upload. */
+  fileChooser?: { backendNodeId: number; multiple: boolean }
 }
 
 interface OpeningReservation {
@@ -2466,6 +2475,15 @@ export class NativeBrowserSessionService {
     ) {
       tab.webMcp.handle(method, params)
     }
+    if (method === 'Page.fileChooserOpened') {
+      if (typeof params.backendNodeId === 'number') {
+        tab.fileChooser = {
+          backendNodeId: params.backendNodeId,
+          multiple: params.mode === 'selectMultiple'
+        }
+      }
+      return
+    }
     if (method === 'Network.requestWillBeSent') {
       const requestId = String(params.requestId ?? '')
       const request = (params.request ?? {}) as Record<string, unknown>
@@ -3313,14 +3331,12 @@ export class NativeBrowserSessionService {
       ),
       signal
     )
-    const allNodes = response.nodes ?? []
-    const nodes = new Map(allNodes.map((node) => [node.nodeId, node]))
+    let allNodes = response.nodes ?? []
+    let nodes = new Map(allNodes.map((node) => [node.nodeId, node]))
     tab.refs.clear()
     tab.semanticNodes = []
     let emitted = 0
     let output = ''
-    const roots = allNodes.filter((node) => !node.parentId || !nodes.has(node.parentId))
-
     const visit = (node: CDPAXNode, level: number): void => {
       if (emitted >= MAX_SEMANTIC_NODES || output.length >= MAX_SEMANTIC_CHARS) return
       const role = valueOf(node.role) || 'generic'
@@ -3373,11 +3389,82 @@ export class NativeBrowserSessionService {
         if (child) visit(child, level + (ignored ? 0 : 1))
       }
     }
-    for (const root of roots) visit(root, 0)
+    const visitRoots = (level: number): void => {
+      for (const node of allNodes) {
+        if (!node.parentId || !nodes.has(node.parentId)) visit(node, level)
+      }
+    }
+    visitRoots(0)
+    for (const frame of await this.childFrames(tab, signal)) {
+      const inFrame = await abortable(
+        tab.surface.sendDebuggerCommand<{ nodes: CDPAXNode[] }>('Accessibility.getFullAXTree', {
+          frameId: frame.id,
+          ...(depth ? { depth } : {})
+        }),
+        signal
+      ).catch(() => null)
+      if (!inFrame) {
+        // On another site, where the debugger on this tab can't see.
+        output += `- note: the frame from ${quoteSnapshot(frame.url)} can't be read. Use a screenshot and coordinates to click in it.\n`
+        continue
+      }
+      // A sign-in or card form in a frame stays out of the agent's reach, all of it.
+      if (await this.holdsSecretField(tab, inFrame.nodes ?? [], signal)) {
+        output += `- note: the frame from ${quoteSnapshot(frame.url)} holds a sign-in or payment form, so it isn't read. Ask the user to fill it.\n`
+        continue
+      }
+      allNodes = inFrame.nodes ?? []
+      nodes = new Map(allNodes.map((node) => [node.nodeId, node]))
+      visitRoots(1)
+    }
     if (emitted >= MAX_SEMANTIC_NODES || output.length >= MAX_SEMANTIC_CHARS) {
       output += '... semantic snapshot truncated ...\n'
     }
     return { snapshot: output.trimEnd(), count: emitted }
+  }
+
+  private async holdsSecretField(
+    tab: TabState,
+    nodes: CDPAXNode[],
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    for (const node of nodes) {
+      if (valueOf(node.role) !== 'textbox' || !node.backendDOMNodeId) continue
+      const described = await abortable(
+        tab.surface.sendDebuggerCommand<{ node?: { attributes?: string[] } }>('DOM.describeNode', {
+          backendNodeId: node.backendDOMNodeId
+        }),
+        signal
+      ).catch(() => null)
+      // Not knowing is not the same as it being safe.
+      if (!described) return true
+      const words = [...(described.node?.attributes ?? []), valueOf(node.name)].join(' ')
+      if (SECRET_FIELD.test(words)) return true
+    }
+    return false
+  }
+
+  private async childFrames(
+    tab: TabState,
+    signal?: AbortSignal
+  ): Promise<Array<{ id: string; url: string }>> {
+    interface FrameNode {
+      frame: { id: string; url: string }
+      childFrames?: FrameNode[]
+    }
+    const tree = await abortable(
+      tab.surface.sendDebuggerCommand<{ frameTree: FrameNode }>('Page.getFrameTree'),
+      signal
+    ).catch(() => null)
+    const frames: Array<{ id: string; url: string }> = []
+    const walk = (node: FrameNode): void => {
+      for (const child of node.childFrames ?? []) {
+        if (/^https?:/.test(child.frame.url)) frames.push(child.frame)
+        walk(child)
+      }
+    }
+    if (tree) walk(tree.frameTree)
+    return frames
   }
 
   async screenshot(
@@ -3853,7 +3940,18 @@ export class NativeBrowserSessionService {
         backendNodeId,
         `function() {
           const rect = this.getBoundingClientRect();
-          return { x: rect.x, y: rect.y, pageX: rect.x + window.scrollX, pageY: rect.y + window.scrollY,
+          let x = rect.x;
+          let y = rect.y;
+          let view = window;
+          // Measured from its own frame, where input and pictures go by the page as a whole.
+          while (view.frameElement) {
+            const frame = view.frameElement;
+            const box = frame.getBoundingClientRect();
+            x += box.x + frame.clientLeft;
+            y += box.y + frame.clientTop;
+            view = view.parent;
+          }
+          return { x, y, pageX: x + view.scrollX, pageY: y + view.scrollY,
             width: rect.width, height: rect.height };
         }`,
         [],
@@ -3976,26 +4074,142 @@ export class NativeBrowserSessionService {
       tab.surface.focus()
       const button = input.button ?? 'left'
       const clickCount = input.clickCount ?? 1
-      tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
-      tab.surface.sendInputEvent({
-        type: 'mouseDown',
-        x: target.x,
-        y: target.y,
-        button,
-        clickCount
+      return this.catchingFileChooser(tab, () => {
+        tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
+        tab.surface.sendInputEvent({
+          type: 'mouseDown',
+          x: target.x,
+          y: target.y,
+          button,
+          clickCount
+        })
+        tab.surface.sendInputEvent({
+          type: 'mouseUp',
+          x: target.x,
+          y: target.y,
+          button,
+          clickCount
+        })
+        return this.finishAction(
+          session,
+          tab,
+          'click',
+          target.mode,
+          target.fallbackUsed,
+          fingerprint,
+          startedAt,
+          signal
+        )
       })
-      tab.surface.sendInputEvent({ type: 'mouseUp', x: target.x, y: target.y, button, clickCount })
-      return this.finishAction(
-        session,
-        tab,
-        'click',
-        target.mode,
-        target.fallbackUsed,
-        fingerprint,
-        startedAt,
-        signal
-      )
     })
+  }
+
+  /**
+   * While the agent's own input runs, a file chooser comes here rather than opening on the user's screen,
+   * where nothing but the user could answer it. Only then: one the user opens stays theirs.
+   */
+  private async catchingFileChooser(
+    tab: TabState,
+    act: () => Promise<BrowserActionResult>
+  ): Promise<BrowserActionResult> {
+    const intercept = (enabled: boolean): Promise<unknown> =>
+      tab.surface
+        .sendDebuggerCommand('Page.setInterceptFileChooserDialog', { enabled })
+        .catch(() => undefined)
+    await intercept(true)
+    tab.fileChooser = undefined
+    try {
+      const result = await act()
+      return tab.fileChooser ? { ...result, fileChooserOpened: true } : result
+    } finally {
+      await intercept(false)
+    }
+  }
+
+  /** The file input itself, or the one inside a drop zone or styled wrapper that was pointed at. */
+  private async fileInputOf(
+    tab: TabState,
+    backendNodeId: number,
+    signal?: AbortSignal
+  ): Promise<number> {
+    const objectId = await this.resolvedNodeObject(tab, backendNodeId, signal)
+    const found = await abortable(
+      tab.surface.sendDebuggerCommand<{ result?: { objectId?: string } }>(
+        'Runtime.callFunctionOn',
+        {
+          objectId,
+          functionDeclaration:
+            "function() { return this.tagName === 'INPUT' ? this : this.querySelector('input[type=file]') }"
+        }
+      ),
+      signal
+    )
+    if (!found.result?.objectId) return backendNodeId
+    const described = await abortable(
+      tab.surface.sendDebuggerCommand<{ node?: { backendNodeId?: number } }>('DOM.describeNode', {
+        objectId: found.result.objectId
+      }),
+      signal
+    )
+    return described.node?.backendNodeId ?? backendNodeId
+  }
+
+  private async selectFiles(
+    tab: TabState,
+    backendNodeId: number,
+    files: string[],
+    signal?: AbortSignal
+  ): Promise<void> {
+    await abortable(
+      tab.surface.sendDebuggerCommand('DOM.setFileInputFiles', { backendNodeId, files }),
+      signal
+    )
+    const selected = await this.callOnNode<string[]>(
+      tab,
+      backendNodeId,
+      'function() { return Array.from(this.files || []).map(file => file.name); }',
+      [],
+      signal
+    )
+    if (
+      selected.length !== files.length ||
+      selected.some((name, index) => name !== basename(files[index]))
+    )
+      throw new Error('Upload selection could not be verified; inspect page state before retrying')
+  }
+
+  /** As dragging them there would, for a zone with no file input behind it. */
+  private async dropFiles(
+    tab: TabState,
+    backendNodeId: number,
+    files: string[],
+    signal?: AbortSignal
+  ): Promise<void> {
+    const payload = await Promise.all(
+      files.map(async (file) => ({
+        name: basename(file),
+        data: (await fs.readFile(file)).toString('base64')
+      }))
+    )
+    const taken = await this.callOnNode<boolean>(
+      tab,
+      backendNodeId,
+      `function (files) {
+        const dataTransfer = new DataTransfer()
+        for (const file of files) {
+          const bytes = Uint8Array.from(atob(file.data), (c) => c.charCodeAt(0))
+          dataTransfer.items.add(new File([bytes], file.name))
+        }
+        const send = (type) =>
+          this.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, composed: true, dataTransfer }))
+        send('dragenter')
+        send('dragover')
+        return !send('drop')
+      }`,
+      [payload],
+      signal
+    )
+    if (!taken) throw new Error('That element does not take dropped files')
   }
 
   async hold(
@@ -4192,7 +4406,7 @@ export class NativeBrowserSessionService {
   }
 
   async upload(
-    input: { sessionId: string; target: BrowserTarget; workspaceRoot: string; paths: string[] },
+    input: { sessionId: string; target?: BrowserTarget; workspaceRoot: string; paths: string[] },
     operation: BrowserOperationOptions = {}
   ): Promise<BrowserActionResult> {
     const session = this.getSession(input.sessionId)
@@ -4217,12 +4431,58 @@ export class NativeBrowserSessionService {
       await this.ensureBaselineHash(session, tab, signal)
       await this.assertAutomatedMutationAllowed(tab, signal)
       await this.options.policy?.beforeUpload(files, tab.surface.getURL(), signal)
-      const target = await this.resolveTarget(tab, input.target, false, signal)
+      const chooser = input.target ? undefined : tab.fileChooser
+      if (!input.target && !chooser) {
+        throw new Error(
+          'Nothing is waiting for a file here. Click the control that opens the file chooser, or pass a ref or selector for a file input or drop zone.'
+        )
+      }
+      if (chooser) {
+        if (files.length > 1 && !chooser.multiple) {
+          throw new Error('This file chooser takes one file at a time')
+        }
+        const startedAt = this.now()
+        await this.selectFiles(tab, chooser.backendNodeId, files, signal)
+        tab.fileChooser = undefined
+        return this.finishAction(
+          session,
+          tab,
+          'upload',
+          'page',
+          false,
+          fingerprint,
+          startedAt,
+          signal
+        )
+      }
+      const target = await this.resolveTarget(tab, input.target!, false, signal)
       if (!target.backendNodeId)
         throw new Error('Upload requires a file-input reference or selector')
-      const valid = await this.callOnNode<boolean>(
+      const isDropZone = await this.callOnNode<boolean>(
         tab,
         target.backendNodeId,
+        "function() { return !(this.tagName === 'INPUT' && this.type === 'file') && !this.querySelector?.('input[type=file]') }",
+        [],
+        signal
+      )
+      if (isDropZone) {
+        const startedAt = this.now()
+        await this.dropFiles(tab, target.backendNodeId, files, signal)
+        return this.finishAction(
+          session,
+          tab,
+          'upload',
+          target.mode,
+          target.fallbackUsed,
+          fingerprint,
+          startedAt,
+          signal
+        )
+      }
+      const inputNode = await this.fileInputOf(tab, target.backendNodeId, signal)
+      const valid = await this.callOnNode<boolean>(
+        tab,
+        inputNode,
         `function() { return this.isConnected && this.tagName === 'INPUT' && this.type === 'file' && !this.disabled && (${files.length} === 1 || this.multiple); }`,
         [],
         signal
@@ -4230,27 +4490,7 @@ export class NativeBrowserSessionService {
       if (!valid)
         throw new Error('Target must be an enabled file input supporting the selected file count')
       const startedAt = this.now()
-      await abortable(
-        tab.surface.sendDebuggerCommand('DOM.setFileInputFiles', {
-          backendNodeId: target.backendNodeId,
-          files
-        }),
-        signal
-      )
-      const selected = await this.callOnNode<string[]>(
-        tab,
-        target.backendNodeId,
-        'function() { return Array.from(this.files || []).map(file => file.name); }',
-        [],
-        signal
-      )
-      if (
-        selected.length !== files.length ||
-        selected.some((name, index) => name !== basename(files[index]))
-      )
-        throw new Error(
-          'Upload selection could not be verified; inspect page state before retrying'
-        )
+      await this.selectFiles(tab, inputNode, files, signal)
       return this.finishAction(
         session,
         tab,
@@ -6511,13 +6751,12 @@ export class NativeBrowserSessionService {
       }
       await this.assertAutomatedMutationAllowed(tab, signal)
       const policy = this.options.policy
-      let envelope = policy?.mayRunQuietly(input.expression)
-        ? await this.evaluateQuietly(tab, input.expression, signal)
-        : null
-      if (!envelope) {
-        await policy?.beforeEvaluate(input.expression, tab.surface.getURL(), signal)
-        envelope = await this.evaluateExpression(tab, input.expression, signal)
-      }
+      const envelope = policy
+        ? policy.mayRunScript(input.expression)
+          ? await this.evaluateQuietly(tab, input.expression, signal)
+          : null
+        : await this.evaluateExpression(tab, input.expression, signal)
+      if (!envelope) throw new Error(policy?.scriptRefusal)
       let value: unknown = envelope.json
       if (!envelope.truncated) {
         try {
@@ -6539,7 +6778,7 @@ export class NativeBrowserSessionService {
   /**
    * Runs a script that can only look, as DevTools' console previews what is being typed: Chromium stops it
    * at anything that would change the page or reach the network. Null if it can't be run that way, or what
-   * it found includes what a look shouldn't, and it's for the rules to decide about instead.
+   * it found includes what a look shouldn't.
    */
   private async evaluateQuietly(
     tab: TabState,
