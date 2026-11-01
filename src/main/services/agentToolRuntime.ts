@@ -102,7 +102,9 @@ import type { ArtifactInspectorLike } from './artifactInspector'
 import type { InspectedArtifactType } from '../../shared/artifactInspection'
 import { registerMcpToolHandlers } from './agentMcpToolHandlers'
 import { registerVisionToolHandlers } from './agentVisionToolHandlers'
+import { registerChromeToolHandlers } from './agentChromeToolHandlers'
 import { registerComputerToolHandlers } from './agentComputerToolHandlers'
+import type { ChromeUseService } from './chromeUseService'
 import type { ComputerUseService } from './computerUseService'
 import { externalImageApprovalForMode } from './externalImageApproval'
 import type { PermissionMode } from '../../shared/permissions'
@@ -189,6 +191,8 @@ export interface AgentToolRuntimeSessionInput {
   browserEnabled?: boolean
   /** Operating other apps on this computer. Only ever set from the user's settings. */
   computer?: { service: ComputerUseService; vision: boolean }
+  /** Working in the user's own Chrome. Only ever set from the user's settings. */
+  chrome?: { service: ChromeUseService; vision: boolean }
   /** Page images one PDF read may attach: the provider's image budget, or 0 for a text model. */
   pageImages?: number
   /** The previous reply made an artifact, so the web-artifacts guidance is already in history. */
@@ -603,6 +607,11 @@ export class AgentToolRuntime {
         vision: input.computer.vision
       })
     }
+    if (input.chrome) {
+      registerChromeToolHandlers(handlers, input.chrome.service, this.outputs, {
+        vision: input.chrome.vision
+      })
+    }
     if (input.browserEnabled === true && this.browser) {
       registerBrowserToolHandlers(handlers, this.browser, this.outputs, {
         credentials: () => this.credentials?.uses
@@ -732,6 +741,7 @@ export class AgentToolRuntime {
       webSearchEnabled: input.webSearchEnabled,
       browserEnabled: input.browserEnabled === true && Boolean(this.browser),
       computerEnabled: Boolean(input.computer),
+      chromeEnabled: Boolean(input.chrome),
       activeSkillIds: [...activeSkillIds],
       officeHelpersAvailable: officeSession?.available() ?? false,
       capabilities: input.capabilities,
@@ -808,6 +818,7 @@ export class AgentToolRuntime {
         releaseRun: (runId) => {
           this.credentials?.uses?.releaseRun(runId)
           input.computer?.service.runEnded(input.conversationId ?? runId)
+          input.chrome?.service.runEnded()
         },
         ...(this.browser
           ? {

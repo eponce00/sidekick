@@ -540,6 +540,7 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       'start' {
         $info = New-Object System.Diagnostics.ProcessStartInfo ([string]$c.path)
         $info.UseShellExecute = $true
+        if ($c.args) { $info.Arguments = [string]$c.args }
         if ($c.path -notlike 'shell:*') { $info.WorkingDirectory = [System.IO.Path]::GetDirectoryName([string]$c.path) }
         [void][System.Diagnostics.Process]::Start($info)
         $answer = $true
@@ -931,8 +932,8 @@ export class ComputerUseWindows {
    * started that way kept SideKick's debugging port open after SideKick had closed, so the next start
    * couldn't have it.
    */
-  launch(path: string): Promise<boolean> {
-    return this.confirm({ op: 'start', path })
+  launch(path: string, args: readonly string[] = []): Promise<boolean> {
+    return this.confirm({ op: 'start', path, args: args.join(' ') })
   }
 
   ignoresPostedClicks(window: number): Promise<boolean> {

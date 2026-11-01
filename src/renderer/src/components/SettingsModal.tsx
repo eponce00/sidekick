@@ -16,6 +16,7 @@ import {
   KeyRound,
   LifeBuoy,
   MapPin,
+  Chrome,
   MousePointerClick,
   Palette,
   RefreshCw,
@@ -47,6 +48,7 @@ import { ACCENT_PALETTES, DEFAULT_ACCENT_PALETTE } from '../../../shared/accentP
 import { DEFAULT_TEXT_SCALE, nearestTextScale, steppedTextScale } from '../../../shared/textScale'
 import { applyAccentPalette } from '../constants/accentPalettes'
 import { CommandLineToolSettings } from './CommandLineToolSettings'
+import { ChromeUseSetup } from './ChromeUseSetup'
 import { ComputerUseAllowedApps } from './ComputerUseAllowedApps'
 import { CredentialSettings } from './CredentialSettings'
 import { McpServerSettings } from './McpServerSettings'
@@ -319,6 +321,21 @@ function SettingsModal({
                 onChange={(computerUseEnabled) => setSettings({ ...settings, computerUseEnabled })}
               />
               <ComputerUseAllowedApps />
+            </SettingsSection>
+          )}
+          {window.api.app.platform === 'windows' && (
+            <SettingsSection
+              icon={Chrome}
+              title="Chrome"
+              description="Lets the agent work in your own Chrome, with your sign-ins. Each site and any tab you share needs your approval."
+            >
+              <ToggleField
+                label="Let the agent ask to use Chrome"
+                hint="It can't see your other tabs, or fill in password or payment fields itself, and asks before pressing things like Buy or Send. What it reads goes to your selected model."
+                checked={settings.chromeUseEnabled ?? false}
+                onChange={(chromeUseEnabled) => setSettings({ ...settings, chromeUseEnabled })}
+              />
+              {settings.chromeUseEnabled && <ChromeUseSetup />}
             </SettingsSection>
           )}
           <SettingsSection

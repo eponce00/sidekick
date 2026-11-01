@@ -874,6 +874,10 @@ export function installBrowserApiMock(): void {
       getGenerationStats: async () => ({ ok: false, error: 'UI preview' }),
       onHealthChanged: () => () => undefined
     },
+    chromeUse: {
+      status: async () => ({ connected: false, installed: false }),
+      setUp: async () => false
+    },
     computerUse: {
       rememberedApps: async () => [],
       forgetApp: async () => undefined

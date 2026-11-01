@@ -12,6 +12,11 @@ import type {
   ProviderTarget
 } from '../shared/providerRuntime'
 
+interface ChromeUseAPI {
+  status: () => Promise<{ connected: boolean; installed: boolean }>
+  setUp: () => Promise<boolean>
+}
+
 interface ComputerUseAPI {
   rememberedApps: () => Promise<ComputerRememberedApp[]>
   forgetApp: (path: string) => Promise<void>
@@ -418,6 +423,7 @@ interface WorkspaceAPI {
 
 export interface DesktopApi {
   providers: ProvidersAPI
+  chromeUse: ChromeUseAPI
   computerUse: ComputerUseAPI
   settings: SettingsAPI
   commandLine: CommandLineAPI

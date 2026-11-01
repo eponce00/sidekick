@@ -379,6 +379,16 @@ folder. The Windows package ships the driver in `resources/computer-driver`, fet
 `scripts/fetch-computer-driver.cjs`, with its licence and notices. Only the pinned build starts: both
 executables are checked against fixed SHA-256 hashes when packaging and again before each start.
 
+The `chrome` tool works in the user's own Chrome through an extension in `resources/chrome-extension`,
+which SideKick copies to its data folder, so no store or native host is involved. The extension asks
+`chromeUseBridge.ts` for work over the loopback address, proving itself with a secret written in its own
+folder and its fixed origin. `chromeUseService.ts` decides everything in the main process: only tabs the
+chat opened or the user shared, approved sites checked again on every step, no typing in password or
+payment fields, and a trusted dialog before risky presses. The extension reads pages from an isolated
+world, and takes the debugger for real input, pictures and its own tabs, with focus emulation so a covered
+window keeps working. There is no way for the model to run its own script or
+read cookies. `chromeUseSetup.ts` does the one-time load with the computer-use driver, after the user's yes.
+
 `read` gives a PDF the treatment the providers' own PDF input does, the same for every provider:
 each page's text from the bundled PDF.js (`pdfReader.ts`), plus page images on that path for the
 pages whose text misses something. A page counts as scanned when it has almost no text and

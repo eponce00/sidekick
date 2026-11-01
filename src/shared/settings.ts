@@ -124,6 +124,8 @@ export interface ProviderSettings {
   voiceEnabled?: boolean
   /** Lets the agent operate apps the user approves, on Windows. Off unless true. */
   computerUseEnabled?: boolean
+  /** Lets the agent ask to work in the user's own Chrome, on Windows. Off unless true. */
+  chromeUseEnabled?: boolean
   /** Lets the agent search the web through public search engines. On unless false. */
   webSearchEnabled?: boolean
   /** Checks GitHub Releases for updates after startup and every six hours. On unless false. */
