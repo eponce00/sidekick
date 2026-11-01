@@ -1661,8 +1661,15 @@ const coreEntries: AgentToolCatalogEntry[] = [
   // Execute risk: operating an app asks in the stricter modes, on top of the per-app approval.
   entry(computer, 'computer', 'execute', {
     host: 'main',
-    timeoutMs: 120_000,
-    concurrency: 'exclusive'
+    // A full batch, with the wait for the user to step away.
+    timeoutMs: 300_000,
+    concurrency: 'exclusive',
+    // What the step did stays its label when it ends, or the chat reads "computer" on every row.
+    presentation: {
+      kind: presentationKind('computer'),
+      call: (args) => presentationTitle('computer', presentationKind('computer'), args),
+      result: (args) => presentationTitle('computer', presentationKind('computer'), args)
+    }
   }),
   entry(webSearch, 'web.search', 'network'),
   entry(webImageSearch, 'web.images', 'network'),

@@ -145,7 +145,12 @@ export function registerComputerToolHandlers(
           return service.drag(
             chat,
             app,
-            { x: number(step, 'x'), y: number(step, 'y'), element: row },
+            {
+              x: number(step, 'x'),
+              y: number(step, 'y'),
+              // Models reach for this name, since the other end is to_element.
+              element: row ?? number(step, 'from_element')
+            },
             {
               x: number(step, 'to_x'),
               y: number(step, 'to_y'),
