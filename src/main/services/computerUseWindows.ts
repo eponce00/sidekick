@@ -245,6 +245,24 @@ public static class SideKickWindows {
     }, IntPtr.Zero);
     return string.Join(";", found);
   }
+  // Dialogs a window owns, in the same form as WindowsOf. Chrome shows its folder picker from another of
+  // its processes, which owns no window of its own, so going by process doesn't find it.
+  public static string OwnedBy(long window) {
+    IntPtr main = new IntPtr(window);
+    StringBuilder all = new StringBuilder();
+    EnumWindows(delegate(IntPtr h, IntPtr l) {
+      Rect r;
+      if (GetWindow(h, 4) != main || !IsWindowVisible(h) || !GetWindowRect(h, out r)) return true;
+      StringBuilder title = new StringBuilder(512);
+      GetWindowText(h, title, 512);
+      string text = title.ToString().Replace('\\r', ' ').Replace('\\n', ' ').Replace('\\u0001', ' ');
+      if (text == "" || IsPopup(h, true)) return true;
+      all.Append(h.ToInt64()).Append(',').Append(OwnerOf(h)).Append(',').Append(r.L).Append(',').Append(r.T).Append(',').Append(r.R - r.L).Append(',').Append(r.B - r.T).Append(',').Append(text).Append('\\u0001');
+      return true;
+    }, IntPtr.Zero);
+    return all.ToString();
+  }
+  public static bool CloseWindow(long window) { return PostMessage(new IntPtr(window), 0x0010, IntPtr.Zero, IntPtr.Zero); }
   // A minimized app can't be read or clicked. This brings its largest window back behind everything
   // else, without focus, so nothing changes for whoever is using the computer. 0 if it has none.
   public static long RestoreBehind(uint pid) {
@@ -523,6 +541,8 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       'apps' { $answer = [SideKickWindows]::Apps() }
       'windows' { $answer = [SideKickWindows]::WindowsOf([uint32]$c.pid) }
       'path' { $answer = [SideKickWindows]::PathOf([uint32]$c.pid) }
+      'ownedBy' { $answer = [SideKickWindows]::OwnedBy([long]$c.window) }
+      'close' { $answer = [SideKickWindows]::CloseWindow([long]$c.window) }
       'popups' { $answer = [SideKickWindows]::Popups([long]$c.window) }
       'pointer' { $answer = [SideKickWindows]::Pointer() }
       'pointerTo' { $answer = [SideKickWindows]::PointerTo([int]$c.x, [int]$c.y) }
@@ -806,6 +826,16 @@ export class ComputerUseWindows {
 
   async windowsOf(pid: number): Promise<ComputerAppWindow[]> {
     return parseComputerWindows(await this.ask({ op: 'windows', pid }), pid)
+  }
+
+  /** Dialogs a window owns, each with the process it belongs to as its `owner`. */
+  async ownedBy(window: number): Promise<ComputerAppWindow[]> {
+    return parseComputerWindows(await this.ask({ op: 'ownedBy', window }), 0)
+  }
+
+  /** Asks a window to close, as its close button would. Only for one SideKick itself opened. */
+  closeWindow(window: number): Promise<boolean> {
+    return this.confirm({ op: 'close', window })
   }
 
   async popups(window: number): Promise<ComputerPopup[]> {

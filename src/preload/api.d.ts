@@ -1,4 +1,4 @@
-import type { ComputerRememberedApp } from '../shared/computerUse'
+import type { ChromeUseStatus, ComputerRememberedApp } from '../shared/computerUse'
 import type { PinnedModel } from '../shared/models'
 import type { ProviderSettings, PublicProviderSettings } from '../shared/settings'
 import type {
@@ -13,7 +13,7 @@ import type {
 } from '../shared/providerRuntime'
 
 interface ChromeUseAPI {
-  status: () => Promise<{ connected: boolean; installed: boolean }>
+  status: () => Promise<ChromeUseStatus>
   setUp: () => Promise<boolean>
 }
 

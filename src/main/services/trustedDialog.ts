@@ -15,6 +15,19 @@ export interface TrustedDialogOptions extends MessageBoxOptions {
   footnote?: string
   /** A PNG data URL made by SideKick itself, shown in place of the warning sign. */
   iconDataUrl?: string
+  /** Buttons to show as a list of who or what to pick, by their place in `buttons`. */
+  choices?: TrustedDialogChoice[]
+}
+
+export interface TrustedDialogChoice {
+  /** Its place in `buttons`. Without one it is shown but can't be picked. */
+  index?: number
+  label: string
+  detail?: string
+  /** A PNG data URL made by SideKick itself. */
+  pictureDataUrl?: string
+  /** For a circle with a letter, when there is no picture. */
+  color?: string
 }
 
 /** The system dialog has only its text, so what SideKick's own lays out goes into it. */
@@ -22,6 +35,7 @@ function systemDialogOptions({
   facts,
   footnote,
   iconDataUrl: _iconDataUrl,
+  choices: _choices,
   ...options
 }: TrustedDialogOptions): MessageBoxOptions {
   const lines = facts?.map(({ label, value }) => `${label}: ${value}`).join('\n')
@@ -36,7 +50,10 @@ export function trustedDialogPage(options: TrustedDialogOptions, look: TrustedLo
   const defaultId = options.defaultId ?? buttons.length - 1
   const warning = options.type === 'warning' || options.type === 'error'
   // The main action is the default unless the default is Cancel; then it is the last other button.
-  const others = buttons.map((_, index) => index).filter((index) => index !== cancelId)
+  const listed = new Set(options.choices?.map((choice) => choice.index))
+  const others = buttons
+    .map((_, index) => index)
+    .filter((index) => index !== cancelId && !listed.has(index))
   const primaryId = defaultId !== cancelId ? defaultId : (others.at(-1) ?? -1)
   // Cancel sits on the left, as in SideKick's own dialogs.
   const order = buttons.length > 1 ? [cancelId, ...others] : [0]
@@ -48,6 +65,26 @@ export function trustedDialogPage(options: TrustedDialogOptions, look: TrustedLo
       }"${index === defaultId ? ' autofocus' : ''}>${escapeHtml(label)}</button>`
     })
     .join('')
+  const choices = options.choices?.length
+    ? `<div class="choices">${options.choices
+        .map((choice) => {
+          const picture = choice.pictureDataUrl?.startsWith('data:image/png;base64,')
+            ? `<img class="avatar" alt="" src="${escapeHtml(choice.pictureDataUrl)}">`
+            : `<span class="avatar" style="background:${
+                /^#[0-9a-f]{6}$/i.test(choice.color ?? '') ? choice.color : 'var(--accent)'
+              }">${escapeHtml([...choice.label.trim()][0]?.toUpperCase() ?? '?')}</span>`
+          return `<button type="button" class="choice"${
+            choice.index === undefined ? ' disabled' : ` data-index="${choice.index}"`
+          }>${picture}<span class="who"><span class="name">${escapeHtml(choice.label)}</span>${
+            choice.detail ? `<span class="sub">${escapeHtml(choice.detail)}</span>` : ''
+          }</span>${
+            choice.index === undefined
+              ? ''
+              : '<svg class="go" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>'
+          }</button>`
+        })
+        .join('')}</div>`
+    : ''
   const checkbox = options.checkboxLabel
     ? `<label class="check"><input type="checkbox" id="check"${
         options.checkboxChecked ? ' checked' : ''
@@ -131,6 +168,22 @@ button:hover { background: var(--surface-3); }
 button.primary { border-color: transparent; color: var(--on-accent); background: var(--accent); font-weight: 600; }
 button.primary:hover { filter: brightness(1.08); }
 button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
+.choices { display: grid; gap: 6px; margin-top: 14px; }
+button.choice {
+  display: flex; gap: 12px; align-items: center; width: 100%; height: auto; padding: 8px 10px 8px 8px;
+  border-radius: 10px; background: var(--surface); text-align: left;
+}
+button.choice:hover:not(:disabled) { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: var(--surface-2); }
+button.choice:disabled { cursor: default; opacity: 0.55; }
+button.choice:disabled:hover { background: var(--surface); }
+.avatar {
+  display: grid; flex-shrink: 0; width: 36px; height: 36px; place-items: center; border-radius: 50%;
+  color: #ffffff; font-size: 15px; font-weight: 600; object-fit: cover;
+}
+.who { display: grid; flex: 1; gap: 1px; min-width: 0; }
+.name { overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.sub { overflow: hidden; color: var(--text-2); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.go { flex-shrink: 0; color: var(--text-2); }
 </style>
 </head>
 <body>
@@ -153,6 +206,7 @@ button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, v
   ${facts}
   ${options.footnote ? `<div class="footnote">${escapeHtml(options.footnote)}</div>` : ''}
   ${checkbox}
+  ${choices}
   <div class="actions">${buttonHtml}</div>
 </div>
 <script>${script}</script>

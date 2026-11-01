@@ -1,16 +1,24 @@
-import { app } from 'electron'
+import { app, nativeImage } from 'electron'
 import { existsSync, promises as fs } from 'fs'
 import { join } from 'path'
+import type { ChromeUseStatus } from '../../shared/computerUse'
 import { appState } from '../ipc/state'
 import { ChromeUseBridge } from './chromeUseBridge'
 import { ChromeUseService } from './chromeUseService'
-import { chromePath, chromeProfiles, setUpChromeExtension } from './chromeUseSetup'
+import {
+  chromePath,
+  chromeProfilePicture,
+  chromeProfiles,
+  setUpChromeExtension,
+  type ChromeProfile
+} from './chromeUseSetup'
 import { ComputerUseWindows } from './computerUseWindows'
 import { showTrustedDialog, type TrustedDialogOptions } from './trustedDialog'
 
 const ALLOW_FOR_CHAT = 'Allow for this chat'
 const DONT_ALLOW = 'Don’t allow'
 const INSTALL_MARK = 'installed-profile'
+const PROFILE_PICTURE_PX = 96
 
 function folder(): string {
   return join(app.getPath('userData'), 'chrome-extension')
@@ -37,6 +45,21 @@ function ask(
   return showTrustedDialog(window && !window.isDestroyed() ? window : null, options, { signal })
 }
 
+async function chromeIcon(): Promise<string | undefined> {
+  const chrome = await chromePath()
+  if (!chrome) return undefined
+  const icon = await app.getFileIcon(chrome, { size: 'large' }).catch(() => null)
+  return icon && !icon.isEmpty() ? icon.toDataURL() : undefined
+}
+
+function profilePicture(profile: ChromeProfile): string | undefined {
+  const path = chromeProfilePicture(profile)
+  const picture = path ? nativeImage.createFromPath(path) : null
+  return picture && !picture.isEmpty()
+    ? picture.resize({ width: PROFILE_PICTURE_PX, quality: 'best' }).toDataURL()
+    : undefined
+}
+
 async function confirm(
   message: string,
   detail: string,
@@ -52,6 +75,7 @@ async function confirm(
       message,
       detail,
       facts,
+      iconDataUrl: await chromeIcon(),
       buttons,
       defaultId: 0,
       cancelId: 0,
@@ -84,24 +108,31 @@ async function runSetup(signal: AbortSignal): Promise<boolean> {
   }
   const profiles = await chromeProfiles().catch(() => [])
   const offered = profiles.filter((profile) => !profile.managed)
-  const choices = offered.length ? offered : profiles
-  const labels = choices.map((profile) => `Set up in ${profile.name}`)
-  const buttons = ['Not now', ...labels]
+  const buttons = ['Not now', ...offered.map((profile) => `Set up in ${profile.name}`)]
   const result = await ask(
     {
       type: 'warning',
       title: 'Let the agent use Chrome?',
       message: 'Let the agent work in your own Chrome?',
+      iconDataUrl: await chromeIcon(),
       detail: [
-        'SideKick will open a Chrome window, turn on Developer mode, and load its own extension from your computer. This takes about 10 seconds and uses your real mouse and keyboard, so please don’t touch them until the window closes.',
-        'After that, the agent can ask to work in that Chrome profile, with its sign-ins and saved details. You approve each site and any tab you share, and it asks you before pressing things like Buy, Send or Delete. It can’t see your other tabs, and what it reads goes to the model you selected.',
-        'Chrome shows a banner while the agent is working. You can remove the extension at any time at chrome://extensions.',
-        offered.length && offered.length < profiles.length
-          ? 'Work profiles aren’t offered, because their data and rules belong to your organization.'
-          : null
+        'It can then ask to work in the profile you pick, with its sign-ins and saved details. You approve each site and any tab you share, and it asks before pressing things like Buy, Send or Delete. It can’t see your other tabs, and what it reads goes to the model you selected.',
+        'SideKick will open a Chrome window, turn on Developer mode and load its extension from your computer. This takes about 10 seconds with your real mouse and keyboard, so please don’t touch them until the window closes. Chrome shows a banner while the agent works, and you can remove the extension at chrome://extensions.',
+        offered.length
+          ? null
+          : 'Work profiles can’t be used, because their data and rules belong to your organization.'
       ]
         .filter(Boolean)
         .join('\n\n'),
+      choices: profiles.map((profile) => ({
+        ...(profile.managed ? {} : { index: offered.indexOf(profile) + 1 }),
+        label: profile.name,
+        detail: profile.managed
+          ? `Work profile, ${profile.domain}: not available`
+          : 'Personal profile',
+        pictureDataUrl: profilePicture(profile),
+        color: profile.color
+      })),
       buttons,
       defaultId: 0,
       cancelId: 0,
@@ -109,7 +140,7 @@ async function runSetup(signal: AbortSignal): Promise<boolean> {
     },
     signal
   )
-  const choice = choices[labels.indexOf(buttons[result.response])]
+  const choice = offered[result.response - 1]
   if (!choice) return false
   const line = bridgeOf()
   await line.start()
@@ -203,10 +234,26 @@ export function chromeUseService(): ChromeUseService | null {
   return service
 }
 
-export async function chromeUseStatus(): Promise<{ connected: boolean; installed: boolean }> {
+export async function chromeUseStatus(): Promise<ChromeUseStatus> {
   const line = bridgeOf()
   await line.start()
-  return { connected: line.isConnected(), installed: (await installedProfile()) !== null }
+  const installed = await installedProfile()
+  const profiles = installed ? await chromeProfiles().catch(() => []) : []
+  const profile = profiles.find((candidate) => candidate.directory === installed)
+  return {
+    connected: line.isConnected(),
+    installed: installed !== null,
+    iconDataUrl: await chromeIcon(),
+    ...(profile
+      ? {
+          profile: {
+            name: profile.name,
+            pictureDataUrl: profilePicture(profile),
+            color: profile.color
+          }
+        }
+      : {})
+  }
 }
 
 export function setUpChromeUse(): Promise<boolean> {

@@ -1,5 +1,5 @@
 import { promises as fs } from 'fs'
-import { join } from 'path'
+import { basename, join } from 'path'
 import type { ComputerDriver } from './computerUseDriver'
 import { startComputerDriver } from './computerUseDriver'
 import type { ComputerUseWindows } from './computerUseWindows'
@@ -14,24 +14,63 @@ export interface ChromeProfile {
   name: string
   /** Belongs to an organization, whose data and rules aren't only the user's. */
   managed: boolean
+  /** The organization's domain, on a managed profile. */
+  domain?: string
+  /** Chrome's copy of the account's picture, inside the profile's folder. */
+  pictureFile?: string
+  /** The colour Chrome gives the profile, as #rrggbb. */
+  color?: string
 }
 
 /** The profiles Chrome lists, from its own Local State file. Only for the user's dialog, not the model. */
 export function parseChromeProfiles(localState: string): ChromeProfile[] {
   const cache = (
     JSON.parse(localState) as {
-      profile?: { info_cache?: Record<string, { name?: string; hosted_domain?: string }> }
+      profile?: {
+        info_cache?: Record<
+          string,
+          {
+            name?: string
+            hosted_domain?: string
+            gaia_picture_file_name?: string
+            default_avatar_fill_color?: number
+          }
+        >
+      }
     }
   ).profile?.info_cache
-  return Object.entries(cache ?? {}).map(([directory, info]) => ({
-    directory,
-    name: info.name || directory,
-    managed: Boolean(info.hosted_domain && info.hosted_domain !== 'NO_HOSTED_DOMAIN')
-  }))
+  return Object.entries(cache ?? {}).map(([directory, info]) => {
+    const managed = Boolean(info.hosted_domain && info.hosted_domain !== 'NO_HOSTED_DOMAIN')
+    const fill = info.default_avatar_fill_color
+    return {
+      directory,
+      name: info.name || directory,
+      managed,
+      ...(managed ? { domain: info.hosted_domain } : {}),
+      // Only a file name: it is read from inside this profile's folder and nowhere else.
+      ...(info.gaia_picture_file_name &&
+      basename(info.gaia_picture_file_name) === info.gaia_picture_file_name
+        ? { pictureFile: info.gaia_picture_file_name }
+        : {}),
+      // Stored as a signed number holding alpha, red, green and blue.
+      ...(typeof fill === 'number'
+        ? { color: `#${((fill >>> 0) & 0xffffff).toString(16).padStart(6, '0')}` }
+        : {})
+    }
+  })
+}
+
+function chromeUserData(): string {
+  return join(process.env.LOCALAPPDATA ?? '', 'Google', 'Chrome', 'User Data')
+}
+
+/** Where a profile's picture is, if Chrome has one for it. */
+export function chromeProfilePicture(profile: ChromeProfile): string | null {
+  return profile.pictureFile ? join(chromeUserData(), profile.directory, profile.pictureFile) : null
 }
 
 export async function chromeProfiles(): Promise<ChromeProfile[]> {
-  const file = join(process.env.LOCALAPPDATA ?? '', 'Google', 'Chrome', 'User Data', 'Local State')
+  const file = join(chromeUserData(), 'Local State')
   return parseChromeProfiles(await fs.readFile(file, 'utf8')).sort(
     (a, b) => Number(a.managed) - Number(b.managed)
   )
@@ -65,7 +104,19 @@ interface SetupParts {
   extensionFolder: string
   driverPath: string
   dataFolder: string
-  windows: ComputerUseWindows
+  windows: Pick<
+    ComputerUseWindows,
+    | 'apps'
+    | 'windowsOf'
+    | 'ownedBy'
+    | 'pathOf'
+    | 'closeWindow'
+    | 'front'
+    | 'pointer'
+    | 'pointerTo'
+    | 'launch'
+    | 'restore'
+  >
   waitForConnection: (ms: number, signal: AbortSignal) => Promise<boolean>
   signal: AbortSignal
 }
@@ -128,6 +179,8 @@ export async function setUpChromeExtension(parts: SetupParts): Promise<string | 
   }, signal)
   if (!mine) return 'Chrome did not open a window.'
   let driver: ComputerDriver | null = null
+  let picker: number | null = null
+  let done = false
   try {
     driver = await startComputerDriver(parts.driverPath, parts.dataFolder, [chrome])
     const target = { pid: mine.pid, window_id: mine.id }
@@ -135,15 +188,21 @@ export async function setUpChromeExtension(parts: SetupParts): Promise<string | 
     const call = driver.call.bind(driver)
     await call('bring_to_front', target, signal)
     await new Promise((resolve) => setTimeout(resolve, WINDOW_SETTLE_MS))
+    // These keys go to whatever is in front, so it has to be this window.
+    if ((await windows.front()) !== mine.id) {
+      await windows.restore(mine.id)
+      await new Promise((resolve) => setTimeout(resolve, WINDOW_SETTLE_MS))
+      if ((await windows.front()) !== mine.id) return "Chrome's window didn't come to the front."
+    }
     await call('press_key', { ...target, key: 'l', modifiers: ['ctrl'], ...real }, signal)
     await call('type_text', { ...target, text: 'chrome://extensions', ...real }, signal)
     await call('press_key', { ...target, key: 'return', modifiers: [], ...real }, signal)
-    const search = async (window: number, query: string): Promise<string> =>
+    const search = async (window: number, query: string, pid = mine.pid): Promise<string> =>
       (
         await call(
           'get_window_state',
           {
-            pid: mine.pid,
+            pid,
             window_id: window,
             tree_format: 'both',
             include_screenshot: true,
@@ -154,8 +213,8 @@ export async function setUpChromeExtension(parts: SetupParts): Promise<string | 
           signal
         )
       ).text
-    const press = (window: number, token: string): Promise<unknown> =>
-      call('click', { pid: mine.pid, window_id: window, element_token: token }, signal)
+    const press = (window: number, token: string, pid = mine.pid): Promise<unknown> =>
+      call('click', { pid, window_id: window, element_token: token }, signal)
     const loadUnpacked = (): Promise<{ token: string } | null> =>
       search(mine.id, 'Load unpacked').then((text) => rowWith(text, /Load unpacked/i))
     if (!(await loadUnpacked())) {
@@ -168,41 +227,62 @@ export async function setUpChromeExtension(parts: SetupParts): Promise<string | 
     }
     const button = await until(loadUnpacked, signal)
     if (!button) return "Chrome didn't show its Load unpacked button."
-    const open = new Set((await windowIds()).map((window) => window.id))
-    await press(mine.id, button.token)
-    const picker = await until(async () => {
-      const all = await windowIds()
-      return all.find((window) => !open.has(window.id)) ?? null
-    }, signal)
-    if (!picker) return "Chrome didn't open its folder picker."
+    // Not waited for: pressing a button can last for as long as the dialog it opens.
+    void press(mine.id, button.token).catch(() => undefined)
+    const opened = await until(async () => (await windows.ownedBy(mine.id))[0] ?? null, signal)
+    if (!opened) return "Chrome didn't open its folder picker."
+    picker = opened.id
+    const pickerPid = opened.owner ?? mine.pid
+    // It's another process, and the driver is only allowed Chrome's own.
+    if ((await windows.pathOf(pickerPid)).toLowerCase() !== chrome.toLowerCase()) {
+      return "The folder picker didn't belong to Chrome."
+    }
     await new Promise((resolve) => setTimeout(resolve, WINDOW_SETTLE_MS))
     const field = await until(
-      () => search(picker.id, 'Folder').then((text) => rowWith(text, /Edit.*Folder|Folder.*Edit/i)),
+      () =>
+        search(opened.id, 'Folder', pickerPid).then((text) =>
+          rowWith(text, /Edit.*Folder|Folder.*Edit/i)
+        ),
       signal
     )
     if (!field) return "Couldn't find the folder box in Chrome's folder picker."
     await call(
       'set_value',
       {
-        pid: mine.pid,
-        window_id: picker.id,
+        pid: pickerPid,
+        window_id: opened.id,
         element_token: field.token,
         value: parts.extensionFolder
       },
       signal
     )
     const select = await until(
-      () => search(picker.id, 'Select Folder').then((text) => rowWith(text, /Select Folder/i)),
+      () =>
+        search(opened.id, 'Select Folder', pickerPid).then((text) =>
+          rowWith(text, /Select Folder/i)
+        ),
       signal
     )
-    if (!select) return "Couldn't find the Select Folder button."
-    await press(picker.id, select.token)
+    // Enter does the same in the box, should the button go by another name.
+    if (select) void press(opened.id, select.token, pickerPid).catch(() => undefined)
+    else {
+      await call(
+        'press_key',
+        { pid: pickerPid, window_id: opened.id, key: 'return', modifiers: [], ...real },
+        signal
+      )
+    }
     if (!(await parts.waitForConnection(CONNECT_WAIT_MS, signal))) {
       return "The extension didn't connect after it was loaded."
     }
-    await call('press_key', { ...target, key: 'w', modifiers: ['ctrl'], ...real }, signal)
+    picker = null
+    done = true
     return null
   } finally {
+    // Whether it worked or not, what this opened doesn't stay on the user's screen.
+    if (picker && !done) await windows.closeWindow(picker).catch(() => false)
+    await new Promise((resolve) => setTimeout(resolve, WINDOW_SETTLE_MS))
+    await windows.closeWindow(mine.id).catch(() => false)
     await driver?.close().catch(() => undefined)
     if (home) await windows.pointerTo(home).catch(() => false)
     if (handBack) await windows.restore(handBack).catch(() => false)

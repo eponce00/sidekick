@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain, safeStorage, type WebContents } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, type WebContents } from 'electron'
 import { normalizePermissionMode } from '../../shared/permissions'
 import type { McpServerConfig } from '../../shared/types'
 import type { PinnedModel } from '../../shared/models'
@@ -515,9 +515,15 @@ export function registerSettingsHandlers(): void {
   ipcMain.handle('chromeUse:setUp', async () =>
     (await import('../services/chromeUseHost')).setUpChromeUse()
   )
-  ipcMain.handle('computerUse:rememberedApps', async () =>
-    (await import('../services/computerUseHost')).rememberedApps.list()
-  )
+  ipcMain.handle('computerUse:rememberedApps', async () => {
+    const apps = await (await import('../services/computerUseHost')).rememberedApps.list()
+    return Promise.all(
+      apps.map(async (allowed) => {
+        const icon = await app.getFileIcon(allowed.path, { size: 'large' }).catch(() => null)
+        return icon && !icon.isEmpty() ? { ...allowed, iconDataUrl: icon.toDataURL() } : allowed
+      })
+    )
+  })
   ipcMain.handle('computerUse:forgetApp', async (_event, path: unknown) => {
     if (typeof path !== 'string') return
     await (await import('../services/computerUseHost')).rememberedApps.remove(path)

@@ -210,15 +210,31 @@ describe('Chrome profiles', () => {
         JSON.stringify({
           profile: {
             info_cache: {
-              Default: { name: 'Me', hosted_domain: 'NO_HOSTED_DOMAIN' },
-              'Profile 1': { name: 'Work', hosted_domain: 'company.example' }
+              Default: {
+                name: 'Me',
+                hosted_domain: 'NO_HOSTED_DOMAIN',
+                gaia_picture_file_name: 'Google Profile Picture.png',
+                default_avatar_fill_color: -13559530
+              },
+              'Profile 1': {
+                name: 'Work',
+                hosted_domain: 'company.example',
+                // Only ever read from inside the profile's own folder.
+                gaia_picture_file_name: '..\\..\\secret.png'
+              }
             }
           }
         })
       )
     ).toEqual([
-      { directory: 'Default', name: 'Me', managed: false },
-      { directory: 'Profile 1', name: 'Work', managed: true }
+      {
+        directory: 'Default',
+        name: 'Me',
+        managed: false,
+        pictureFile: 'Google Profile Picture.png',
+        color: '#31191 6'.replace(' ', '')
+      },
+      { directory: 'Profile 1', name: 'Work', managed: true, domain: 'company.example' }
     ])
   })
 })

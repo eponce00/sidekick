@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
+import type { ChromeUseStatus } from '../../../shared/computerUse'
 import { SettingsRow } from './SettingsLayout'
 
 /** Whether Chrome is connected, and the one button that sets it up, which asks in SideKick's dialog. */
 export function ChromeUseSetup(): React.JSX.Element {
-  const [status, setStatus] = useState<{ connected: boolean; installed: boolean } | null>(null)
+  const [status, setStatus] = useState<ChromeUseStatus | null>(null)
   const [busy, setBusy] = useState(false)
 
   const refresh = useCallback(() => {
@@ -12,15 +13,34 @@ export function ChromeUseSetup(): React.JSX.Element {
 
   useEffect(refresh, [refresh])
 
+  const profile = status?.profile
   return (
     <SettingsRow
-      label="Your Chrome"
+      image={status?.iconDataUrl}
+      label="Google Chrome"
       description={
-        status?.connected
-          ? 'Connected.'
-          : status?.installed
-            ? 'Set up. It connects when Chrome is open.'
-            : 'Not set up yet. SideKick does this for you, in about 10 seconds.'
+        status?.installed ? (
+          <span className="settings-chrome-status">
+            {profile &&
+              (profile.pictureDataUrl ? (
+                <img className="settings-chrome-avatar" src={profile.pictureDataUrl} alt="" />
+              ) : (
+                <span
+                  className="settings-chrome-avatar"
+                  style={profile.color ? { background: profile.color } : undefined}
+                  aria-hidden="true"
+                >
+                  {profile.name.slice(0, 1).toUpperCase()}
+                </span>
+              ))}
+            {profile && <span>{profile.name}</span>}
+            <span className={`settings-chrome-state${status.connected ? ' is-connected' : ''}`}>
+              {status.connected ? 'Connected' : 'Connects when Chrome is open'}
+            </span>
+          </span>
+        ) : (
+          'Not set up yet. SideKick does this for you, in about 10 seconds.'
+        )
       }
       control={
         <button
