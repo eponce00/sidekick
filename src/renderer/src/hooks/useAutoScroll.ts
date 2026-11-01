@@ -9,7 +9,8 @@ import {
 } from '../utils/bottomFollow'
 import { SECTION_REVEAL_EVENT } from '../utils/messageMotion'
 
-const SHOW_JUMP_THRESHOLD = 240
+/** More than a line or two out of view; following is off, so the way back should be on show. */
+const SHOW_JUMP_THRESHOLD = 48
 
 export interface AutoScrollController {
   showScrollToBottom: boolean
@@ -100,7 +101,7 @@ export function useAutoScroll<T>(
       const target = Math.max(0, Math.min(container.scrollTop + offset, bottom))
       if (bottom - target <= RESUME_FOLLOW_PX) follower.follow()
       else follower.release()
-      container.scrollTop = target
+      follower.moveTo(target)
       updatePosition()
     },
     [scrollContainerRef, updatePosition]
@@ -150,17 +151,20 @@ export function useAutoScroll<T>(
     })
     mutationObserver.observe(container, { childList: true, subtree: true })
 
-    // Opening a section unfolds it from where it was clicked, even at the end of the chat; once
-    // it settles, following goes on only if the end is still in view.
+    // A section the reader opens unfolds from where it was clicked, even at the end of the chat;
+    // once it settles, following goes on only if the end is still in view. One they close asks for
+    // nothing to be read, so a reply that streamed on meanwhile is caught up with.
     let settle: ReturnType<typeof setTimeout> | null = null
     const holdForReveal = (event: Event): void => {
-      const ms = (event as CustomEvent<{ ms?: number }>).detail?.ms ?? 0
+      const { ms = 0, opening = true } =
+        (event as CustomEvent<{ ms?: number; opening?: boolean }>).detail ?? {}
       followerRef.current?.hold(ms + 60)
       if (settle) clearTimeout(settle)
       settle = setTimeout(() => {
         const follower = followerRef.current
-        if (follower?.following && scrollDistanceFromBottom(container) > RESUME_FOLLOW_PX) {
-          follower.release()
+        if (follower?.following) {
+          if (opening && scrollDistanceFromBottom(container) > RESUME_FOLLOW_PX) follower.release()
+          else follower.keepAtEnd()
         }
         updatePosition()
       }, ms + 80)

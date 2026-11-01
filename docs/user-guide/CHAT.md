@@ -2,6 +2,10 @@
 
 ## While a reply is being written
 
+- **Following the reply:** the chat stays at the end of a reply as it grows, for as long as you
+  stay there. Scrolling up at all stops that, and nothing moves the chat while you read. It follows
+  again when you scroll all the way back down, press End, click the down arrow above the message
+  box, or send a message.
 - **Steer:** send a message while the agent works to redirect it. The message joins the running
   reply before its next model step, without cutting off a tool call or the text being written, and
   appears in the reply where the agent took it in. When the reply cannot take it (it is waiting on
