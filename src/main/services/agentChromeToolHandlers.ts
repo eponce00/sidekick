@@ -62,7 +62,12 @@ export function registerChromeToolHandlers(
           return await acted('The user shared this tab.')
         }
         case 'read':
-          return await succeed(await service.read(chat, signal, number(args, 'tab')))
+          return await succeed(
+            await service.read(chat, signal, number(args, 'tab'), {
+              find: text(args, 'find') || undefined,
+              textFrom: number(args, 'text_from')
+            })
+          )
         case 'click':
           return await acted(await service.click(chat, needElement(), signal))
         case 'type':

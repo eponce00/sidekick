@@ -118,7 +118,12 @@ async function activeTab() {
 }
 
 // Runs in the page, kept apart from the page's own scripts. Every value a page keeps secret stays here.
-function snapshot(maxElements, maxText) {
+function snapshot(maxElements, maxText, find, textFrom) {
+  const MAX_FOUND = 5000
+  const MAX_EXCERPTS = 12
+  const EXCERPT_REACH = 160
+  const MAX_IMAGES = 80
+  const MIN_IMAGE_PX = 48
   const SELECTOR =
     'a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=menuitem],[role=tab],[role=switch],[role=combobox],[role=textbox],[contenteditable="true"],[onclick]'
   const SECRET =
@@ -160,11 +165,36 @@ function snapshot(maxElements, maxText) {
     if (box.width <= 0 || box.height <= 0) continue
     if (style.visibility === 'hidden' || style.display === 'none') continue
     shown.push(element)
-    if (shown.length >= maxElements) break
+    if (shown.length >= MAX_FOUND) break
   }
   window.__sidekickElements = shown
-  const rows = shown.map((element, index) => {
+  const needle = (find ?? '').trim().toLowerCase()
+  const onScreen = (element) => {
     const box = element.getBoundingClientRect()
+    return box.bottom > 0 && box.top < innerHeight
+  }
+  // What the user could see comes first: a long page has more controls than fit, and the top of it says
+  // nothing about the part that has been scrolled to. A private field's value is never searched.
+  const indexes = shown.map((_, index) => index)
+  const matching = needle
+    ? indexes.filter((index) => {
+        const element = shown[index]
+        const value = 'value' in element && !isSecret(element) ? String(element.value) : ''
+        return `${nameOf(element)} ${value}`.toLowerCase().includes(needle)
+      })
+    : indexes
+  const chosen = (
+    needle
+      ? matching
+      : [
+          ...matching.filter((index) => onScreen(shown[index])),
+          ...matching.filter((index) => !onScreen(shown[index]))
+        ]
+  )
+    .slice(0, maxElements)
+    .sort((a, b) => a - b)
+  const rows = chosen.map((index) => {
+    const element = shown[index]
     const secret = isSecret(element)
     const holdsValue = 'value' in element && element.type !== 'submit' && element.type !== 'button'
     return {
@@ -182,15 +212,67 @@ function snapshot(maxElements, maxText) {
         element.type === 'checkbox' || element.type === 'radio' ? element.checked : undefined,
       disabled: element.disabled === true || undefined,
       secret: secret || undefined,
-      onScreen: box.bottom > 0 && box.top < innerHeight
+      onScreen: onScreen(element)
     }
   })
+  const allText = document.body?.innerText ?? ''
+  const lowerText = allText.toLowerCase()
+  const excerpts = []
+  let matches = 0
+  if (needle) {
+    for (
+      let at = lowerText.indexOf(needle);
+      at !== -1;
+      at = lowerText.indexOf(needle, at + needle.length)
+    ) {
+      matches++
+      if (excerpts.length < MAX_EXCERPTS) {
+        excerpts.push({
+          at,
+          text: allText.slice(Math.max(0, at - EXCERPT_REACH), at + needle.length + EXCERPT_REACH)
+        })
+      }
+    }
+  }
+  const allImages = [...document.images].filter((image) => {
+    if (!/^https?:/i.test(image.currentSrc || image.src)) return false
+    const box = image.getBoundingClientRect()
+    // One still waiting to load has no size yet. Anything else this small is an icon.
+    return !image.complete || (box.width >= MIN_IMAGE_PX && box.height >= MIN_IMAGE_PX)
+  })
+  const describe = (image) =>
+    (
+      image.alt ||
+      image.title ||
+      image.closest('figure')?.querySelector('figcaption')?.innerText ||
+      ''
+    )
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 160)
+  const images = allImages
+    .map((image) => ({
+      description: describe(image),
+      // Without what follows the path, which can carry a session's token.
+      url: (image.currentSrc || image.src).split(/[?#]/)[0].slice(0, 200),
+      onScreen: onScreen(image)
+    }))
+    .filter(
+      (image) => !needle || `${image.description} ${image.url}`.toLowerCase().includes(needle)
+    )
   return {
     title: document.title,
     url: location.href,
     rows,
-    total: found.length,
-    text: (document.body?.innerText ?? '').slice(0, maxText),
+    total: shown.length,
+    matching: matching.length,
+    text: allText.slice(textFrom, textFrom + maxText),
+    textFrom,
+    textTotal: allText.length,
+    excerpts,
+    matches,
+    images: images.slice(0, MAX_IMAGES),
+    imagesTotal: images.length,
     scrolled: Math.round(scrollY),
     pageHeight: document.documentElement.scrollHeight,
     viewHeight: innerHeight
@@ -448,7 +530,8 @@ const OPERATIONS = {
   open,
   activeTab,
   tabInfo: ({ tabId }) => tabInfo(tabId),
-  read: ({ tabId, maxElements, maxText }) => inPage(tabId, snapshot, maxElements, maxText),
+  read: ({ tabId, maxElements, maxText, find, textFrom }) =>
+    inPage(tabId, snapshot, maxElements, maxText, find ?? '', textFrom ?? 0),
   locate: ({ tabId, index }) => inPage(tabId, locate, index),
   focused: ({ tabId }) => inPage(tabId, focused),
   click,
