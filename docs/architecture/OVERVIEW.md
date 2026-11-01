@@ -380,7 +380,8 @@ folder. The Windows package ships the driver in `resources/computer-driver`, fet
 executables are checked against fixed SHA-256 hashes when packaging and again before each start.
 
 The `chrome` tool works in the user's own Chrome through an extension in `resources/chrome-extension`,
-which SideKick copies to its data folder, so no store or native host is involved. The extension asks
+which SideKick copies to a folder in the user's home, since Chrome can't see into a Store-packaged app's
+AppData, so no store or native host is involved. The extension asks
 `chromeUseBridge.ts` for work over the loopback address, proving itself with a secret written in its own
 folder and its fixed origin. `chromeUseService.ts` decides everything in the main process: only tabs the
 chat opened or the user shared, approved sites checked again on every step, no typing in password or

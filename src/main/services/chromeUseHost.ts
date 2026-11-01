@@ -1,6 +1,6 @@
 import { app, nativeImage } from 'electron'
 import { existsSync, promises as fs } from 'fs'
-import { join } from 'path'
+import { basename, join } from 'path'
 import type { ChromeUseStatus } from '../../shared/computerUse'
 import { appState } from '../ipc/state'
 import { ChromeUseBridge } from './chromeUseBridge'
@@ -20,8 +20,18 @@ const DONT_ALLOW = 'Don’t allow'
 const INSTALL_MARK = 'installed-profile'
 const PROFILE_PICTURE_PX = 96
 
+/**
+ * Not in AppData: for a Store-packaged app, or anything started from one, Windows quietly keeps what is
+ * written there in the package's private storage. SideKick saw the folder, and Chrome said it didn't exist.
+ * A development instance keeps its own, as the secret in it is only good for the instance that wrote it.
+ */
 function folder(): string {
-  return join(app.getPath('userData'), 'chrome-extension')
+  return join(
+    app.getPath('home'),
+    '.sidekick',
+    basename(app.getPath('userData')),
+    'chrome-extension'
+  )
 }
 
 function bridgeOf(): ChromeUseBridge {
