@@ -52,12 +52,12 @@ export class ComputerUseRememberedApps {
     return (await sha256(path).catch(() => null)) === stored.sha256
   }
 
-  async add(path: string): Promise<void> {
+  async add(path: string, title?: string): Promise<void> {
     const key = path.toLowerCase()
     const others = (await this.read()).filter((app) => app.path.toLowerCase() !== key)
     await this.write([
       ...others,
-      { path, name: basename(path).replace(/\.exe$/i, ''), sha256: await sha256(path) }
+      { path, name: title ?? basename(path).replace(/\.exe$/i, ''), sha256: await sha256(path) }
     ])
   }
 

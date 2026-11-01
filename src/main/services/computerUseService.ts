@@ -62,6 +62,7 @@ export interface ComputerUseDependencies {
     | 'glide'
     | 'restoreBehind'
     | 'minimizeAgain'
+    | 'pathOf'
   >
   /** Starts an approved executable, with no arguments. */
   startApp: (path: string) => void
@@ -116,6 +117,8 @@ interface ChatAccess {
   windows: Map<string, number>
   /** Windows already seen in each app, to notice a dialog opening. */
   knownWindows: Map<string, Set<number>>
+  /** What owns a Store app's windows, which the driver has to be allowed to reach. */
+  hosts: Set<string>
   /** A name the agent asked for that isn't an executable's, like Calculator, with the path it meant. */
   friendlyNames: Map<string, string>
   /** Steps in a row that changed nothing on screen. */
@@ -155,6 +158,9 @@ const REAL_INPUT_SETTLE_MS = 150
 // Canvas apps show what can be grabbed only once the pointer has rested on it, as draw.io does for
 // the handles that draw an arrow.
 const REAL_DRAG_HOVER_MS = 350
+// Some apps open an editor on the first key, as draw.io and spreadsheets do. The real keys right behind
+// it arrived before the editor did, and only the first letter of a label landed.
+const REAL_FIRST_KEY_PAUSE_MS = 150
 // Chromium drops the first wheel tick after the pointer jumps to a window.
 const MIN_REAL_WHEEL_TICKS = 2
 // An app takes a moment to draw what an action did.
@@ -345,6 +351,7 @@ export class ComputerUseService {
         windows: new Map(),
         knownWindows: new Map(),
         friendlyNames: new Map(),
+        hosts: new Set(),
         unchangedSteps: 0,
         notified: false
       }
@@ -486,7 +493,8 @@ export class ComputerUseService {
   }
 
   private async driverFor_(chat: string): Promise<ComputerDriver> {
-    const approved = [...this.access(chat).approved.values()].sort().join('\n')
+    const allowed = [...this.access(chat).approved.values(), ...this.access(chat).hosts].sort()
+    const approved = allowed.join('\n')
     if (this.driver && this.driverFor?.chat === chat && this.driverFor.approved === approved) {
       return this.driver
     }
@@ -495,7 +503,7 @@ export class ComputerUseService {
     this.driver = await (this.deps.startDriver ?? startComputerDriver)(
       this.deps.driverPath,
       this.deps.dataFolder(),
-      [...this.access(chat).approved.values()]
+      allowed
     )
     this.driverFor = { chat, approved }
     return this.driver
@@ -527,7 +535,6 @@ export class ComputerUseService {
     if (!this.access(chat).approved.has(app.path.toLowerCase())) {
       throw new ComputerUseRefusal(`${app.name} is not approved. Use request_app first.`)
     }
-    const driver = await this.driverFor_(chat)
     const listed = await this.openWindows(app)
     const ids = listed.map((window) => window.id)
     if (ids.length === 0) {
@@ -549,10 +556,22 @@ export class ComputerUseService {
     const windowId =
       chosenWindow ?? opened ?? (last !== undefined && ids.includes(last) ? last : ids[0])
     access.windows.set(key, windowId)
+    // The driver goes through a Store app's frame, since a picture of the window inside it is just
+    // whatever covers that part of the screen. That lets the driver reach any Store app's frame, but
+    // the agent never names a window: only this app's, listed above, are ever asked for.
+    const owner = listed.find((window) => window.id === windowId)?.owner
+    if (owner) {
+      const host = await this.deps.appWindows.pathOf(owner)
+      if (!/[\\/]ApplicationFrameHost\.exe$/i.test(host)) {
+        throw new ComputerUseRefusal(`${app.name} has no window SideKick can reach right now.`)
+      }
+      access.hosts.add(host)
+    }
+    const driver = await this.driverFor_(chat)
     this.markActive(chat, app, app.pid, windowId)
     return {
       app,
-      pid: app.pid,
+      pid: owner ?? app.pid,
       windowId,
       windows: listed.map((window) => `- "${window.title}" [window_id: ${window.id}]`),
       bounds: listed.find((window) => window.id === windowId)?.bounds ?? null,
@@ -666,7 +685,8 @@ export class ComputerUseService {
       {
         pid,
         window_id: windowId,
-        include_screenshot: includeImage,
+        // A read with no picture would leave clicks by pixel with nothing to go by, even for a search.
+        include_screenshot: includeImage || Boolean(find),
         tree_format: 'both',
         timeout_ms: earlier?.slowControls ? SLOW_CONTROLS_WAIT_MS : CONTROLS_WAIT_MS,
         max_elements: find ? MAX_CONTROLS_SEARCHED : MAX_CONTROLS,
@@ -713,9 +733,8 @@ export class ComputerUseService {
         snapshot,
         pid,
         windowId,
-        // A search brings no picture, and clicks still go by the last one.
         imageWidth: pictureWidth(state.images[0]?.data) ?? before?.imageWidth,
-        imageHeight: includeImage ? counts?.screenshot_height : before?.imageHeight,
+        imageHeight: counts?.screenshot_height ?? before?.imageHeight,
         imageHash: imageHash ?? before?.imageHash,
         image: state.images[0]?.data ?? before?.image,
         treeKey,
@@ -747,7 +766,8 @@ export class ComputerUseService {
     return {
       // The driver's line about how to spell a token is about its own API, not this tool's.
       text: `${UNTRUSTED}\n${size}${cutOff}${otherWindows}${state.text.replace(/^element_token for row.*$/m, '').trim()}${noMatch}`,
-      images: state.images,
+      // A search answers in words, and the model already has a picture of the window.
+      images: find ? [] : state.images,
       changed,
       sameControls,
       controls: Boolean(find) || gaveNoControls || TREE_ROW.test(state.text),
@@ -771,7 +791,8 @@ export class ComputerUseService {
   ): Promise<ComputerLook & { note: string }> {
     await new Promise((resolve) => setTimeout(resolve, ACTION_SETTLE_MS))
     let seen = await this.look(chat, name, true, signal)
-    if (seen.changed === false && !step.mayShowNothing) {
+    // Even a shortcut that may show nothing can open a dialog a moment later, as Ctrl+S does.
+    if (seen.changed === false) {
       await new Promise((resolve) => setTimeout(resolve, SLOW_APP_SETTLE_MS))
       seen = await this.look(chat, name, true, signal)
     }
@@ -822,7 +843,13 @@ export class ComputerUseService {
     }
     if (element !== undefined) {
       const seen = this.access(chat).snapshots.get(app.path.toLowerCase())
-      if (!seen || seen.pid !== pid || seen.windowId !== windowId) {
+      if (seen && seen.pid === pid && seen.windowId !== windowId) {
+        throw new ComputerUseRefusal(
+          `${app.name} has moved to another window, such as a dialog that has just opened, so nothing was sent. Use look to see it.`,
+          true
+        )
+      }
+      if (!seen || seen.pid !== pid) {
         throw new ComputerUseRefusal(`Use look on ${app.name} first.`, true)
       }
       targetArgs.element_token = `${seen.snapshot}:${element}`
@@ -1041,10 +1068,20 @@ export class ComputerUseService {
       | { landed_on_target?: unknown; previous_fg_hwnd?: unknown; target_hwnd?: unknown }
       | undefined
     if (front.isError || state?.landed_on_target !== true) {
-      throw new ComputerUseRefusal(
-        `SideKick could not bring ${app.name} to the front, so nothing was sent. Try again shortly.`,
-        true
-      )
+      // Windows can refuse the driver this, and it let the helper do it when Excel's dialog was open.
+      const window = Number(args.window_id)
+      const before = await this.deps.appWindows.front()
+      await this.deps.appWindows.restore(window)
+      if ((await this.deps.appWindows.front()) !== window) {
+        throw new ComputerUseRefusal(
+          `SideKick could not bring ${app.name} to the front, so nothing was sent. Try again shortly.`,
+          true
+        )
+      }
+      if (!this.handBack && before > 0 && before !== window) {
+        this.handBack = { previous: before, app: window }
+      }
+      return
     }
     const previous = Number.parseInt(String(state.previous_fg_hwnd), 16)
     if (
@@ -1198,9 +1235,24 @@ export class ComputerUseService {
     // Measured in Excel: sent as text, every Tab was lost, and so was the first letter after each
     // line break. So those go as real key presses, with the text between them typed on its own.
     const parts = text.split(/(\t|\r?\n)/).filter(Boolean)
-    if (parts.length <= 1) {
-      return this.act(chat, name, 'type_text', { text }, element, signal, realInput)
+    const send = async (part: string, row: number | undefined): Promise<string> => {
+      const [firstKey, ...rest] = part
+      if (!realInput || !rest.length) {
+        return this.act(chat, name, 'type_text', { text: part }, row, signal, realInput)
+      }
+      await this.act(chat, name, 'type_text', { text: firstKey }, row, signal, realInput)
+      await new Promise((resolve) => setTimeout(resolve, REAL_FIRST_KEY_PAUSE_MS))
+      return this.act(
+        chat,
+        name,
+        'type_text',
+        { text: rest.join('') },
+        undefined,
+        signal,
+        realInput
+      )
     }
+    if (parts.length <= 1) return send(text, element)
     let first = true
     for (const part of parts) {
       if (part === '\t' || part === '\n' || part === '\r\n') {
@@ -1215,15 +1267,7 @@ export class ComputerUseService {
           realInput
         )
       } else {
-        await this.act(
-          chat,
-          name,
-          'type_text',
-          { text: part },
-          first ? element : undefined,
-          signal,
-          realInput
-        )
+        await send(part, first ? element : undefined)
         first = false
       }
     }
@@ -1253,6 +1297,12 @@ export class ComputerUseService {
     // The Windows key reaches the shell, not the app: Win+R alone opens a way to run anything.
     if ([key, ...modifiers].some((name) => /^(win|windows|cmd|meta|super)$/i.test(name))) {
       throw new ComputerUseRefusal('The Windows key is not available.')
+    }
+    // The driver types a name it doesn't know: "scroll_lock" put an "s" into a cell in Excel.
+    if ([...key].length > 1 && computerVirtualKey(key) === null) {
+      throw new ComputerUseRefusal(
+        `There is no key called "${key}", so nothing was sent. Use a letter or digit, or one of: return, tab, escape, space, backspace, delete, insert, home, end, pageup, pagedown, up, down, left, right, f1 to f12.`
+      )
     }
     // Measured in Excel: posted in the background, Ctrl+S arrived as a plain "s", typed into a cell.
     // A shortcut that loses its modifier does something else entirely, such as sending a message.

@@ -217,9 +217,8 @@ export function registerComputerToolHandlers(
         }
         case 'look': {
           const find = text(args, 'find') || undefined
-          // A search answers in words, and the model already has the picture.
           return await showLook(
-            await service.look(chat, app, !find, signal, number(args, 'window'), find)
+            await service.look(chat, app, true, signal, number(args, 'window'), find)
           )
         }
         case 'zoom': {

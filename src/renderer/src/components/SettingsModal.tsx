@@ -310,7 +310,7 @@ function SettingsModal({
             <SettingsSection
               icon={MousePointerClick}
               title="Computer use"
-              description="Lets the agent operate other apps on this computer. Each app needs your approval, per chat."
+              description="Lets the agent operate other apps on this computer. Each app needs your approval, for a chat or for good."
             >
               <ToggleField
                 label="Let the agent ask to use apps"

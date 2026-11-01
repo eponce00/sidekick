@@ -115,7 +115,7 @@ public static class SideKickWindows {
       && Child(top, "Chrome_RenderWidgetHostHWND") == IntPtr.Zero
       && Child(top, "InputSiteWindowClass") == IntPtr.Zero;
   }
-  // A Store app's window belongs to a shared host. The app itself draws in a window inside it.
+  // A Store app's window belongs to a shared host, and the app itself draws in a window inside it.
   static IntPtr StoreAppWindow(IntPtr frame) {
     return ClassOf(frame) == "ApplicationFrameWindow" ? Child(frame, "Windows.UI.Core.CoreWindow") : IntPtr.Zero;
   }
@@ -124,7 +124,7 @@ public static class SideKickWindows {
     GetWindowThreadProcessId(h, out pid);
     return pid;
   }
-  static string PathOf(uint pid) {
+  public static string PathOf(uint pid) {
     IntPtr process = OpenProcess(0x1000, false, pid);
     if (process == IntPtr.Zero) return null;
     StringBuilder path = new StringBuilder(1024);
@@ -157,17 +157,16 @@ public static class SideKickWindows {
       Rect r;
       int cloaked;
       IntPtr storeApp = StoreAppWindow(h);
-      IntPtr inner = storeApp != IntPtr.Zero ? storeApp : h;
-      if (OwnerOf(inner) != pid || !IsWindowVisible(h) || IsIconic(h) || !GetWindowRect(inner, out r)) return true;
+      if (OwnerOf(storeApp != IntPtr.Zero ? storeApp : h) != pid || !IsWindowVisible(h) || IsIconic(h) || !GetWindowRect(h, out r)) return true;
       if (DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0) return true;
       // What shows: a window's own rectangle has invisible borders, which pictures of it leave out.
       Rect frame;
-      if (inner == h && DwmGetWindowAttribute(h, 9, out frame, 16) == 0) r = frame;
+      if (DwmGetWindowAttribute(h, 9, out frame, 16) == 0) r = frame;
       StringBuilder title = new StringBuilder(512);
       GetWindowText(h, title, 512);
       string text = title.ToString().Replace('\\r', ' ').Replace('\\n', ' ').Replace('\\u0001', ' ');
       if (text == "" || text == "Program Manager") return true;
-      all.Append(inner.ToInt64()).Append(',').Append(r.L).Append(',').Append(r.T).Append(',').Append(r.R - r.L).Append(',').Append(r.B - r.T).Append(',').Append(text).Append('\\u0001');
+      all.Append(h.ToInt64()).Append(',').Append(OwnerOf(h)).Append(',').Append(r.L).Append(',').Append(r.T).Append(',').Append(r.R - r.L).Append(',').Append(r.B - r.T).Append(',').Append(text).Append('\\u0001');
       return true;
     }, IntPtr.Zero);
     return all.ToString();
@@ -177,7 +176,8 @@ public static class SideKickWindows {
   public static long RestoreBehind(uint pid) {
     IntPtr found = IntPtr.Zero;
     EnumWindows(delegate(IntPtr h, IntPtr l) {
-      if (OwnerOf(h) == pid && found == IntPtr.Zero && IsWindowVisible(h) && IsIconic(h)) {
+      IntPtr storeApp = StoreAppWindow(h);
+      if (OwnerOf(storeApp != IntPtr.Zero ? storeApp : h) == pid && found == IntPtr.Zero && IsWindowVisible(h) && IsIconic(h)) {
         StringBuilder title = new StringBuilder(2);
         GetWindowText(h, title, 2);
         if (title.Length > 0) found = h;
@@ -205,14 +205,9 @@ public static class SideKickWindows {
     return true;
   }
   public static bool IsChromium(long window) { return ClassOf(new IntPtr(window)).StartsWith("Chrome_WidgetWin"); }
-  // By the window the service knows a Store app by.
-  public static long Front() {
-    IntPtr front = GetForegroundWindow();
-    IntPtr storeApp = StoreAppWindow(front);
-    return (storeApp != IntPtr.Zero ? storeApp : front).ToInt64();
-  }
+  public static long Front() { return GetForegroundWindow().ToInt64(); }
   public static bool Restore(long window) {
-    IntPtr h = GetAncestor(new IntPtr(window), 2);
+    IntPtr h = new IntPtr(window);
     uint me = GetCurrentThreadId();
     uint front = GetWindowThreadProcessId(GetForegroundWindow(), IntPtr.Zero);
     uint target = GetWindowThreadProcessId(h, IntPtr.Zero);
@@ -225,7 +220,7 @@ public static class SideKickWindows {
     return done;
   }
   public static bool Visible(long window) {
-    IntPtr h = GetAncestor(new IntPtr(window), 2);
+    IntPtr h = new IntPtr(window);
     Rect r;
     if (!IsWindowVisible(h) || IsIconic(h) || !GetWindowRect(h, out r)) return false;
     int w = r.R - r.L, t = r.B - r.T, seen = 0;
@@ -252,6 +247,7 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       'front' { $answer = [SideKickWindows]::Front() }
       'apps' { $answer = [SideKickWindows]::Apps() }
       'windows' { $answer = [SideKickWindows]::WindowsOf([uint32]$c.pid) }
+      'path' { $answer = [SideKickWindows]::PathOf([uint32]$c.pid) }
       'glide' { $answer = [SideKickWindows]::Glide([int]$c.x, [int]$c.y) }
       'restoreBehind' { $answer = [SideKickWindows]::RestoreBehind([uint32]$c.pid) }
       'minimizeAgain' { $answer = [SideKickWindows]::MinimizeAgain([long]$c.window) }
@@ -293,6 +289,7 @@ const VIRTUAL_KEYS: Readonly<Record<string, number>> = {
   pagedown: 0x22,
   end: 0x23,
   home: 0x24,
+  insert: 0x2d,
   left: 0x25,
   up: 0x26,
   right: 0x27,
@@ -311,25 +308,29 @@ export function computerVirtualKey(name: string): number | null {
 
 export interface ComputerAppWindow {
   id: number
+  /** The process that owns the window, when that isn't the app, as a Store app's host does. */
+  owner?: number
   title: string
   /** In physical pixels, as Windows reports them; null when it reports nothing to outline. */
   bounds: ComputerWindowBounds | null
 }
 
 /** The helper's answer, largest window first: an app's first one can be a small helper of its own. */
-export function parseComputerWindows(answer: string): ComputerAppWindow[] {
+export function parseComputerWindows(answer: string, app: number): ComputerAppWindow[] {
   const area = (window: ComputerAppWindow): number =>
     (window.bounds?.width ?? 0) * (window.bounds?.height ?? 0)
   return answer
     .split('\u0001')
     .flatMap((row) => {
-      const found = /^(\d+),(-?\d+),(-?\d+),(\d+),(\d+),(.+)$/s.exec(row)
+      const found = /^(\d+),(\d+),(-?\d+),(-?\d+),(\d+),(\d+),(.+)$/s.exec(row)
       if (!found) return []
-      const [x, y, width, height] = found.slice(2, 6).map(Number)
+      const [x, y, width, height] = found.slice(3, 7).map(Number)
+      const owner = Number(found[2])
       return [
         {
           id: Number(found[1]),
-          title: found[6],
+          ...(owner !== app ? { owner } : {}),
+          title: found[7],
           bounds: width > 0 && height > 0 ? { x, y, width, height } : null
         }
       ]
@@ -425,7 +426,13 @@ export class ComputerUseWindows {
   }
 
   async windowsOf(pid: number): Promise<ComputerAppWindow[]> {
-    return parseComputerWindows(await this.ask({ op: 'windows', pid }))
+    return parseComputerWindows(await this.ask({ op: 'windows', pid }), pid)
+  }
+
+  /** A process's executable, or '' if Windows won't say. */
+  async pathOf(pid: number): Promise<string> {
+    const answer = await this.ask({ op: 'path', pid })
+    return answer === 'no' ? '' : answer
   }
 
   /** Brings an app's minimized window back behind everything else. Its id, or 0 if it has none. */

@@ -65,6 +65,7 @@ function harness(apps: ComputerApp[], confirm = true) {
       ]
     ),
     glide: vi.fn(async (_point: { x: number; y: number }) => true),
+    pathOf: vi.fn(async (_pid: number) => 'C:\\Windows\\System32\\ApplicationFrameHost.exe'),
     restoreBehind: vi.fn(async (_pid: number) => 0),
     minimizeAgain: vi.fn(async (_window: number) => true)
   }
@@ -479,6 +480,56 @@ describe('what the agent may reach', () => {
     expect(call).toHaveBeenLastCalledWith('click', expect.objectContaining({ y: 600 }), signal)
   })
 
+  it('gives an app time to open its editor after the first real key', async () => {
+    const { service, call } = harness([app('notes')])
+    needsForeground(call, 'never refused')
+    await service.requestApp('chat', 'notes', signal)
+    await service.type('chat', 'notes', 'Start', undefined, signal, true)
+    const typed = call.mock.calls.filter(([tool]) => tool === 'type_text').map(([, a]) => a?.text)
+    expect(typed).toEqual(['S', 'tart'])
+  })
+
+  it('keeps a picture behind a search, so a click by pixel still has one', async () => {
+    const { service, call } = harness([app('notes')])
+    await service.requestApp('chat', 'notes', signal)
+    const found = await service.look('chat', 'notes', true, signal, undefined, 'OK')
+    expect(call).toHaveBeenLastCalledWith(
+      'get_window_state',
+      expect.objectContaining({ include_screenshot: true, query: 'OK' }),
+      signal
+    )
+    expect(found.images).toEqual([])
+  })
+
+  it('works in a Store app through its frame, and only ever that app\u2019s', async () => {
+    const { service, call, appWindows, startDriver } = harness([app('notes')])
+    appWindows.windowsOf.mockResolvedValue([{ id: 77, owner: 500, title: 'Notes', bounds: null }])
+    await service.requestApp('chat', 'notes', signal)
+    await service.look('chat', 'notes', true, signal)
+    expect(call).toHaveBeenLastCalledWith(
+      'get_window_state',
+      expect.objectContaining({ pid: 500, window_id: 77 }),
+      signal
+    )
+    expect(JSON.stringify(startDriver.mock.calls.at(-1))).toContain('ApplicationFrameHost')
+    await expect(service.look('chat', 'notes', true, signal, 88)).rejects.toThrow('no window 88')
+    // Nothing but the known host may be added to what the driver can reach.
+    appWindows.pathOf.mockResolvedValue('C:\\Apps\\other.exe')
+    await expect(service.look('chat', 'notes', true, signal)).rejects.toThrow('no window')
+  })
+
+  it('refuses a key it has no name for, rather than typing the name', async () => {
+    const { service, call } = harness([app('notes')])
+    await service.requestApp('chat', 'notes', signal)
+    await expect(service.key('chat', 'notes', 'scroll_lock', [], signal)).rejects.toThrow(
+      'no key called'
+    )
+    expect(call).not.toHaveBeenCalledWith('press_key', expect.anything(), signal)
+    for (const key of ['return', 'F2', 'W', '7', '+']) {
+      await service.key('chat', 'notes', key, [], signal)
+    }
+  })
+
   it('holds a key combination written as one key to the same limits', async () => {
     const { service, call } = harness([app('notes')])
     needsForeground(call, 'never refused')
@@ -886,16 +937,17 @@ describe('the driver’s limits', () => {
     ])
     expect(parseComputerApps('')).toEqual([])
     expect(parseComputerApps('no')).toEqual([])
-    expect(parseComputerWindows('')).toEqual([])
-    expect(parseComputerWindows('no')).toEqual([])
+    expect(parseComputerWindows('', 9)).toEqual([])
+    expect(parseComputerWindows('no', 9)).toEqual([])
     expect(
       parseComputerWindows(
-        '3,0,0,5,5,Small\u00014,-8,-8,50,50,Big, with a comma\u00015,0,0,0,0,Empty'
+        '3,9,0,0,5,5,Small\u00014,9,-8,-8,50,50,Big, with a comma\u00015,8,0,0,0,0,Empty',
+        9
       )
     ).toEqual([
       { id: 4, title: 'Big, with a comma', bounds: { x: -8, y: -8, width: 50, height: 50 } },
       { id: 3, title: 'Small', bounds: { x: 0, y: 0, width: 5, height: 5 } },
-      { id: 5, title: 'Empty', bounds: null }
+      { id: 5, owner: 8, title: 'Empty', bounds: null }
     ])
   })
 })

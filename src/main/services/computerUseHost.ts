@@ -55,7 +55,8 @@ async function confirmApp(
     { signal }
   )
   const answer = buttons[result.response]
-  if (answer === ALWAYS_ALLOW) await rememberedApps.add(target.path).catch(() => undefined)
+  if (answer === ALWAYS_ALLOW)
+    await rememberedApps.add(target.path, target.title).catch(() => undefined)
   return answer === ALWAYS_ALLOW || answer === ALLOW_FOR_CHAT
 }
 
