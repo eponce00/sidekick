@@ -139,6 +139,22 @@ describe('agent runtime contracts', () => {
     expect(result.modelContent).toContain('permission_denied')
   })
 
+  it('shows the model the message and recovery of a failure that carries data', () => {
+    const result = toolExecutionFailed({
+      title: 'Edit',
+      code: 'invalid_arguments',
+      message: 'Invalid patch',
+      recovery: 'Send one corrected apply_patch call.',
+      data: { ok: false, changed: false, files: [] }
+    })
+
+    expect(JSON.parse(result.modelContent)).toMatchObject({
+      ok: false,
+      error: 'Invalid patch',
+      recovery: 'Send one corrected apply_patch call.'
+    })
+  })
+
   it.each([
     ['invalid_arguments', true, 'correct_input'],
     ['stale_read', true, 'refresh_state'],

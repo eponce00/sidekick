@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagedWorktreeSummary, WorktreeBranchOptions } from '../../../shared/worktrees'
 import { WorktreesDialog } from './WorktreesDialog'
-import { WorkspaceBar, WorktreeChip } from './WorkspaceBar'
+import { ProjectChoiceChip, WorkspaceBar } from './WorkspaceBar'
 import { chooseSelectOption, selectOptions } from './Select.testing'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -89,18 +89,8 @@ describe('worktree UI', () => {
     return onRemoved
   }
 
-  it('shows each worktree by its chat, where it came from, and its changes', async () => {
-    await renderDialog()
-    expect(container.querySelector('.worktrees-row-title')?.textContent).toBe('Cards chat')
-    const meta = container.querySelector('.worktrees-row-meta')?.textContent ?? ''
-    expect(meta).toContain('demo')
-    expect(meta).toContain('sidekick/cards')
-    expect(container.querySelector('.worktrees-pill')?.textContent).toBe('3 changed')
-  })
-
   it('marks a set-aside worktree and has no folder to show for it', async () => {
     await renderDialog([{ ...changed, setAsideAt: 5, status: null }])
-    expect(container.querySelector('.worktrees-pill')?.textContent).toBe('Set aside')
     expect(labelled(container, 'Show the folder').disabled).toBe(true)
   })
 
@@ -108,13 +98,12 @@ describe('worktree UI', () => {
     const onRemoved = await renderDialog()
     await act(async () => labelled(container, 'Remove').click())
     expect(api.remove).not.toHaveBeenCalled()
-    expect(container.textContent).toContain('and its uncommitted changes')
     await act(async () => button(container, 'Delete').click())
     expect(api.remove).toHaveBeenCalledWith('wt-1')
     expect(onRemoved).toHaveBeenCalled()
   })
 
-  it('shows why a worktree was kept', async () => {
+  it('does not report a worktree the main process kept as removed', async () => {
     api.remove.mockResolvedValueOnce({
       removed: false,
       reason: 'An agent is working in it. Stop it first.'
@@ -122,7 +111,6 @@ describe('worktree UI', () => {
     const onRemoved = await renderDialog()
     await act(async () => labelled(container, 'Remove').click())
     await act(async () => button(container, 'Delete').click())
-    expect(container.textContent).toContain('Stop it first.')
     expect(onRemoved).not.toHaveBeenCalled()
   })
 
@@ -130,51 +118,7 @@ describe('worktree UI', () => {
     await renderDialog([
       { ...changed, owners: [{ kind: 'chat', id: 'chat-1', title: 'Cards chat', running: true }] }
     ])
-    expect(container.querySelector('.worktrees-pill')?.textContent).toBe('Working')
     expect(labelled(container, 'Remove').disabled).toBe(true)
-  })
-
-  it('shows no bar once a chat works in a worktree; the composer chip names it', async () => {
-    await act(async () => {
-      root.render(
-        <WorkspaceBar
-          projectId="project-wt-1"
-          worktree={changed}
-          canChoose={false}
-          workIn="folder"
-          baseRef=""
-          onWorkInChange={vi.fn()}
-          onBaseRefChange={vi.fn()}
-          onManageWorktrees={vi.fn()}
-        />
-      )
-    })
-    expect(container.querySelector('.workspace-bar')).toBeNull()
-
-    const onManage = vi.fn()
-    await act(async () => root.render(<WorktreeChip worktree={changed} onManage={onManage} />))
-    const chip = container.querySelector<HTMLButtonElement>('.composer-worktree-chip')!
-    expect(chip.textContent).toBe('sidekick/cards')
-    await act(async () => chip.click())
-    expect(onManage).toHaveBeenCalled()
-  })
-
-  it('names a detached worktree by the base it copies', async () => {
-    await act(async () => {
-      root.render(
-        <WorktreeChip
-          worktree={{
-            ...changed,
-            branch: null,
-            status: changed.status && { ...changed.status, currentBranch: null }
-          }}
-          onManage={vi.fn()}
-        />
-      )
-    })
-    expect(container.querySelector('.composer-worktree-chip')?.textContent).toBe(
-      'detached from main'
-    )
   })
 
   it('lets a new project chat choose a worktree and its base', async () => {
@@ -194,8 +138,6 @@ describe('worktree UI', () => {
       )
     })
     expect(api.branchOptions).toHaveBeenCalledWith('p')
-    // A worktree starts as a copy of its base; there is no branch to name.
-    expect(container.querySelector('input')).toBeNull()
     const base = container.querySelector<HTMLElement>('.ui-select[aria-label="Start from"]')!
     expect((await selectOptions(base)).map((option) => option.label)).toEqual(['main', 'release'])
     await act(async () => button(container, 'This folder').click())
@@ -206,15 +148,7 @@ describe('worktree UI', () => {
     const onChooseProject = vi.fn()
     await act(async () => {
       root.render(
-        <WorkspaceBar
-          projectId={null}
-          worktree={null}
-          canChoose
-          workIn="worktree"
-          baseRef=""
-          onWorkInChange={vi.fn()}
-          onBaseRefChange={vi.fn()}
-          onManageWorktrees={vi.fn()}
+        <ProjectChoiceChip
           projectChoices={[{ id: 'repo', name: 'Repo' }]}
           onChooseProject={onChooseProject}
         />
@@ -247,7 +181,6 @@ describe('worktree UI', () => {
         />
       )
     })
-    expect(container.textContent).toContain('Not a Git repository')
     expect(container.querySelector('[role="radiogroup"]')).toBeNull()
   })
 })

@@ -47,20 +47,6 @@ export interface ToolViewContribution {
 
 export const toolViewContributions = new UiContributionRegistry<ToolViewContribution>()
 
-// An artifact being refined by its builder is followed like a sub-agent until
-// it is done; then the finished artifact is what the chat shows.
-toolViewContributions.register({
-  id: 'sidekick.artifact-builder-tool-view',
-  priority: 110,
-  value: {
-    matches: (tool) =>
-      tool.name === 'create_artifact' &&
-      (tool.status === 'running' || tool.status === 'pending') &&
-      typeof (tool.data as { childRunId?: unknown } | undefined)?.childRunId === 'string',
-    view: 'subagent'
-  }
-})
-
 // Chats an agent suggested are choices for the user, shown as cards rather than a folded step.
 toolViewContributions.register({
   id: 'sidekick.session-proposals-tool-view',

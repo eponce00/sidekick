@@ -138,6 +138,18 @@ describe('SideKick-styled trusted dialog', () => {
     expect(page).not.toContain('<b>agents</b>')
   })
 
+  it("shows a certificate's own words as text, never as markup", () => {
+    const page = trustedDialogPage(
+      {
+        ...settingsOptions,
+        facts: [{ label: 'Issued to', value: '<img src=x onerror=alert(1)>' }]
+      },
+      darkLook
+    )
+    expect(page).not.toContain('<img')
+    expect(page).toContain('&lt;img src=x')
+  })
+
   it('allows only its own script', () => {
     const page = trustedDialogPage(settingsOptions, lightLook)
     const script = page.match(/<script>([\s\S]*?)<\/script>/)![1]
@@ -156,18 +168,6 @@ describe('SideKick-styled trusted dialog', () => {
     expect(buttons.map((button) => [button[4], button[2], Boolean(button[3])])).toEqual([
       ['Cancel', '', true],
       ['Apply settings', 'primary', false]
-    ])
-  })
-
-  it('marks the default as the main action when it is not Cancel', () => {
-    const page = trustedDialogPage(
-      { message: 'Install?', buttons: ['Restart and update', 'Later'], defaultId: 0, cancelId: 1 },
-      darkLook
-    )
-    const buttons = [...page.matchAll(/data-index="(\d)" class="([^"]*)"/g)]
-    expect(buttons.map((button) => [button[1], button[2]])).toEqual([
-      ['1', ''],
-      ['0', 'primary']
     ])
   })
 
@@ -291,16 +291,6 @@ describe('SideKick-styled trusted dialog', () => {
     expect(notices[0].options.look).toEqual(darkLook)
     dialogs[0].navigate('sidekick-dialog:respond/0/0')
     await answer
-  })
-
-  it('puts the chosen accent in the page, as a colour and nothing else', () => {
-    const page = trustedDialogPage(settingsOptions, {
-      theme: 'dark',
-      accent: '#e98e9c',
-      onAccent: '#111111'
-    })
-    expect(page).toContain('--accent: #e98e9c;')
-    expect(page).toContain('color-scheme: dark;')
   })
 
   it('keeps waiting for the answer when its load is reported failed after it came up', async () => {

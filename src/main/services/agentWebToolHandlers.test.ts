@@ -4,10 +4,16 @@ import { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
 import {
   imageSearchToolResult,
   pageFetchFailure,
-  registerWebToolHandlers
+  registerWebToolHandlers,
+  searchFailure
 } from './agentWebToolHandlers'
 import { structuredTextPage } from './sidekickSearch/pageReader'
-import type { ImageSearchResult, PageContent } from './sidekickSearch/types'
+import type {
+  ImageSearchResult,
+  PageContent,
+  SearchResponse,
+  SearchSourceId
+} from './sidekickSearch/types'
 import type { ToolOutputStore } from './toolOutputStore'
 
 const LARGE_IMAGE_BASE64 = 'QUFB'.repeat(30_000)
@@ -74,6 +80,41 @@ describe('agent web image results', () => {
 
     expect(result.media).toBeUndefined()
     expect(result.modelContent).toContain('"visualAttachments":0')
+  })
+})
+
+describe('agent web searches', () => {
+  it('reports a search every engine refused as a failure that names the engines', () => {
+    const engine = (source: SearchSourceId, status: 'empty' | 'rate_limited') => ({
+      source,
+      status,
+      resultCount: 0,
+      durationMs: 5,
+      ...(status === 'rate_limited'
+        ? { error: 'HTTP 429 (too many requests)', retryAt: 5 * 60_000 }
+        : {})
+    })
+    const response = (statuses: Array<'empty' | 'rate_limited'>): SearchResponse => ({
+      query: 'vllm max tokens',
+      results: [],
+      diagnostics: statuses.map((status, index) =>
+        engine((['duckduckgo', 'brave', 'bing'] as const)[index], status)
+      ),
+      cached: false
+    })
+
+    const failure = searchFailure(
+      'Search',
+      response(['rate_limited', 'rate_limited', 'rate_limited']),
+      0
+    )
+
+    expect(failure?.error).toMatchObject({ code: 'transient', recoveryAction: 'change_strategy' })
+    expect(failure?.error?.message).toContain('DuckDuckGo: HTTP 429 (too many requests)')
+    expect(failure?.error?.message).toContain('not the model provider')
+    expect(failure?.error?.message).toContain('next 5 minutes')
+    // Engines that answered with nothing found make an ordinary empty result.
+    expect(searchFailure('Search', response(['rate_limited', 'empty', 'empty']), 0)).toBeNull()
   })
 })
 

@@ -63,8 +63,8 @@ describe('subAgentActivity', () => {
     }
   })
 
-  it('says it is thinking between tools rather than naming the last finished one', () => {
-    const thinking = [
+  it('does not name the last finished tool once it thinks or writes after it', () => {
+    const finished = [
       ...working,
       event(5, 'tool.completed', {
         toolCallId: 't1',
@@ -74,27 +74,15 @@ describe('subAgentActivity', () => {
           modelContent: 'results',
           timing: { startedAt: 3000, completedAt: 5000 }
         }
-      }),
+      })
+    ]
+    const thinking = [
+      ...finished,
       event(6, 'run.phase', { phase: 'streaming' }),
       event(7, 'assistant.delta', { thinking: 'Comparing the listings' })
     ]
     expect(activity(thinking).current).toBe('Thinking')
-  })
-
-  it('says it is writing its report once text follows the last tool', () => {
-    const writing = [
-      ...working,
-      event(5, 'tool.completed', {
-        toolCallId: 't1',
-        result: {
-          status: 'success',
-          title: 'Search Elmcrest Dr',
-          modelContent: 'results',
-          timing: { startedAt: 3000, completedAt: 5000 }
-        }
-      }),
-      event(6, 'assistant.delta', { content: 'Reno sits at' })
-    ]
+    const writing = [...finished, event(6, 'assistant.delta', { content: 'Reno sits at' })]
     expect(activity(writing).current).toBe('Writing its report')
   })
 })

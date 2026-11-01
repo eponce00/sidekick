@@ -3,10 +3,16 @@ import type { ConversationGoal } from '../../shared/conversationGoals'
 
 interface DesktopEventPayloads {
   'agentRuns:event': { event: AgentRunEvent }
+  'agentRuns:artifactDraft': import('../../shared/agentRunApi').AgentArtifactDraft
   'conversationGoals:changed': { goal: ConversationGoal }
   'sessions:changed': import('../../shared/sessions').SessionsChangedEvent
   'terminal:event': import('../../shared/terminalSessions').TerminalSessionEvent
   'schedules:changed': import('../../shared/schedules').SchedulesChangedEvent
+  'companion:changed': import('../../shared/companion').CompanionStatus
+  'conversations:messagesChanged': { conversationId: string }
+  /** A chat was pinned, renamed, moved, archived or deleted outside the window, as from the phone. */
+  'conversations:listChanged': { conversationId: string; removed: boolean }
+  'agentRuns:admissionsChanged': { conversationId: string }
 }
 
 export interface DesktopEventWindow {

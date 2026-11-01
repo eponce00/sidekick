@@ -1,9 +1,25 @@
+import { createCanvas } from '@napi-rs/canvas'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { imageHeader } from '../../shared/imageContent'
+import { providerImageProfile } from '../../shared/imagePreparation'
 import type { ProviderChatRequest } from '../../shared/providerRuntime'
-import { MAX_PROVIDER_IMAGE_ATTACHMENTS, materializeProviderRequestMedia } from './providerRuntime'
+import { materializeProviderRequestMedia } from './providerRuntime'
+
+/** A real image, distinct for each shade, since unreadable images are left out. */
+function png(shade: number, width = 4, height = 4): Buffer {
+  const surface = createCanvas(width, height)
+  const context = surface.getContext('2d')
+  context.fillStyle = `rgb(${shade}, ${shade}, ${shade})`
+  context.fillRect(0, 0, width, height)
+  return surface.encodeSync('png')
+}
+
+const pngUrl = (shade: number): string => `data:image/png;base64,${png(shade).toString('base64')}`
+
+const LITELLM_IMAGES = providerImageProfile('litellm').maxImages
 
 function requestWithFile(path: string): ProviderChatRequest {
   return {
@@ -31,14 +47,15 @@ describe('provider media materialization', () => {
     const root = await mkdtemp(join(tmpdir(), 'sidekick-provider-media-'))
     const path = join(root, 'viewport.png')
     try {
-      await writeFile(path, Buffer.from([0, 1, 2, 3]))
+      const bytes = png(10)
+      await writeFile(path, bytes)
       const original = requestWithFile(path)
       const materialized = await materializeProviderRequestMedia(original)
 
       expect(original.messages[0].media?.[0].source).toEqual({ type: 'file', path })
       expect(materialized.messages[0].media?.[0].source).toEqual({
         type: 'data_url',
-        dataUrl: 'data:image/png;base64,AAECAw=='
+        dataUrl: `data:image/png;base64,${bytes.toString('base64')}`
       })
     } finally {
       await rm(root, { recursive: true, force: true })
@@ -73,16 +90,38 @@ describe('provider media materialization', () => {
           {
             type: 'image' as const,
             mimeType: 'image/png' as const,
-            source: { type: 'data_url' as const, dataUrl: `data:image/png;base64,AAA${index}` }
+            source: { type: 'data_url' as const, dataUrl: pngUrl(index) }
           }
         ]
       }))
     }
 
     const materialized = await materializeProviderRequestMedia(request)
-    expect(MAX_PROVIDER_IMAGE_ATTACHMENTS).toBe(2)
+    expect(LITELLM_IMAGES).toBe(2)
     expect(materialized.messages.map((message) => message.media?.length ?? 0)).toEqual([0, 1, 1])
     expect(request.messages.map((message) => message.media?.length ?? 0)).toEqual([1, 1, 1])
+  })
+
+  it('tells the model when an image it asked to see has left the request', async () => {
+    const page = (index: number) => ({
+      type: 'image' as const,
+      mimeType: 'image/png' as const,
+      name: `report.pdf page ${index}`,
+      source: { type: 'data_url' as const, dataUrl: pngUrl(index) }
+    })
+    const materialized = await materializeProviderRequestMedia({
+      target: { providerKind: 'litellm', model: 'vision-model' },
+      purpose: 'continuation',
+      messages: [
+        { role: 'tool', tool_call_id: 'first', content: 'Pages 1-2', media: [page(1), page(2)] },
+        { role: 'tool', tool_call_id: 'second', content: 'Page 3', media: [page(3)] }
+      ]
+    })
+    expect(materialized.messages.map((message) => message.media?.length ?? 0)).toEqual([1, 1])
+    expect(materialized.messages[0].content).toContain('No longer attached')
+    expect(materialized.messages[0].content).toContain('report.pdf page 1')
+    expect(materialized.messages[0].content).not.toContain('report.pdf page 2')
+    expect(materialized.messages[1].content).toBe('Page 3')
   })
 
   it('shares one image budget between user attachments and browser tool screenshots', async () => {
@@ -93,7 +132,7 @@ describe('provider media materialization', () => {
         {
           role: 'user',
           content: 'Fix what is shown here.',
-          images: ['data:image/png;base64,USER']
+          images: [pngUrl(200)]
         },
         ...[0, 1].map((index) => ({
           role: 'tool',
@@ -103,10 +142,7 @@ describe('provider media materialization', () => {
             {
               type: 'image' as const,
               mimeType: 'image/png' as const,
-              source: {
-                type: 'data_url' as const,
-                dataUrl: `data:image/png;base64,VE9PTD${index === 0 ? 'A=' : 'E='}`
-              }
+              source: { type: 'data_url' as const, dataUrl: pngUrl(index) }
             }
           ]
         }))
@@ -115,14 +151,14 @@ describe('provider media materialization', () => {
 
     const materialized = await materializeProviderRequestMedia(request)
 
-    expect(materialized.messages[0].images).toEqual(['data:image/png;base64,USER'])
+    expect(materialized.messages[0].images).toEqual([pngUrl(200)])
     expect(materialized.messages.map((message) => message.media?.length ?? 0)).toEqual([0, 0, 1])
     expect(
       materialized.messages.reduce(
         (count, message) => count + (message.images?.length ?? 0) + (message.media?.length ?? 0),
         0
       )
-    ).toBe(MAX_PROVIDER_IMAGE_ATTACHMENTS)
+    ).toBe(LITELLM_IMAGES)
     expect(request.messages[1].media).toHaveLength(1)
   })
 
@@ -131,15 +167,68 @@ describe('provider media materialization', () => {
       target: { providerKind: 'litellm', model: 'vision-model' },
       purpose: 'continuation',
       messages: [
-        { role: 'user', content: 'Earlier', images: ['data:image/png;base64,EARLIER'] },
+        { role: 'user', content: 'Earlier', images: [pngUrl(1)] },
         { role: 'assistant', content: 'Continue.' },
-        { role: 'user', content: 'Latest', images: ['data:image/png;base64,LATEST'] }
+        { role: 'user', content: 'Latest', images: [pngUrl(2)] }
       ]
     }
 
     const materialized = await materializeProviderRequestMedia(request)
 
-    expect(materialized.messages[0].images).toEqual(['data:image/png;base64,EARLIER'])
-    expect(materialized.messages[2].images).toEqual(['data:image/png;base64,LATEST'])
+    expect(materialized.messages[0].images).toEqual([pngUrl(1)])
+    expect(materialized.messages[2].images).toEqual([pngUrl(2)])
+  })
+
+  it('sends every attached image to a provider that takes more than two', async () => {
+    const images = [1, 2, 3, 4].map(pngUrl)
+    const request: ProviderChatRequest = {
+      target: { providerKind: 'anthropic', model: 'claude' },
+      purpose: 'continuation',
+      messages: [{ role: 'user', content: 'Compare these.', images }]
+    }
+
+    const anthropic = await materializeProviderRequestMedia(request)
+    expect(anthropic.messages[0].images).toEqual(images)
+    const local = await materializeProviderRequestMedia({
+      ...request,
+      target: { providerKind: 'lmstudio', model: 'qwen3-vl' }
+    })
+    expect(local.messages[0].images).toEqual(images.slice(0, 2))
+  })
+
+  it('fits a large attachment to the provider while the stored message keeps it', async () => {
+    const original = `data:image/png;base64,${png(120, 3000, 1500).toString('base64')}`
+    const request: ProviderChatRequest = {
+      target: { providerKind: 'anthropic', model: 'claude' },
+      purpose: 'continuation',
+      messages: [{ role: 'user', content: 'What is this?', images: [original] }]
+    }
+
+    const materialized = await materializeProviderRequestMedia(request)
+    const sent = Buffer.from(materialized.messages[0].images![0].split(',')[1], 'base64')
+    expect(imageHeader(sent)).toMatchObject({ width: 2000, height: 1000 })
+    expect(materialized.messages[0].content).toContain('resized from 3000×1500 to 2000×1000')
+    expect(request.messages[0].images).toEqual([original])
+  })
+
+  it('keeps a file-backed viewport screenshot at its own size', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sidekick-provider-media-'))
+    const path = join(root, 'viewport.png')
+    try {
+      await writeFile(path, png(30, 2400, 1350))
+      const request = requestWithFile(path)
+      request.target = { providerKind: 'lmstudio', model: 'qwen3-vl' }
+      request.messages[0].media![0].keepDimensions = true
+      const materialized = await materializeProviderRequestMedia(request)
+      const attachment = materialized.messages[0].media![0]
+      expect(attachment.source.type).toBe('data_url')
+      const dataUrl = attachment.source.type === 'data_url' ? attachment.source.dataUrl : ''
+      expect(imageHeader(Buffer.from(dataUrl.split(',')[1], 'base64'))).toMatchObject({
+        width: 2400,
+        height: 1350
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })

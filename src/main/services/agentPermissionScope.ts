@@ -101,6 +101,13 @@ export function agentPermissionScope(
     if (!path) return undefined
     return fileScope([{ action: name === 'delete_file' ? 'delete' : 'edit', path }])
   }
+  // Every local file shares the origin file://, so a grant there would reach other files' tools.
+  if (
+    name === 'browser_call_webmcp_tool' &&
+    !/^https?:\/\/[^/]+$/.test(typeof args.origin === 'string' ? args.origin : '')
+  ) {
+    return undefined
+  }
   return {
     keys: [['tool', name, JSON.stringify(stableValue(args))].join(SEPARATOR)],
     label: 'this exact action'

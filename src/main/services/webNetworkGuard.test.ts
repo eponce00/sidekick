@@ -262,13 +262,24 @@ describe('getAdmitted', () => {
         response.writeHead(302, { location: target }).end()
         return
       }
+      if (request.url === '/trickle' || request.url === '/endless') {
+        // Never quiet for long, so only a deadline or a byte cap ends it.
+        response.writeHead(200, { 'content-type': 'text/plain' })
+        const chunk = request.url === '/trickle' ? '.' : 'x'.repeat(64_000)
+        const timer = setInterval(() => response.write(chunk), request.url === '/trickle' ? 50 : 1)
+        response.on('close', () => clearInterval(timer))
+        return
+      }
       response.writeHead(200, { 'content-type': 'text/plain' }).end(`read ${request.url}`)
     })
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     port = (server.address() as AddressInfo).port
   })
 
-  afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())))
+  afterAll(() => {
+    server.closeAllConnections()
+    return new Promise<void>((resolve) => server.close(() => resolve()))
+  })
 
   beforeEach(() => {
     hits.length = 0
@@ -356,6 +367,25 @@ describe('getAdmitted', () => {
         else process.env[key] = value
       }
     }
+  })
+
+  it('ends a response that keeps trickling past its deadline, or outgrows its byte cap', async () => {
+    const started = Date.now()
+    const slow = await getAdmitted(
+      new URL(`http://public.test:${port}/trickle`),
+      { responseType: 'text', timeout: 300 },
+      network()
+    ).catch((caught: unknown) => caught)
+    expect(slow).toMatchObject({ name: 'WebResponseLimit', limit: 'time' })
+    expect(Date.now() - started).toBeLessThan(3_000)
+
+    const large = await getAdmitted(
+      new URL(`http://public.test:${port}/endless`),
+      { responseType: 'arraybuffer', timeout: 5_000, maxContentLength: 200_000 },
+      network()
+    ).catch((caught: unknown) => caught)
+    expect(large).toMatchObject({ name: 'WebResponseLimit', limit: 'size' })
+    expect((large as Error).message).toMatch(/larger than 200 KB/)
   })
 
   it('keeps the refusal recognisable through the HTTP client', async () => {

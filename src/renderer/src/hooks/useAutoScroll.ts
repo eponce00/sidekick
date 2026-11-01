@@ -1,6 +1,6 @@
 // Custom hook that keeps the chat timeline at its latest message while it grows
 
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import {
   followBottom,
   RESUME_FOLLOW_PX,
@@ -61,7 +61,8 @@ export function useAutoScroll<T>(
     )
   }, [scrollContainerRef])
 
-  useEffect(() => {
+  // Before paint, so the first messages below find the follower of the chat they belong to.
+  useLayoutEffect(() => {
     const container = scrollContainerRef.current
     if (!container) return undefined
     const follower = followBottom(container, { onUpdate: updatePosition })
@@ -105,17 +106,19 @@ export function useAutoScroll<T>(
     [scrollContainerRef, updatePosition]
   )
 
-  // A chat's first messages, as its history loads, land at once; later ones may glide.
+  // A chat's first messages, as its history loads, land at its end before they are painted, so it
+  // never shows its top first; later ones may glide.
   const shownRef = useRef({ resetKey, any: false })
   const messageCount = messages.length
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (shownRef.current.resetKey !== resetKey) shownRef.current = { resetKey, any: false }
-    const glide = behavior === 'smooth' && shownRef.current.any
+    const first = !shownRef.current.any
+    const glide = behavior === 'smooth' && !first
     shownRef.current.any = messageCount > 0
     // A streaming reply grows a few lines at a time. Gliding each of them makes the view lurch,
     // so small growth follows at once and only a bigger jump glides. Away from the end, the
     // observers below update the jump control as the content changes.
-    followerRef.current?.keepAtEnd({ glide: glide ? 'long' : 'never' })
+    followerRef.current?.keepAtEnd({ glide: glide ? 'long' : 'never', immediate: first })
   }, [autoScrollChange, behavior, messageCount, resetKey])
 
   useEffect(() => {
@@ -123,12 +126,13 @@ export function useAutoScroll<T>(
     if (!container || typeof window.ResizeObserver !== 'function') return
 
     const observedChildren = new Set<Element>()
-    const followSettledLayout = (): void => {
+    const followSettledLayout = (immediate = false): void => {
       const follower = followerRef.current
-      if (follower?.following) follower.keepAtEnd()
+      if (follower?.following) follower.keepAtEnd({ immediate })
       else updatePosition()
     }
-    const resizeObserver = new window.ResizeObserver(followSettledLayout)
+    // Layout is already done when a resize observer runs, so growth lands before paint.
+    const resizeObserver = new window.ResizeObserver(() => followSettledLayout(true))
     const observeTimelineChildren = (): void => {
       for (const child of Array.from(container.children)) {
         if (observedChildren.has(child)) continue
@@ -137,6 +141,8 @@ export function useAutoScroll<T>(
       }
     }
     observeTimelineChildren()
+    // The view itself shrinks when the composer under it grows, which hides the end just the same.
+    resizeObserver.observe(container)
 
     const mutationObserver = new MutationObserver(() => {
       observeTimelineChildren()

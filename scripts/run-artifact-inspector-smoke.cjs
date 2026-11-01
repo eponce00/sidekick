@@ -30,7 +30,7 @@ buildSync({
   platform: 'node',
   format: 'cjs',
   target: 'node22',
-  external: ['electron', 'better-sqlite3', 'jsdom', 'canvas'],
+  external: ['electron', 'better-sqlite3', 'jsdom', 'canvas', '@napi-rs/canvas'],
   logLevel: 'error'
 })
 

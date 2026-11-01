@@ -1,9 +1,20 @@
 import { createReadStream, promises as fs } from 'fs'
-import { join, relative, sep } from 'path'
+import { basename, join, relative, sep } from 'path'
 import { createInterface } from 'readline'
 import { estimateTextTokens } from '../../shared/contextBudget'
 import { workspaceFileVersion } from '../utils/workspaceFileVersion'
-import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
+import {
+  locateWorkspacePath,
+  projectRelativePath,
+  resolveSecureWorkspacePath,
+  workspacePathSpeller
+} from '../utils/workspacePaths'
+import {
+  byteOrderMarkLength,
+  sampleTextEncoding,
+  TEXT_SAMPLE_BYTES,
+  type WorkspaceTextEncoding
+} from '../utils/workspaceText'
 
 const DEFAULT_READ_LINES = 500
 const MAX_READ_LINES = 2_000
@@ -84,21 +95,21 @@ function abortIfNeeded(signal?: AbortSignal): void {
 }
 
 function globToRegex(pattern: string): RegExp {
+  // `**/` is any number of folders, none included: `**/*` matched only files inside a folder, so
+  // a project with its files at the top listed nothing.
   const escaped = pattern
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*\//g, '\uE001')
     .replace(/\*\*/g, '\uE000')
     .replace(/\*/g, '[^/]*')
-    .replace(/\uE000/g, '.*')
     .replace(/\?/g, '[^/]')
+    .replace(/\uE001/g, '(?:.*/)?')
+    .replace(/\uE000/g, '.*')
   return new RegExp(`^${escaped}$`)
 }
 
 function normalizePath(path: string): string {
   return path.split(sep).join('/')
-}
-
-function assertTextSample(sample: Buffer, path: string): void {
-  if (sample.includes(0)) throw new Error(`Cannot read binary file as UTF-8: ${path}`)
 }
 
 export class WorkspaceReadService {
@@ -186,10 +197,13 @@ export class WorkspaceReadService {
     const stat = await fs.stat(fullPath)
     if (!stat.isFile()) throw new Error(`Path is not a regular file: ${filePath}`)
     const sampleHandle = await fs.open(fullPath, 'r')
+    let encoding: WorkspaceTextEncoding | undefined
+    let bomLength = 0
     try {
-      const sample = Buffer.alloc(Math.min(8_192, stat.size))
+      const sample = Buffer.alloc(Math.min(TEXT_SAMPLE_BYTES, stat.size))
       const { bytesRead } = await sampleHandle.read(sample, 0, sample.length, 0)
-      if (options.describeBinary && sample.subarray(0, bytesRead).includes(0)) {
+      encoding = sampleTextEncoding(sample.subarray(0, bytesRead))
+      if (!encoding && options.describeBinary) {
         return {
           content: '',
           totalLines: 0,
@@ -202,7 +216,9 @@ export class WorkspaceReadService {
           binary: true
         }
       }
-      assertTextSample(sample.subarray(0, bytesRead), filePath)
+      if (!encoding) throw new Error(`Cannot read binary file as text: ${filePath}`)
+      // The byte order mark is not text; the mutation service drops and restores it the same way.
+      bomLength = byteOrderMarkLength(sample.subarray(0, bytesRead), encoding)
     } finally {
       await sampleHandle.close()
     }
@@ -221,7 +237,7 @@ export class WorkspaceReadService {
       Math.min(256 * 1024, Math.trunc(options.maxBytes ?? DEFAULT_READ_BYTES))
     )
     const lastAllowedLine = Math.min(requestedEnd, startLine + maxLines - 1)
-    const stream = createReadStream(fullPath, { encoding: 'utf8' })
+    const stream = createReadStream(fullPath, { encoding, start: bomLength })
     const reader = createInterface({ input: stream, crlfDelay: Infinity })
     const selected: string[] = []
     let totalLines = 0
@@ -293,6 +309,9 @@ export class WorkspaceReadService {
   ): Promise<WorkspaceListResult> {
     abortIfNeeded(options.signal)
     const targetDir = await resolveSecureWorkspacePath(workspaceRoot, options.subPath || '')
+    // Paths read as the project spells them, so one in another project folder starts with its name.
+    const folder = locateWorkspacePath(workspaceRoot, options.subPath || '')
+    const spell = workspacePathSpeller(workspaceRoot, folder.folder)
     const filter = options.glob ? globToRegex(options.glob) : null
     const cursor = Math.max(0, Math.trunc(options.cursor ?? 0))
     const maxResults = Math.max(
@@ -312,11 +331,17 @@ export class WorkspaceReadService {
         if (entry.isSymbolicLink() || SKIPPED_DIRECTORIES.has(entry.name)) continue
         if (!entry.isDirectory() && SKIPPED_FILES.has(entry.name)) continue
         const absolute = join(directory, entry.name)
-        const path = normalizePath(relative(workspaceRoot, absolute))
+        const path = spell(normalizePath(relative(folder.root, absolute)))
         if (entry.isDirectory()) {
           if (!filter) collected.push(`${path}/`)
           childDirectories.push(absolute)
-        } else if (!filter || filter.test(path)) {
+        } else if (
+          !filter ||
+          // Read against the listed folder, as an agent means `*.ts` in `src`; a pattern written
+          // from the project root, such as `src/**/*.ts`, still matches.
+          filter.test(normalizePath(relative(targetDir, absolute))) ||
+          filter.test(path)
+        ) {
           collected.push(path)
         }
       }
@@ -367,10 +392,10 @@ export class WorkspaceReadService {
         throw error
       }
       if (stat.isFile()) {
-        const relativePath = normalizePath(relative(workspaceRoot, target))
-        const matchesPattern = options.filePattern
-          ? globToRegex(options.filePattern).test(relativePath)
-          : true
+        const relativePath = projectRelativePath(workspaceRoot, target)
+        const pattern = options.filePattern ? globToRegex(options.filePattern) : null
+        const matchesPattern =
+          !pattern || pattern.test(basename(target)) || pattern.test(relativePath)
         listed = {
           files: matchesPattern ? [relativePath] : [],
           truncated: false,
@@ -405,15 +430,10 @@ export class WorkspaceReadService {
       const absolute = await resolveSecureWorkspacePath(workspaceRoot, filePath)
       const stat = await fs.stat(absolute)
       if (!stat.isFile() || stat.size > MAX_SEARCH_FILE_BYTES) continue
-      let raw: string
-      try {
-        const buffer = await fs.readFile(absolute)
-        assertTextSample(buffer.subarray(0, Math.min(buffer.length, 8_192)), filePath)
-        raw = buffer.toString('utf8')
-      } catch (error) {
-        if ((error as Error).message.startsWith('Cannot read binary')) continue
-        throw error
-      }
+      const buffer = await fs.readFile(absolute)
+      const encoding = sampleTextEncoding(buffer.subarray(0, TEXT_SAMPLE_BYTES))
+      if (!encoding) continue
+      const raw = buffer.subarray(byteOrderMarkLength(buffer, encoding)).toString(encoding)
       const lines = raw.replace(/\r\n?/g, '\n').split('\n')
       for (let index = 0; index < lines.length; index++) {
         expression.lastIndex = 0

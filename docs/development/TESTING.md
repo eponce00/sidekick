@@ -66,10 +66,46 @@ limit), and replies that ran away: more than 64 tool calls, or one call more tha
 prints counts and run ids,
 never message content, and exits 1 when something is flagged. Thresholds are flags; see `--help`.
 
+### Context budget
+
+Every turn sends the system prompt and the tool schemas before any history, and a local model with
+a small window pays for each byte. `src/shared/agentContextBudget.test.ts` composes them for a full
+conversation turn (project folder, web search, browser, code intelligence, a chat that can start
+other chats, Windows, a local Qwen model) and for a sub-agent, and requires the byte counts to equal
+`src/shared/agentContextBudget.json`: the system prompt, the tool count, the tools' OpenAI function
+JSON, and each tool's share. A change to prompt or tool text therefore updates that file, with
+`npx vitest run src/shared/agentContextBudget -u`, and the diff shows what it costs.
+
+On a pull request, CI compares the file with the base branch's copy
+(`scripts/check-agent-context-budget.cjs`) and fails when any number grew, including a new tool.
+When the growth is worth it, add the `agent-context-increase` label and re-run the job.
+
+### Harness fault scenarios
+
+`src/main/evals/harnessFaults.test.ts` replays harness bugs found in real runs. Each scenario runs
+the real kernel and tools (`AgentScenarioHarness`) against the scripted model, in an environment
+with the fault that caused the bug, and checks what SideKick told the model and the user. Each
+fails on the commit before its fix. They run in the ordinary suite:
+
+- A reply that compacts mid-run keeps the user's latest request word for word right after the
+  summary, even when the summary names an earlier question as the objective (fixed in 0.22.0).
+- `web_search` where every engine answers HTTP 429 is a failed call whose text names the engines
+  and says they are not the model provider, and a second search inside the cooldown asks no engine
+  (0.22.1).
+- A background command whose script starts a program with `Start-Process` (Windows) or `nohup … &`
+  (macOS, Linux) stays running until the program ends and ends with the `[SideKick]` note that the
+  shell exited first; stopping it after its shell exited ends the program (0.22.1).
+- A model that repeats the same failing call is warned from the second call and stopped with
+  `loop_detected` by the fifth.
+
+A new harness bug gets a scenario here when a scripted model and a faulted environment can
+reproduce it; one that needs the built app's windows, settings or storage belongs in
+`npm run test:behavior`.
+
 ## Continuous integration
 
 CI runs its work in parallel jobs: one Linux job for the platform-independent checks and coverage,
-the suite on macOS and on two Windows machines (it runs on one worker there), and a packaging job
+the suite on macOS and on two Windows machines, and a packaging job
 per platform for the runtime journey and smoke tests. The `Validate (…)` checks that branch
 protection requires pass only when every one of those jobs passed. Installed dependencies are cached
 by the locked dependencies and the Node version; the key leaves out SideKick's own version, so a
@@ -162,7 +198,25 @@ changes, rendered bounds at desktop and mobile viewports, console/network cleanl
 reference-image similarity are supporting evidence. Subjective aesthetic scoring is never allowed
 to turn an otherwise valid harness run into a harness defect by itself. The full live suite includes
 a two-turn inline-SVG creation and revision scenario; the native-browser smoke separately proves
-real rendering, screenshots, pointer interaction, viewport changes, and browser-session cleanup.
+real rendering, screenshots, pointer interaction, viewport changes, and browser-session cleanup, and
+drives a page's WebMCP tools through the agent kernel in each permission mode.
+
+`npm run test:browser-controls` measures the browser tools on synthetic pages and reports numbers
+rather than passing or failing, so the same run compares two builds: how long actions wait to
+settle on pages that load slowly, show a spinner, or never stop changing, and whether the result
+had arrived; how many custom pickers and date fields `browser_select` and `browser_fill_form`
+fill directly; whether an ambiguous or missing option is refused; and, when
+`SIDEKICK_AGENT_EVAL_API_KEY`, `_URL` and `_MODEL` are set, whether a real model completes the
+booking form, in how many tool calls. `SIDEKICK_BROWSER_CONTROLS_N` and
+`SIDEKICK_BROWSER_CONTROLS_AGENT_N` set the trials.
+
+`npm run test:browser-sites` gives a real model eleven flows on public sites, each in its own
+Electron process with a time limit: Wikipedia's search suggestions and language picker, the
+react-select, MUI and Select2 demos, a flatpickr date, timeanddate.com's date calculator, a
+weather.gov location search, GitHub's branch picker, and searches on Google Flights and
+Booking.com. Each is checked against the page it ends on or the answer it gives; nothing is
+submitted, bought or signed into. Sites change, so this is an evaluation to run before changing
+browser tools, not a test that gates a release. Name scenarios to run only those.
 
 `npm run test:artifact-inspector-smoke` renders React, HTML, and SVG artifacts, including one that
 fetches live data and one that throws, through the real artifact inspection window, and writes each
@@ -178,6 +232,48 @@ a follow-up turn over the first turn's transcript. Plan contracts remain in thei
 the comprehensive integration lane measures tool interoperability without paying for a second copy
 of the Plan-mode state machine. Its fixture and every browser/runtime artifact live under one
 temporary root that the parent process removes even after a failed or timed out child run.
+
+### Replay of bad turns
+
+`npm run test:agent-eval:replay` replays the turns real runs got wrong. Each case in
+`src/main/evals/replay/` is one NDJSON file: the first line names the case, the pattern it comes
+from, and what the next turn must or must not do (`forbidTools`, `forbidContent`,
+`forbidArguments`, and `oneOf` a tool call or a phrase), and every later line is a message of the
+conversation trimmed to that turn. The runner adds the system prompt and the full conversation
+tool catalog composed from the checkout, asks the configured model for the next turn, and grades
+it by code (`src/main/evals/replayCases.ts`). A message with a `fixture` is built by SideKick's own
+code, such as the result of a search every engine refused, so a change to that text is replayed
+too. The cases cover answering an older question after compaction, retrying a refused search,
+treating SideKick's own notes as the user, and misreading a background command as finished.
+
+Each case runs `SIDEKICK_REPLAY_TRIALS` times (default 3), because a model does not answer the same
+way each time; `SIDEKICK_REPLAY_CASES` runs only the named cases. The report records the revision
+it measured, with `+changes` for uncommitted edits. To score a prompt or tool-text change, run the
+same cases on both versions and compare the reports; the comparison lists each case whose result
+differs:
+
+```bash
+SIDEKICK_AGENT_EVAL_REPORT=before.json npm run test:agent-eval:replay
+SIDEKICK_AGENT_EVAL_REPORT=after.json npm run test:agent-eval:replay
+npm run benchmark:agent-evals -- before.json after.json
+```
+
+It calls a model, so it never runs in CI. Write a new case by hand from the pattern a bad run
+shows, never by copying a conversation, prompt, path or credential from a run journal.
+
+### Real-world scenarios
+
+`npm run test:real-world-eval -- <model> [<model> …]` runs project-sized tasks on free OpenRouter
+models (`src/main/evals/realWorld.live.test.ts`): the production kernel, tools, terminal and system
+prompt on a small synthetic project, graded by what ends up on disk and in the reply. They cover a
+failing test, a long background job, a launcher that starts another program, a server's whole
+lifecycle, a command waiting at a prompt, a long log, git, a rename across files, live web
+research, a two-turn revision, a large file, CRLF and accented text, and a 24k window that has to
+compact. After each run the model is asked, with tools off, what in the tooling got in its way;
+treat its answer as a lead to check in the transcript, not a finding. `SIDEKICK_REALWORLD_ONLY`
+runs only the named scenarios, and `SIDEKICK_REALWORLD_REPORT` and
+`SIDEKICK_REALWORLD_TRANSCRIPTS` save the results and each run's messages. It reads the OpenRouter
+key like the other evaluations and calls models, so it never runs in CI.
 
 ## Search and packaged-app tests
 
@@ -212,3 +308,46 @@ consumes the value, not only the helper that creates it.
 Keep tests isolated: use temporary directories, synthetic content, fake credentials, deterministic
 clocks or IDs where relevant, and local HTTP servers instead of live internet dependencies. A
 passing live provider run supplements these checks; it never replaces them.
+
+### What earns a test
+
+Every test costs time on each run and work on each change, so it has to guard something. These
+earn one:
+
+- the smallest deterministic test that fails for a defect that happened;
+- an allowed and a denied case at a security or trust boundary;
+- a boundary test where a shared schema, IPC payload, persisted record, prompt, or tool value is
+  consumed.
+
+These do not:
+
+- UI layout, styling, copy, or wording; check those in the running app;
+- small pure helpers that their callers' tests already exercise;
+- what a library or the type checker already guarantees;
+- another test of the same behavior with different inputs; a table (`it.each`) is for inputs that
+  take different branches;
+- tests that restate the implementation: expected values computed by the code under test, every
+  collaborator mocked, assertions that only check a call happened, or `toBeDefined` where the exact
+  value is known.
+
+Ask of each test whether it would fail if the code were wrong. Coding agents tend to write many
+near-duplicate, heavily mocked tests that pass for wrong code; review their tests against this list
+like any other change.
+
+Delete a test when the code it guards is gone, when another test covers the same behavior, or when
+it pins wording or structure rather than behavior. Keep the only test for a past defect or a
+security boundary; `git log -S` on a line of it finds why it was added.
+
+### Speed budget
+
+`npm test` finishes in a few minutes on a developer machine, and no test file takes more than
+about 30 seconds unless a comment at its top says why. Build a git or file fixture once per file and
+copy it rather than once per test, use fake timers instead of waiting, and start real processes only
+where the process is what is tested.
+
+`vitest.config.ts` splits the suite into three projects, which on Windows share half the cores
+(`scripts/run-vitest.cjs`). `unit` runs in parallel. `git` holds the
+files that run git in repositories of their own, in parallel with longer timeouts. `processes` holds
+the files that start shells or helper programs, and runs them one file at a time on Windows, where
+side-by-side runs left orphaned PowerShell trees. A new file that starts a process belongs in that
+list.

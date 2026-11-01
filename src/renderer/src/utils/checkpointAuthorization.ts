@@ -1,17 +1,14 @@
-import {
-  checkpointPermissionOperation,
-  type CheckpointMutationAction
-} from '../../../shared/permissions'
+import { historyRestorePermissionOperation } from '../../../shared/permissions'
 import type { CheckpointMutationAuthorization } from '../../../shared/types'
+import type { HistoryRestoreTarget } from '../../../shared/workspaceHistory'
 
 export async function authorizeCheckpointMutation(
-  action: CheckpointMutationAction,
-  hash: string
+  targets: HistoryRestoreTarget[]
 ): Promise<CheckpointMutationAuthorization | null> {
-  // Recovery actions are initiated by an explicit Undo/Rewind/Restore click and, where
+  // Recovery actions are initiated by an explicit Undo or Rewind click and, where
   // destructive, an in-app confirmation. Respect Always Ask globally without forcing a
   // second native prompt in Full Access mode.
-  const operation = checkpointPermissionOperation(action, hash, 'auto')
+  const operation = historyRestorePermissionOperation(targets, 'auto')
   const authorization = await window.api.permissions.authorize(operation)
   if (!authorization.approved || !authorization.token) return null
   return {

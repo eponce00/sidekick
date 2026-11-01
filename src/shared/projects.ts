@@ -1,7 +1,19 @@
+/**
+ * A folder of a project besides its primary one. The agent addresses it by name, as
+ * `<name>/path`; relative paths without a folder name mean the primary folder.
+ */
+export interface WorkspaceFolder {
+  name: string
+  path: string
+}
+
 export interface Project {
   id: string
   name: string
+  /** The primary folder: where commands start, and whose Git, instructions and memory apply. */
   folder_path: string
+  /** The project's other folders, in the order they were added. */
+  folders?: WorkspaceFolder[]
   is_pinned: number
   created_at: number
   updated_at: number
@@ -41,6 +53,8 @@ export interface ProjectConversation {
   archived_at?: number | null
   /** The most this chat may do without asking; stricter than the setting. See `effectivePermissionMode`. */
   permission_ceiling?: import('./permissions').PermissionMode | null
+  /** The model this chat runs with; see `conversationModelChoice`. */
+  model_id?: string | null
 }
 
 export interface ForkConversationInput {
@@ -71,13 +85,31 @@ export interface ConversationProjectTransition {
   movedAt: number
 }
 
+export interface ConversationWorktreeContext {
+  /** The project folder the worktree is a copy of, which keeps its own checkout. */
+  projectFolder: string | null
+  /** The branch SideKick made for it; null for worktrees made while they started detached. */
+  branch: string | null
+  /** The branch or commit it started from. */
+  base: string | null
+}
+
 export interface ConversationProjectContext {
   conversationId: string
   projectId: string | null
   projectName: string | null
-  /** Where the chat works: its worktree's folder when it has one, else the project folder. */
+  /**
+   * Where the chat works: its worktree's folder when it has one, else the project folder, else,
+   * for a chat that has never had a project, its own folder.
+   */
   workspaceRoot: string | null
+  /** The project's other folders, which the chat works in alongside workspaceRoot. */
+  folders: WorkspaceFolder[]
+  /** Set when workspaceRoot is the chat's own folder rather than a project's. */
+  chatFolder?: boolean
   worktreeId: string | null
+  /** For a chat in its own worktree: the project folder it is a copy of, its branch and base. */
+  worktree?: ConversationWorktreeContext | null
   homeWorkspaceRoot: string | null
   homeProjectName: string | null
   isDetached: boolean
@@ -88,4 +120,14 @@ export interface ConversationProjectContext {
 export interface MoveConversationResult {
   conversation: ProjectConversation
   transition: ConversationProjectTransition | null
+}
+
+export interface UpdateProjectFoldersInput {
+  projectId: string
+  /** Folders to add, each one the user picked in the folder picker. */
+  add?: string[]
+  /** Extra folders to remove, by name. */
+  remove?: string[]
+  /** An extra folder to make the primary one, by name; the primary becomes an extra folder. */
+  makePrimary?: string
 }

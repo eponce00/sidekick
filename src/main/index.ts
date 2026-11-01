@@ -7,20 +7,25 @@ import {
   installArtifactProtocol
 } from './bootstrap/artifactProtocol'
 import { openApplicationDatabase } from './bootstrap/database'
-import { createMainWindow } from './bootstrap/mainWindow'
+import { addMessageCheckpoints } from './services/messageCheckpoints'
+import { ProjectStore } from './services/projectStore'
+import { setWorkspaceFolderLookup } from './utils/workspacePaths'
+import { createMainWindow, textScaleSetting } from './bootstrap/mainWindow'
+import { stepTextScale } from './bootstrap/windowZoom'
 import { initializeWorkspaceState } from './bootstrap/workspace'
 import { registerAllHandlers } from './ipc'
 import { closeMcpConnections } from './ipc/mcp'
 import { appState } from './ipc/state'
 import { activeAgentConversationCount, shutdownAgentRuntime } from './ipc/agentRuns'
+import { setCompanionVoice, shutdownCompanion } from './ipc/companion'
 import { sessionStatusService } from './ipc/sessionStatus'
-import { shutdownWorktreeSetup } from './ipc/worktreeSetup'
+import { shutdownUserTerminals } from './ipc/userTerminals'
 import { registerAppUpdateHandlers } from './ipc/appUpdates'
 import {
   configureCheckpointStorageRoot,
   recoverInterruptedCheckpointCaptures
 } from './services/checkpoints'
-import { CheckpointTitleStore } from './services/checkpointTitleStore'
+import { configureChatFoldersRoot, removeOrphanChatFolders } from './services/chatFolders'
 import { installApplicationMenu } from './bootstrap/applicationMenu'
 import appIcon from '../../resources/icon.png?asset'
 import trayIcon from '../../resources/tray.png?asset'
@@ -67,11 +72,12 @@ function prepareApplicationShutdown(): Promise<void> {
   appUpdateService?.stop()
   stopScheduler()
   voiceService?.dispose()
+  shutdownUserTerminals()
   applicationShutdown = Promise.allSettled([
     stopControlEndpoint?.(),
+    shutdownCompanion(),
     shutdownAgentRuntime(),
-    closeMcpConnections(),
-    shutdownWorktreeSetup()
+    closeMcpConnections()
   ]).then((results) => {
     for (const result of results) {
       if (result.status === 'rejected') console.error('[Shutdown] Cleanup failed:', result.reason)
@@ -221,25 +227,17 @@ async function bootstrapApplication(): Promise<void> {
   appState.store = new Store()
   appState.db = openApplicationDatabase(join(app.getPath('userData'), 'conversations.db'))
   configureCheckpointStorageRoot(join(app.getPath('userData'), 'history'))
+  configureChatFoldersRoot(join(app.getPath('userData'), 'chat-folders'))
+  const projects = new ProjectStore(appState.db)
+  setWorkspaceFolderLookup((root) => projects.foldersForRoot(root))
+  // Chats deleted while SideKick was closed, or by a path that does not clean up, leave folders.
+  setImmediate(() => removeOrphanChatFolders(appState.db!))
   const recoveredCaptures = await recoverInterruptedCheckpointCaptures()
   if (recoveredCaptures.length) {
-    const titles = new CheckpointTitleStore(appState.db)
-    const linkMessage = appState.db.prepare(
-      `UPDATE messages SET checkpoint_hash = ?, checkpoint_workspace_root = ?
-       WHERE id = ? AND conversation_id = ?`
-    )
     for (const recovered of recoveredCaptures) {
-      titles.recordCreated(
-        recovered.workspaceRoot,
-        recovered.checkpoint.hash,
-        'Interrupted agent changes'
-      )
-      linkMessage.run(
-        recovered.checkpoint.hash,
-        recovered.workspaceRoot,
-        recovered.agentMessageId,
-        recovered.conversationId
-      )
+      addMessageCheckpoints(appState.db, recovered.agentMessageId, recovered.conversationId, [
+        { workspaceRoot: recovered.workspaceRoot, hash: recovered.checkpoint.hash }
+      ])
     }
     console.log(`[History] Recovered ${recoveredCaptures.length} interrupted file change set(s)`)
   }
@@ -280,6 +278,7 @@ async function bootstrapApplication(): Promise<void> {
     enabled: voiceEnabled()
   })
   registerVoiceHandlers(voiceService)
+  setCompanionVoice(voiceService)
   onSettingsSaved(() => voiceService?.setEnabled(voiceEnabled()))
   openMainWindow()
   mainWindowOpened = true
@@ -305,7 +304,10 @@ async function bootstrapApplication(): Promise<void> {
     'open-settings': () => dispatchAppCommand('open-settings'),
     'new-chat': () => dispatchAppCommand('new-chat'),
     'open-project': () => dispatchAppCommand('open-project'),
-    'check-for-updates': () => void appUpdateService?.check()
+    'check-for-updates': () => void appUpdateService?.check(),
+    'text-larger': () => stepTextScale(textScaleSetting, 'in'),
+    'text-smaller': () => stepTextScale(textScaleSetting, 'out'),
+    'text-reset': () => stepTextScale(textScaleSetting, 'reset')
   })
   const updates = appUpdateService
   const installUpdate = (): void => void updates.install()

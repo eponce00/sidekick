@@ -41,7 +41,7 @@ describe('WorkspaceMemoryModal', () => {
     container.remove()
   })
 
-  it('explains project notes and saves edited context', async () => {
+  it('saves edited notes for the open project only once they changed', async () => {
     const onClose = vi.fn()
     const onSaved = vi.fn()
     await act(async () =>
@@ -57,10 +57,6 @@ describe('WorkspaceMemoryModal', () => {
     )
 
     const dialog = document.querySelector('[role="dialog"]') as HTMLElement
-    expect(dialog.textContent).toContain('Project notes')
-    expect(dialog.textContent).toContain('AGENTS.md')
-    expect(dialog.textContent).toContain('SideKick')
-
     const saveButton = [...dialog.querySelectorAll('button')].find((button) =>
       button.textContent?.includes('Save notes')
     ) as HTMLButtonElement
@@ -78,30 +74,6 @@ describe('WorkspaceMemoryModal', () => {
     )
     expect(onSaved).toHaveBeenCalledWith('Existing decision\nUse compact cards')
     expect(onClose).toHaveBeenCalledOnce()
-  })
-
-  it('shows a useful error when saving fails', async () => {
-    save.mockRejectedValueOnce(new Error('Database is unavailable'))
-    await act(async () =>
-      root.render(
-        <WorkspaceMemoryModal
-          isOpen
-          workspaceFolder={'C:\\projects\\SideKick'}
-          initialContent=""
-          onClose={vi.fn()}
-          onSaved={vi.fn()}
-        />
-      )
-    )
-
-    const dialog = document.querySelector('[role="dialog"]') as HTMLElement
-    await act(async () => setTextareaValue(dialog.querySelector('textarea')!, 'Remember this'))
-    const saveButton = [...dialog.querySelectorAll('button')].find((button) =>
-      button.textContent?.includes('Save notes')
-    ) as HTMLButtonElement
-    await act(async () => saveButton.click())
-
-    expect(dialog.querySelector('[role="alert"]')?.textContent).toContain('Database is unavailable')
   })
 
   it('resets the form when the project changes even if both projects have the same notes', async () => {
@@ -136,6 +108,5 @@ describe('WorkspaceMemoryModal', () => {
     const secondTextarea = document.querySelector('textarea') as HTMLTextAreaElement
     expect(secondTextarea).not.toBe(firstTextarea)
     expect(secondTextarea.value).toBe('Shared text')
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Second')
   })
 })

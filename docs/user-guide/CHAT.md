@@ -7,7 +7,10 @@
   appears in the reply where the agent took it in. When the reply cannot take it (it is waiting on
   an approval or a question, or is finishing), SideKick stops the reply and starts a new one from
   your message instead.
-- **Queue:** a message added to the queue waits for the reply to finish and is sent next.
+- **Queue:** a message added to the queue waits for the reply to finish and is sent next. Drag
+  queued messages to reorder them. **Edit** moves one into the message box, as editing a sent
+  message does; sending saves it back in the queue, and **Cancel** or Esc leaves it as it was and
+  brings back what the box held.
 - **Live progress:** a line at the foot of the reply shows what the agent is doing (waiting for
   the model, thinking, using tools, writing, compacting context, or waiting for you), how long it
   has worked since your message, how many tokens the model has written and how fast, and how full
@@ -20,6 +23,11 @@
   model this can take a minute or more, and nothing is written meanwhile. A **Context compacted**
   row marks the point in the reply. A finished summary is kept even if you then stop the reply,
   retry it or edit your message, so the next reply does not summarize the same messages again.
+  A chat left alone for two minutes after a reply, close enough to that point that the next
+  reply would summarize first, is summarized then instead, so your next message starts at once.
+  This uses the model only while no other reply needs it, and steps aside when one does.
+  When the latest tool results alone outgrow a small window and there is little earlier history,
+  SideKick shortens those results instead, and a **Context fitted** row says how many.
 - **Waiting on you:** a conversation that needs an approval or an answer is marked in the sidebar,
   counted on the taskbar or dock icon and listed in the tray menu, and announced by a notification
   when SideKick is not in front. A failed reply is announced the same way. See
@@ -47,6 +55,39 @@ like a standalone page or document, have no check, so the reply shows no status 
 not asked for one. Select the status
 to see the commands and their results. The footer appears when you point at the reply, except after
 a failed check, which stays in sight.
+
+## Artifacts
+
+When you ask for something live, such as a chart, a calculator or a small tool, the agent can build
+it as an artifact that runs inside the reply.
+
+- **Takes shape as it is written:** the artifact appears in the reply while the agent is still
+  writing it, and grows piece by piece as the code arrives: what is already there stays put, new
+  parts appear where they belong, and a part whose code has not arrived yet shows as a plain
+  placeholder. Nothing flashes or animates while it grows: charts appear already drawn. Beneath it,
+  a short line says what it is doing: **Writing**, **Checking how it looks**, or **Polishing**
+  while a fix is made. A fixed version replaces it in place once it has settled, without drawing
+  its charts in again; a version that fails along the way is never shown. While it is still being
+  written it does not load data; the finished version does.
+- **Changes in place:** ask for a change to an artifact, such as a color or a new column, and the
+  agent edits just that part of it, which takes seconds rather than writing it again. Within a
+  reply, the artifact stays where it is and says **Updating** until the changed version replaces
+  it; a change asked for in a later message shows the new version in that reply, and the earlier
+  one stays as it was.
+- **Part of the reply:** an artifact sits in the reply like an image, as wide as the text, with no
+  card or frame around it. It uses SideKick's font, colors and accent, and follows your light or
+  dark theme and accent as you change them.
+- **As tall as it needs:** it grows to fit what it shows, and grows or shrinks smoothly when that
+  changes. While it first renders, one quiet line holds its place. Something taller than about two
+  screens stops there and scrolls inside; open it full screen to see all of it. Scrolling over an
+  artifact that does not scroll itself scrolls the chat.
+- **Controls when you want them:** point at an artifact, or move focus into it, to see its name and
+  three buttons beneath it: **View code** shows its code in its place, **Copy code**, and **Open
+  full screen**, which shows it across the window until you press Esc or **Close**.
+- **When it fails:** an artifact that could not run shows one line saying so. Select it to read the
+  error, or choose **Retry**. An error after it showed leaves it in place, with a short note under
+  it.
+- **On the phone,** an artifact shows as its name and a note to open it on the computer.
 
 ## Sub-agents
 
@@ -79,38 +120,88 @@ of its report.
 - **Comments on changes:** in a reply's file changes, click a line number (shift-click to extend
   the range) and write a comment. It is attached to your next message as a card, with the file,
   the lines, and the quoted change, for the agent to act on.
-- **Files:** type `@` to pick a project file. Its path goes into the message and the file is
-  attached. Attached files, up to four per message, are read before the agent starts, so its first
-  step already has their contents; the reads show in the reply like any other.
+- **Images:** paste or drop an image on the message box, or choose one with **+**: PNG, JPEG, WebP, GIF, AVIF, or BMP, up to
+  100 MB each and four per message. Size is not something to manage: the chat keeps the image as
+  you attached it, and each model receives a copy made to fit what it takes, shrunk to its size
+  and byte limits and converted when it cannot read the format. When the selected model will get a
+  smaller copy, the image's tooltip says so. HEIC photos are not read yet; export them as JPEG.
+- **Files:** drop files on the message box, paste them, or choose them with **+** → **Files**, from
+  anywhere on your computer, up to 100 MB each; an image goes as an image when the model can see
+  it. Type `@` to pick a project file, from any of the project's folders: its path goes into the
+  message and the file is attached; a file in another folder's path starts with that folder's
+  name. A project's own files and folders are read where they are. A file from elsewhere is
+  copied, so the original is never changed: a project keeps the copy in `.sidekick/uploads`, which
+  git ignores, and a chat without a project in the `uploads` folder of its own folder, where the
+  copies go when the chat is deleted. Up to four attached files per message are read before the
+  agent starts, so its first step already has their contents; the reads show in the reply like
+  any other. A PDF is read with its scanned and illustrated pages as pictures or recognized text;
+  see [Tools](TOOLS.md).
 - **Commands:** type `/` for the message box's own commands, such as the model, plan, research, and
   goal, and for your saved prompts.
 - **Saved prompts:** a Markdown file in `.sidekick/prompts`, in the project or in your home folder,
   is offered as `/` followed by its file name. A `description:` line in a leading `---` block
   describes it in the menu. Claude Code's `.claude/commands` folders are read too. Choosing one fills
   the message box; where the prompt says `$ARGUMENTS`, that word is selected so you type over it.
-- **Reasoning:** the brain button beside the model shows how much the selected model reasons, and
-  opens a menu of the levels that model can take. Each model keeps its own level. The levels follow
-  what its provider can send:
+- **Permissions:** the shield beside the model shows and changes the
+  [permission mode](PERMISSIONS.md), one setting for every chat: Full access, the default, or a mode
+  that asks first. A change applies from the next reply.
+- **Model:** each conversation keeps the model chosen in it, so choosing a model in one
+  conversation never changes another. A new conversation starts on the model chosen most recently
+  in any conversation. Retries, continued replies, and chats a conversation starts use its model; a
+  scheduled run uses its schedule's. When a conversation's model is removed or turned off in
+  Settings, the picker marks it **Unavailable** and the message box asks you to choose another
+  before sending, rather than switching models for you.
+- **Reasoning:** for a model that lets you choose how much it reasons, the model picker shows the
+  level beside its name and opens on a slider with a stop for each level that model takes; its name
+  opens the list of models, and the reset button beside the level returns to the model's own
+  default. Each model keeps its own level. The levels are the ones the model's server lists for it
+  when you load its models in Settings:
 
-  | Provider                             | Levels                                          |
-  | ------------------------------------ | ----------------------------------------------- |
-  | Ollama, Ollama Cloud                 | On, Off; gpt-oss models take Low, Medium, High  |
-  | Anthropic                            | Off, Low, Medium, High, and Max on newer Claude |
-  | OpenRouter, LiteLLM                  | Model default, Off, Minimal through Extra high  |
-  | LM Studio, OpenAI-compatible servers | Model default, Off, Low, Medium, High           |
-  | llama.cpp                            | Model default, On, Off                          |
+  | Provider             | What the server says                                                  |
+  | -------------------- | --------------------------------------------------------------------- |
+  | LM Studio 0.4.8+     | Each model's allowed options, such as Off and On, and its default     |
+  | Ollama, Ollama Cloud | Each model's `think` values, such as On and Off, or Low, Medium, High |
+  | Anthropic            | Whether thinking can be off, and each effort level the model takes    |
+  | OpenRouter           | Each model's efforts, its default, and whether reasoning can stop     |
+  | LiteLLM              | Each deployment's effort levels, where its model info lists them      |
+  | llama.cpp            | Whether the loaded chat template takes an effort or switches on/off   |
 
-  Model default sends nothing and leaves it to the model or server. A server that rejects a level
-  answers with its own default instead of failing, and some models reason anyway: gpt-oss cannot
-  stop, and some OpenRouter models require reasoning. A model whose provider reports it cannot
-  reason, or whose Reasoning capability is turned off in its settings, has no button. The command
-  palette's Reasoning entry steps to the next level. In a reply, each step of reasoning shows the
-  same brain among the agent's steps; select it to read it in full.
+  Where a server says a model reasons but lists no levels, the picker offers what its protocol can
+  send. A model that cannot reason, always reasons the same way, or whose server says nothing, as
+  with a generic OpenAI-compatible server such as vLLM, has no reasoning control and uses its own
+  default; mark its Reasoning capability as supported in its settings to choose a level for it. A
+  server that
+  rejects a level answers with the model's default instead of failing. The command palette's
+  Reasoning entry steps to the next level. In a reply, each step of reasoning shows the same brain
+  among the agent's steps; select it to read it in full.
+
+## Tables in replies
+
+A table in a reply gives each column room for its content on one line, up to a limit, so short
+columns such as names and numbers never wrap; when the table is wider than the chat, it scrolls
+sideways inside its card. Drag a column header's right edge to resize the column, or focus the edge
+and use the arrow keys. Double-click the edge, or press **Enter** on it, to fit the columns to their
+content again.
 
 ## The side panel
 
-The panel beside the chat holds Files, Recovery, Browser and Terminal. Drag its left edge to
-resize it. While you drag, nothing else moves: a tinted outline shows where the panel will land,
+The panel beside the chat works with tabs, like a browser's. Each tab shows one app: **Files**,
+**Browser**, **Terminal**, and **Chats** for a chat that started others. **+** opens a new tab
+showing the apps; choose one and the tab becomes it. An app is open once: choosing one that is
+already open goes to its tab. Close a tab with its **×** or a middle click; closing the last one
+leaves a new tab.
+
+Drag a tab along its row to reorder it. Drag it onto the top or bottom of the page below the tabs to
+give it a section of its own above or below, with its own tabs, up to four; drag the line between
+two sections to share the height between them. Drop a tab on another section's row, or in the
+middle of its page, to move it there. The panel keeps its tabs and sections for next time.
+
+Drag **Files**, **Browser** or **Terminal** out of the window and let go to open it in a window of
+its own, for the same chat, where you let go. Its title bar names the app and the chat; **Put back**
+returns it to the panel. While it has its own window, choosing it in the panel brings that window
+forward, and closing SideKick's main window closes it too.
+
+Drag the panel's left edge to resize it. While you drag, nothing else moves: a tinted outline shows where the panel will land,
 with an icon for what letting go will do. Let go, and the panel glides there in one motion as the
 chat and the left sidebar make room.
 
@@ -125,21 +216,35 @@ chat and the left sidebar make room.
   let go. Click an icon, or drag out from the rail, to open it again at the width it had.
 - **Esc** while dragging leaves the panel as it was.
 
-The fold button at the end of the tab row, or clicking the tab already showing, also folds the panel
-away. In a narrow panel the tabs show only their icons. Double-click the edge to switch
+The fold button at the end of the first row of tabs also folds the panel away. Double-click the
+edge to switch
 between the narrow column and the even split; the arrow keys move a focused edge.
+
+In **Files**, the trash button beside a file or folder, or **Move to Recycle Bin** (**Move to
+Trash** on macOS and Linux) in its right-click menu, asks first, saying how many items a folder
+holds, and then moves it to the Recycle Bin, where you can restore it. The project's folders
+themselves and Git's `.git` folders cannot be moved this way. A project of several folders shows
+each one as a node of its own, the primary one marked.
 
 ## Going back
 
 - **Rewind to here** on a message you sent goes back to before it without asking again: the
   message and everything after it leave the chat, and the message returns to the box to change or
-  send. **Rewind chat and files** also undoes the file changes SideKick made since then, as
-  [Workspace History](WORKSPACE_HISTORY.md) restores them; **Chat only** leaves files as they are.
+  send. When SideKick changed the project's files since that message, it asks what to do with
+  them: **Rewind chat and files** also undoes those changes, as
+  [Workspace History](WORKSPACE_HISTORY.md) restores them, and **Chat only** leaves files as they
+  are. With no file changes since, it just rewinds.
+- **Undo** on a reply that changed files takes back that reply's changes and keeps the chat.
 - **Edit** on a message you sent moves it into the message box, with its images, attachments,
   mode, and goal, and blurs it and everything after it. Change it with anything the box offers,
   then send: the message and what followed are replaced and SideKick answers again from there, the
   same way a rewind does. **Esc** or **Cancel** puts back what the box held before.
 - **Retry** rewinds to the message and asks again at once.
+- When the files cannot be restored, for example because one was changed since or the restore was
+  not approved, a rewind, retry or edit keeps every message, starts no new reply, and says why in
+  the chat.
+- A reply after a rewind, retry or edit reads a file again before changing it, even one an earlier
+  reply read, since that reply is no longer in the chat.
 
 ## After an interruption
 
@@ -177,4 +282,7 @@ each shown with its shortcut.
 | Ctrl+Shift+V               | Paste long text inline instead of attaching it |
 | Enter / Shift+Enter        | Send / new line                                |
 | Esc                        | Close a menu, or skip a reply being read aloud |
-| Ctrl + / - / 0             | Zoom in, out, or reset                         |
+| Ctrl + / - / 0             | Text size larger, smaller, or back to 100%     |
+
+The text-size shortcuts and **Settings → Appearance → Text size** are one setting. Each step sizes
+the whole window, text and interface together, through 80, 90, 100, 110, 120, 135, and 150%.

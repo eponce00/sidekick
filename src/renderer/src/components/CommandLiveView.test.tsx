@@ -67,8 +67,9 @@ describe('CommandLiveView', () => {
       'Ok to proceed? (y)'
     )
     const button = (label: string): HTMLButtonElement =>
-      [...container.querySelectorAll('button')].find((candidate) =>
-        candidate.textContent?.includes(label)
+      [...container.querySelectorAll('button')].find(
+        (candidate) =>
+          candidate.textContent?.includes(label) || candidate.getAttribute('aria-label') === label
       ) as HTMLButtonElement
     await act(async () => button('Stop').click())
     expect(terminal.stop).toHaveBeenCalledWith('command')
@@ -85,7 +86,6 @@ describe('CommandLiveView', () => {
     await act(async () =>
       emit({ type: 'session', session: session({ state: 'waiting_for_input' }) })
     )
-    expect(container.textContent).toContain('Waiting for input')
     const input = container.querySelector('input') as HTMLInputElement
     await act(async () => {
       const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!

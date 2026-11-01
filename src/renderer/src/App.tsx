@@ -14,18 +14,21 @@ import { useSchedules } from './hooks/useSchedules'
 import { AppUpdateToast } from './components/AppUpdateControls'
 import { ForkConversationDialog } from './components/ForkConversationDialog'
 import { WorktreesDialog } from './components/WorktreesDialog'
+import { EditProjectDialog } from './components/EditProjectDialog'
 import { AppMenuHost } from './components/AppMenuHost'
 import { useManagedWorktrees } from './hooks/useManagedWorktrees'
+import { useChatFolder } from './hooks/useChatFolder'
 import CommandPalette from './components/CommandPalette'
 import type { TodoItem } from '../../shared/types'
 import type { MoveConversationInput } from '../../shared/projects'
 import type { ManagedWorktreeSummary } from '../../shared/worktrees'
-import { normalizePermissionMode } from '../../shared/permissions'
+import { normalizePermissionMode, type PermissionMode } from '../../shared/permissions'
 import { resolveStoredToolCallLimit } from '../../shared/agentLimits'
 import {
   conversationTitleVersionForSource,
   type ConversationTitleSource
 } from '../../shared/conversationTitles'
+import { conversationModelChoice } from '../../shared/conversationModels'
 import {
   migrateLegacyProviderInstances,
   pinnedModelsFromProviderInstances,
@@ -62,13 +65,17 @@ import { conversationJumpIndex, matchesShortcut } from '../../shared/keyboardSho
 import { buildCommandPaletteItems, latestProjectConversationId } from './utils/commandPaletteItems'
 import { adjacentConversationId } from './utils/sidebarConversationOrder'
 import { useVoiceState } from './hooks/useVoice'
-import { toggleVoiceLoop, useVoiceLoop } from './services/voice/voiceLoop'
+import { toggleDictation, useDictating } from './services/voice/dictationControl'
 import {
   LAYOUT_MOTION_MS,
+  ACTIVITY_PANEL_NARROW_WIDTH,
+  ACTIVITY_PANEL_RAIL_WIDTH,
+  ACTIVITY_PANEL_WIDTH_KEY,
   PANEL_GLIDE_MS,
   SIDEBAR_RAIL_WIDTH,
   SIDEBAR_WIDTH,
   activityPanelSnapWidths,
+  defaultActivityPanelWidth,
   storedActivityPanelSize,
   storedActivityPanelWidth,
   workspaceLayout,
@@ -92,7 +99,6 @@ const DEFAULT_SETTINGS: ProviderSettings = {
   ollamaThinkingEnabled: true,
   openRouterThinkingEnabled: false,
   commandPermissionMode: 'full-access',
-  contentFontSize: 13,
   toolCallLimit: DEFAULT_TOOL_CALL_LIMIT
 }
 
@@ -125,7 +131,6 @@ const previewTheme = getPreviewTheme()
 function normalizeSettings(settings: ProviderSettings): ProviderSettings {
   return {
     ...settings,
-    contentFontSize: Math.max(12, Math.min(17, Math.round(settings.contentFontSize ?? 13))),
     commandPermissionMode: normalizePermissionMode(settings.commandPermissionMode),
     toolCallLimit: resolveStoredToolCallLimit(
       settings.toolCallLimit,
@@ -201,10 +206,12 @@ function App(): React.JSX.Element {
     (conversation) => conversation.id === currentConversationId
   )
   const [isSchedulesOpen, setIsSchedulesOpen] = useState(false)
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
   const [focusChainTodosByConversation, setFocusChainTodosByConversation] = useState<
     Record<string, TodoItem[]>
   >({})
-  const [selectedModel, setSelectedModel] = useState<string>('')
+  // Where a new chat starts: the model last chosen in any chat. Each chat keeps its own.
+  const [defaultModel, setDefaultModel] = useState<string>('')
   const [isActivityPanelPinned, setIsActivityPanelPinned] = useState<boolean>(() => {
     const stored = window.localStorage.getItem('activityPanelPinned')
     return stored === null ? window.innerWidth >= 1100 : stored === 'true'
@@ -226,7 +233,7 @@ function App(): React.JSX.Element {
     at: number
   } | null>(null)
   const voiceState = useVoiceState()
-  const voiceLoop = useVoiceLoop()
+  const dictating = useDictating()
   useEffect(() => {
     const media = window.matchMedia('(max-width: 760px)')
     const update = (): void => setIsCompactLayout(media.matches)
@@ -242,26 +249,33 @@ function App(): React.JSX.Element {
     window.addEventListener('resize', update)
     return () => window.removeEventListener('resize', update)
   }, [])
-  const [activityPanelWidth, setActivityPanelWidth] = useState(() =>
+  // Null until the user drags the edge, so the default keeps following the window.
+  const [draggedPanelWidth, setDraggedPanelWidth] = useState(() =>
     storedActivityPanelWidth(
-      window.localStorage.getItem('activityPanelWidth'),
+      window.localStorage.getItem(ACTIVITY_PANEL_WIDTH_KEY),
       window.innerWidth,
       window.localStorage.getItem('activityPanelSize')
     )
   )
+  const activityPanelWidth = draggedPanelWidth ?? defaultActivityPanelWidth(viewportWidth)
+  // The panel keeps the narrow column while it shows nothing that needs its width, such as an
+  // empty browser tab, unless the user widens it then.
+  const [panelNeedsRoom, setPanelNeedsRoom] = useState(true)
+  const [panelWidenedWhileEmpty, setPanelWidenedWhileEmpty] = useState(false)
   const [activityPanelSize, setActivityPanelSize] = useState<ActivityPanelSize>(() =>
     storedActivityPanelSize(window.localStorage.getItem('activityPanelSize'))
   )
   useEffect(() => {
     window.localStorage.setItem('activityPanelSize', activityPanelSize)
   }, [activityPanelSize])
-  useEffect(() => {
-    window.localStorage.setItem('activityPanelWidth', String(activityPanelWidth))
-  }, [activityPanelWidth])
   // Each time the inspector's edge glides to a width, the chat is held still while it moves.
   const [panelGlide, setPanelGlide] = useState(0)
   // Where the panel floats over the chat, sizes do not apply.
   const panelSize: ActivityPanelSize = isCompactLayout ? 'wide' : activityPanelSize
+  const panelWidth =
+    panelNeedsRoom || panelWidenedWhileEmpty
+      ? activityPanelWidth
+      : Math.min(activityPanelWidth, ACTIVITY_PANEL_NARROW_WIDTH)
   const panelIsFull = effectiveActivityPanelPinned && panelSize === 'full'
   // Opening the sidebar while it is folded for room keeps it open; the inspector narrows instead.
   const [isSidebarHeldOpen, setIsSidebarHeldOpen] = useState(false)
@@ -270,7 +284,7 @@ function App(): React.JSX.Element {
     sidebarCollapsed: isSidebarCollapsed,
     sidebarHeldOpen: isSidebarHeldOpen,
     panelOpen: effectiveActivityPanelPinned,
-    panelWidth: activityPanelWidth,
+    panelWidth,
     panelSize
   })
   // A sidebar kept open for one squeeze folds again in the next, once there has been room.
@@ -279,7 +293,7 @@ function App(): React.JSX.Element {
     sidebarCollapsed: false,
     sidebarHeldOpen: false,
     panelOpen: effectiveActivityPanelPinned,
-    panelWidth: activityPanelWidth,
+    panelWidth,
     panelSize: panelSize === 'full' ? 'wide' : panelSize
   }).sidebarAutoCollapsed
   useEffect(() => {
@@ -290,13 +304,12 @@ function App(): React.JSX.Element {
   // When the sidebar or the inspector opens, closes or changes size, the chat's content is held at
   // its final width for the animation, centred and clipped, instead of re-wrapping every frame.
   // Dragging the inspector's edge and resizing the window still re-lay it out live.
-  const collapsedPanelWidth = 48
   const sidebarTargetWidth = effectiveSidebarCollapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH
   const panelTargetWidth = !effectiveActivityPanelPinned
-    ? collapsedPanelWidth
+    ? ACTIVITY_PANEL_RAIL_WIDTH
     : panelSize === 'full'
       ? layout.panelMaxWidth
-      : Math.min(activityPanelWidth, layout.panelMaxWidth)
+      : Math.min(panelWidth, layout.panelMaxWidth)
   // The widest the inspector fits beside the chat, with the sidebar folded for it: dragged well
   // past this, it takes the whole window.
   const panelSideBySideMax = workspaceLayout({
@@ -405,9 +418,6 @@ function App(): React.JSX.Element {
     return savedTheme === 'light' ? 'light' : 'dark'
   })
   const [settings, setSettings] = useState<ProviderSettings>(DEFAULT_SETTINGS)
-  const [checkpointVersion, setCheckpointVersion] = useState(0)
-  const [restoredHash, setRestoredHash] = useState<string | undefined>(undefined)
-  const [chatRollbackHash, setChatRollbackHash] = useState<string | null>(null)
   const [isReady, setIsReady] = useState(false)
   const {
     currentConversationIdRef,
@@ -461,7 +471,7 @@ function App(): React.JSX.Element {
         migratedSettings.selectedModel = selected
         setSettings(migratedSettings)
         setPinnedModels(configuredModels)
-        setSelectedModel(selected)
+        setDefaultModel(selected)
         if (savedSettings) {
           // Apply saved accent palette
           if (migratedSettings.accentPalette) {
@@ -521,21 +531,18 @@ function App(): React.JSX.Element {
   }, [theme, settings.accentPalette])
 
   useEffect(() => {
-    const size = Math.max(12, Math.min(17, Math.round(settings.contentFontSize ?? 13)))
-    document.documentElement.style.setProperty('--content-text', `${size}px`)
-    document.documentElement.style.setProperty(
-      '--content-text-secondary',
-      `${Math.max(11, size - (size > 14 ? 2 : 1))}px`
-    )
-  }, [settings.contentFontSize])
-
-  useEffect(() => {
     window.localStorage.setItem('sidebarCollapsed', String(isSidebarCollapsed))
   }, [isSidebarCollapsed])
 
   useEffect(() => {
     window.localStorage.setItem('activityPanelPinned', String(isActivityPanelPinned))
   }, [isActivityPanelPinned])
+
+  // Text size applies at once, as the zoom shortcuts that step the same setting do.
+  const handleTextScaleChange = (textScale: number): void => {
+    setSettings((current) => ({ ...current, textScale }))
+    void window.api.settings.save({ textScale })
+  }
 
   const handleSaveSettings = async (
     newSettings: ProviderSettings,
@@ -545,22 +552,22 @@ function App(): React.JSX.Element {
     const configuredModels = pinnedModelsFromProviderInstances(
       normalizedSettings.providerInstances || []
     )
-    const nextSelectedModel = configuredModels.some((model) => model.id === selectedModel)
-      ? selectedModel
+    const nextDefaultModel = configuredModels.some((model) => model.id === defaultModel)
+      ? defaultModel
       : configuredModels[0]?.id || ''
-    normalizedSettings.selectedModel = nextSelectedModel
+    normalizedSettings.selectedModel = nextDefaultModel
     // Only what changed since Settings opened, so a change made meanwhile, such as by the
-    // `sidekick` CLI, survives. The chat's current model is always this window's to say.
+    // `sidekick` CLI, survives. The new-chat model is always this window's to say.
     const result = await window.api.settings.save({
       ...changedSettings(
         normalizeSettings(syncLegacyProviderSettings(openedWith)),
         normalizedSettings
       ),
-      selectedModel: nextSelectedModel
+      selectedModel: nextDefaultModel
     })
     if (!result.success) return result
     setPinnedModels(configuredModels)
-    setSelectedModel(nextSelectedModel)
+    setDefaultModel(nextDefaultModel)
     await window.api.pinnedModels.save(configuredModels)
     const publicSettings = await window.api.settings.load()
     setSettings(
@@ -593,17 +600,35 @@ function App(): React.JSX.Element {
           const configured = pinnedModelsFromProviderInstances(next.providerInstances || [])
           setPinnedModels(configured)
           if (configured.some((model) => model.id === next.selectedModel)) {
-            setSelectedModel(next.selectedModel || '')
+            setDefaultModel(next.selectedModel || '')
           }
         })
       }),
     []
   )
 
-  const handleModelChange = (modelId: string): void => {
-    setSelectedModel(modelId)
-    setSettings({ ...settings, selectedModel: modelId })
-    window.api.settings.save({ selectedModel: modelId })
+  // One mode for every chat. Turning on Full access asks in SideKick's own dialog first, and a
+  // cancelled change leaves the chip where it was.
+  const handlePermissionModeChange = (mode: PermissionMode): void => {
+    void window.api.settings.save({ commandPermissionMode: mode }).then((result) => {
+      if (result.success) setSettings((current) => ({ ...current, commandPermissionMode: mode }))
+    })
+  }
+
+  // A model chosen in a chat changes that chat only, and is where the next new chat starts.
+  const handleModelChange = (conversationId: string | null, modelId: string): void => {
+    setDefaultModel(modelId)
+    setSettings((current) => ({ ...current, selectedModel: modelId }))
+    void window.api.settings.save({ selectedModel: modelId })
+    if (!conversationId) return
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === conversationId ? { ...conversation, model_id: modelId } : conversation
+      )
+    )
+    void window.api.conversations
+      .setModel(conversationId, modelId)
+      .catch((error) => console.error('[App] Could not keep the chat model:', error))
   }
 
   // Throttle token count updates to avoid "Maximum update depth exceeded" during rapid streaming.
@@ -639,6 +664,13 @@ function App(): React.JSX.Element {
       }, 250)
     }
   }, [])
+  // An update still pending when the app unmounts must not land on a window that has gone.
+  useEffect(
+    () => () => {
+      if (tokenThrottleRef.current) clearTimeout(tokenThrottleRef.current)
+    },
+    []
+  )
 
   const projectById = useCallback(
     (projectId: string | null | undefined) =>
@@ -666,6 +698,10 @@ function App(): React.JSX.Element {
       null,
     [projectById, worktreeById]
   )
+  const currentChatFolder = useChatFolder(
+    currentConversationId,
+    conversationFolder(currentConversation)
+  )
 
   const refreshProjects = useCallback(async (): Promise<void> => {
     setProjects(await window.api.projects.list())
@@ -688,7 +724,8 @@ function App(): React.JSX.Element {
     const newConv = await window.api.conversations.create(
       'New Conversation',
       projectId,
-      'placeholder'
+      'placeholder',
+      defaultModel || undefined
     )
     setConversations((prev) => [newConv, ...prev])
     setCurrentConversationId(newConv.id)
@@ -879,7 +916,9 @@ function App(): React.JSX.Element {
       sidebar_order: -1,
       project_context_version: 0,
       home_workspace_root: null,
-      home_project_name: null
+      home_project_name: null,
+      // Its first run records the model the draft showed; until then it shows the same one.
+      model_id: defaultModel || null
     }
     claimDraftPanel(id)
     setConversations((prev) => [newConv, ...prev])
@@ -909,7 +948,8 @@ function App(): React.JSX.Element {
       const conversation = await window.api.conversations.create(
         'New Conversation',
         project.id,
-        'placeholder'
+        'placeholder',
+        defaultModel || undefined
       )
       setConversations((current) => [conversation, ...current])
       setCurrentConversationId(conversation.id)
@@ -1002,7 +1042,7 @@ function App(): React.JSX.Element {
         currentConversationId,
         sidebarCollapsed: effectiveSidebarCollapsed,
         browserPanelOpen: effectiveActivityPanelPinned && activityTabRef.current === 'browser',
-        voiceOn: voiceAvailable ? voiceLoop !== 'off' : null,
+        voiceOn: voiceAvailable ? dictating : null,
         theme,
         actions: {
           newChat: () => void handleNewConversation(null),
@@ -1011,7 +1051,7 @@ function App(): React.JSX.Element {
           openSettings,
           toggleSidebar,
           toggleBrowserPanel,
-          toggleVoice: toggleVoiceLoop,
+          toggleVoice: () => void toggleDictation(),
           toggleTheme: () =>
             switchThemeFrom(document.querySelector('.theme-toggle-button'), () =>
               setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
@@ -1026,7 +1066,10 @@ function App(): React.JSX.Element {
             else void handleNewConversation(projectId)
           },
           manageWorktrees: () =>
-            setWorktreesDialog({ focusWorktreeId: currentConversation?.worktree_id ?? null })
+            setWorktreesDialog({ focusWorktreeId: currentConversation?.worktree_id ?? null }),
+          ...(currentConversation?.project_id
+            ? { editProject: () => setEditingProjectId(currentConversation.project_id) }
+            : {})
         }
       })
     : []
@@ -1157,6 +1200,28 @@ function App(): React.JSX.Element {
       }),
     [refreshConversationsForSchedules, refreshProjects]
   )
+  // The phone can pin, rename, move, archive or delete a chat; one that left the list closes here as
+  // deleting it here would.
+  useEffect(
+    () =>
+      window.api.conversations.onListChanged(({ conversationId, removed }) => {
+        refreshConversationsForSchedules()
+        void refreshProjects()
+        if (!removed) return
+        deleteComposerDraft(conversationId)
+        forgetPanel(conversationId)
+        if (currentConversationIdRef.current === conversationId) {
+          setCurrentConversationId(null)
+          void window.api.workspace.setPath(null)
+        }
+      }),
+    [refreshConversationsForSchedules, refreshProjects, forgetPanel, currentConversationIdRef]
+  )
+  // A message from the user's phone can start a chat or move one up the list.
+  useEffect(
+    () => window.api.conversations.onMessagesChanged(() => refreshConversationsForSchedules()),
+    [refreshConversationsForSchedules]
+  )
   const scheduleNames = useMemo(
     () => new Map(schedules.map(({ id, name }) => [id, name])),
     [schedules]
@@ -1181,17 +1246,25 @@ function App(): React.JSX.Element {
     [currentConversationIdRef, handleResponseComplete, markConversationRead]
   )
 
-  const selectedPinnedModel = pinnedModels.find((model) => model.id === selectedModel)
-  const activeProviderInstance = providerInstanceForModel(settings, selectedPinnedModel)
-  const currentProvider = selectedPinnedModel?.provider || 'ollama'
-  const currentModelName =
-    selectedPinnedModel?.providerModelId || selectedPinnedModel?.name || selectedModel
-  const legacyFastModel = resolveFastModel(currentProvider, currentModelName, settings).modelName
-  const fastModelName = activeProviderInstance?.fastModelId || legacyFastModel
+  /** The quicker model a chat's provider names for titles, when it differs from the chat's own. */
+  const fastModelFor = (model: PinnedModel | undefined, modelId: string): string | undefined => {
+    const modelName = model?.providerModelId || model?.name || modelId
+    const fastModel =
+      providerInstanceForModel(settings, model)?.fastModelId ||
+      resolveFastModel(model?.provider || 'ollama', modelName, settings).modelName
+    return fastModel !== modelName ? fastModel : undefined
+  }
+  const defaultPinnedModel = pinnedModels.find((model) => model.id === defaultModel)
+  const currentModel = conversationModelChoice(
+    pinnedModels,
+    currentConversation?.model_id,
+    defaultModel
+  )
+  const currentPinnedModel = currentModel.model ?? undefined
   useConversationTitleBackfill({
     enabled: isReady,
-    model: selectedPinnedModel,
-    fastModelName: fastModelName !== currentModelName ? fastModelName : undefined,
+    model: defaultPinnedModel,
+    fastModelName: fastModelFor(defaultPinnedModel, defaultModel),
     isAgentBusy: runningConversationIds.size > 0,
     onTitleApplied: (conversationId, title, source = 'generated') => {
       setConversations((current) =>
@@ -1218,13 +1291,10 @@ function App(): React.JSX.Element {
     [conversations]
   )
   const activeProject = projectById(currentConversation?.project_id)
+  const editingProject = editingProjectId ? projectById(editingProjectId) : undefined
   const titleBarContext = currentConversationId
     ? currentConversation?.title || 'Conversation'
     : null
-  const historyWorkspaceFolder =
-    conversationFolder(currentConversation) ?? currentConversation?.home_workspace_root ?? null
-  const historyReadOnly =
-    !conversationFolder(currentConversation) && Boolean(currentConversation?.home_workspace_root)
   const welcomeSuggestions = useMemo(() => {
     const currentProjectId = currentConversation?.project_id ?? null
     const recentConversationTitles = conversations
@@ -1253,6 +1323,7 @@ function App(): React.JSX.Element {
   ): React.JSX.Element => {
     const panelConversationId = conversation?.id ?? null
     const panelProject = projectById(conversation?.project_id)
+    const panelModel = conversationModelChoice(pinnedModels, conversation?.model_id, defaultModel)
     return (
       <div
         className="conversation-panel-slot"
@@ -1269,7 +1340,21 @@ function App(): React.JSX.Element {
           conversationId={panelConversationId}
           conversationTitle={conversation?.title ?? null}
           welcomeSuggestions={visible ? welcomeSuggestions : []}
+          contextMeter={
+            visible ? (
+              <ContextIndicator
+                currentTokens={tokenCounts.current}
+                maxTokens={tokenCounts.max}
+                selectedModel={currentModel.modelId}
+                model={currentPinnedModel}
+                autoCompactEnabled={settings.autoCompactEnabled ?? true}
+                autoCompactThreshold={settings.autoCompactThreshold ?? 0.8}
+                conversationCost={conversationCost}
+              />
+            ) : null
+          }
           workspaceFolder={conversationFolder(conversation)}
+          projectFolders={panelProject?.folders}
           projectName={panelProject?.name ?? null}
           projectId={panelProject?.id ?? null}
           worktree={
@@ -1294,9 +1379,9 @@ function App(): React.JSX.Element {
           onForkConversation={(messageId) => {
             if (panelConversationId) handleForkConversation(panelConversationId, messageId)
           }}
-          selectedModel={selectedModel}
+          selectedModel={panelModel.modelId}
           planningModelId={settings.planningModelId}
-          onModelChange={handleModelChange}
+          onModelChange={(modelId) => handleModelChange(panelConversationId, modelId)}
           onTokenCountUpdate={(current, max) => {
             if (panelConversationId) {
               tokenCountsByConversation.current.set(panelConversationId, { current, max })
@@ -1319,6 +1404,7 @@ function App(): React.JSX.Element {
           focusChainEnabled={settings.focusChainEnabled ?? true}
           toolCallLimit={settings.toolCallLimit ?? DEFAULT_TOOL_CALL_LIMIT}
           commandPermissionMode={settings.commandPermissionMode ?? 'full-access'}
+          onPermissionModeChange={handlePermissionModeChange}
           userLocation={userLocation}
           onResponseComplete={(message) =>
             handleConversationResponseComplete(panelConversationId, message)
@@ -1329,23 +1415,12 @@ function App(): React.JSX.Element {
               : undefined
           }
           onBusyStateChange={handleConversationBusyStateChange}
-          fastModelName={fastModelName !== currentModelName ? fastModelName : undefined}
+          fastModelName={fastModelFor(panelModel.model ?? undefined, panelModel.modelId)}
           reasoningSettings={settings}
           onReasoningLevelChange={(modelId, level) => {
             const reasoningLevels = { ...settings.reasoningLevels, [modelId]: level }
             setSettings({ ...settings, reasoningLevels })
             window.api.settings.save({ reasoningLevels })
-          }}
-          onCheckpointCreated={(_restoredHash) => {
-            if (currentConversationIdRef.current !== panelConversationId) return
-            setCheckpointVersion((version) => version + 1)
-            setRestoredHash(_restoredHash)
-          }}
-          chatRollbackHash={visible ? chatRollbackHash : null}
-          onChatRollbackConsumed={() => {
-            if (currentConversationIdRef.current === panelConversationId) {
-              setChatRollbackHash(null)
-            }
           }}
         />
       </div>
@@ -1371,28 +1446,37 @@ function App(): React.JSX.Element {
         <div className="title-bar-left">
           {/* At 20 px the title bar takes the icon's small cut, drawn to read at that size. */}
           <img src={smallIconUrl} alt="SideKick" className="title-bar-icon" />
-          {titleBarContext && (
-            <>
-              <span className="title-bar-divider">/</span>
-              <WrittenTitle
-                className="title-bar-context"
-                text={titleBarContext}
-                identity={currentConversationId}
-              />
-            </>
+          {isSettingsOpen ? (
+            // Settings keeps the shell: its name takes the breadcrumb slot, in the chat's type.
+            <span className="title-bar-crumb">
+              <span className="title-bar-context">Settings</span>
+            </span>
+          ) : (
+            titleBarContext && (
+              // The project leads, muted, and gives way first; a chat outside one shows its title.
+              <span
+                className="title-bar-crumb"
+                title={
+                  activeProject ? `${activeProject.name} / ${titleBarContext}` : titleBarContext
+                }
+              >
+                {activeProject && (
+                  <>
+                    <span className="title-bar-project">{activeProject.name}</span>
+                    <span className="title-bar-divider">/</span>
+                  </>
+                )}
+                <WrittenTitle
+                  className="title-bar-context"
+                  text={titleBarContext}
+                  identity={currentConversationId}
+                />
+              </span>
+            )
           )}
         </div>
         <div className="title-bar-right">
           <div className="title-bar-actions">
-            <ContextIndicator
-              currentTokens={tokenCounts.current}
-              maxTokens={tokenCounts.max}
-              selectedModel={selectedModel}
-              model={selectedPinnedModel}
-              autoCompactEnabled={settings.autoCompactEnabled ?? true}
-              autoCompactThreshold={settings.autoCompactThreshold ?? 0.8}
-              conversationCost={conversationCost}
-            />
             <button
               className="theme-toggle-button"
               onClick={(event) => {
@@ -1407,7 +1491,7 @@ function App(): React.JSX.Element {
               {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
             </button>
             <button
-              className="settings-button"
+              className={`settings-button${isSettingsOpen ? ' active' : ''}`}
               onClick={() => {
                 setSettingsInitialSection('general')
                 setIsSettingsOpen(true)
@@ -1474,6 +1558,7 @@ function App(): React.JSX.Element {
           onToggleConversationPin={(id, pinned) => void handleToggleConversationPin(id, pinned)}
           onToggleProjectPin={(id, pinned) => void handleToggleProjectPin(id, pinned)}
           onRemoveProject={(id) => void handleRemoveProject(id)}
+          onEditProject={setEditingProjectId}
           onVisibleConversationOrderChange={handleSidebarOrderChange}
           scheduleNames={scheduleNames}
           onOpenSchedules={() => setIsSchedulesOpen(true)}
@@ -1505,32 +1590,60 @@ function App(): React.JSX.Element {
           tabRequest={activityTabRequest}
           onActiveTabChange={handleActivityTabChange}
           maxWidth={layout.panelMaxWidth}
-          width={activityPanelWidth}
-          onWidthChange={setActivityPanelWidth}
+          width={panelWidth}
+          onWidthChange={(width) => {
+            setDraggedPanelWidth(width)
+            window.localStorage.setItem(ACTIVITY_PANEL_WIDTH_KEY, String(width))
+            if (!panelNeedsRoom) setPanelWidenedWhileEmpty(true)
+          }}
+          onNeedsRoomChange={(needsRoom) => {
+            setPanelNeedsRoom(needsRoom)
+            setPanelWidenedWhileEmpty(false)
+            setPanelGlide((count) => count + 1)
+          }}
           size={panelSize}
           onSizeChange={isCompactLayout ? undefined : setActivityPanelSize}
           sideBySideMaxWidth={panelSideBySideMax}
           snapWidths={panelSnapWidths}
           onSettle={() => setPanelGlide((count) => count + 1)}
           onOpenConversation={(id) => void handleSelectConversation(id)}
+          onOpenProject={() => void handleOpenProject(true)}
+          onOpenBrowserSettings={() => {
+            setSettingsInitialSection('agent')
+            setIsSettingsOpen(true)
+          }}
           focusChainTodos={
             currentConversationId ? focusChainTodosByConversation[currentConversationId] || [] : []
           }
-          workspaceFolder={conversationFolder(currentConversation)}
-          historyWorkspaceFolder={historyWorkspaceFolder}
-          historyReadOnly={historyReadOnly}
-          checkpointVersion={checkpointVersion}
-          restoredHash={restoredHash}
-          onGoToCheckpoint={(hash) => {
-            setCheckpointVersion((v) => v + 1)
-            setRestoredHash(hash)
-            setChatRollbackHash(hash)
-          }}
-          titleModel={selectedPinnedModel}
-          fastModelName={fastModelName !== currentModelName ? fastModelName : undefined}
+          workspaceFolder={conversationFolder(currentConversation) ?? currentChatFolder}
+          chatFolder={Boolean(currentChatFolder)}
           isAgentBusy={isAgentBusy}
         />
       </main>
+
+      {editingProject && (
+        <EditProjectDialog
+          project={editingProject}
+          busy={conversations.some(
+            (conversation) =>
+              conversation.project_id === editingProject.id &&
+              runningConversationIds.has(conversation.id)
+          )}
+          onClose={() => setEditingProjectId(null)}
+          onSaved={(saved) => {
+            setProjects((current) =>
+              current.map((project) =>
+                project.id === saved.id ? { ...project, ...saved } : project
+              )
+            )
+            // A new primary folder moves the project's chats with it.
+            void window.api.conversations.list().then(setConversations)
+            if (currentConversation?.project_id === saved.id && !currentConversation.worktree_id) {
+              void window.api.workspace.setPath(saved.folder_path)
+            }
+          }}
+        />
+      )}
 
       {isSchedulesOpen && (
         <SchedulesDialog
@@ -1538,7 +1651,7 @@ function App(): React.JSX.Element {
           schedules={schedules}
           projects={projects}
           models={pinnedModels}
-          defaultModelId={selectedModel}
+          defaultModelId={defaultModel}
           defaultProjectId={currentConversation?.project_id ?? null}
           permissionMode={normalizePermissionMode(settings.commandPermissionMode)}
           onClose={() => setIsSchedulesOpen(false)}
@@ -1587,6 +1700,7 @@ function App(): React.JSX.Element {
         <SettingsModal
           settings={settings}
           onSave={handleSaveSettings}
+          onTextScaleChange={handleTextScaleChange}
           onClose={() => setIsSettingsOpen(false)}
           initialSection={settingsInitialSection}
           providerKeyRequest={providerKeyRequest}

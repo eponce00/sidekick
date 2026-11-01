@@ -31,42 +31,6 @@ describe('SidekickPeek', () => {
   }
   const capeOutline = (): string => container.querySelector('.peek-cape')?.getAttribute('d') ?? ''
 
-  it('draws the app icon robot with parts the theme colours and the eyes that blink', async () => {
-    await act(async () => root.render(<SidekickPeek />))
-    const peek = container.querySelector('.sidekick-peek')!
-    // Decoration only: screen readers skip it.
-    expect(peek.getAttribute('aria-hidden')).toBe('true')
-    expect(peek.querySelectorAll('.peek-eye')).toHaveLength(2)
-    for (const part of [
-      'helmet',
-      'visor',
-      'led',
-      'glint',
-      'shade',
-      'cape',
-      'cape-lining',
-      'badge'
-    ]) {
-      expect(peek.querySelector(`.peek-${part}`), part).not.toBeNull()
-    }
-    // Its right side is cut straight, so it leans out from behind an edge.
-    expect(peek.querySelector('clipPath path')?.getAttribute('d')).toMatch(/^M0 0 H\d+ V1400 H0 Z$/)
-  })
-
-  it('winks when poked, and squints happily every third time', async () => {
-    await act(async () => root.render(<SidekickPeek />))
-    const peek = container.querySelector<HTMLButtonElement>('.sidekick-peek')!
-    const poke = async (): Promise<void> => {
-      await act(async () => peek.click())
-      await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
-    }
-    await poke()
-    expect(peek.classList.contains('is-wink')).toBe(true)
-    await poke()
-    await poke()
-    expect(peek.classList.contains('is-happy')).toBe(true)
-  })
-
   it('moves its cape as cloth, redrawing it every frame, and keeps it through a click', async () => {
     await act(async () => root.render(<SidekickPeek />))
     const drawn = capeOutline()

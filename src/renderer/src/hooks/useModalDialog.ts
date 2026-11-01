@@ -16,9 +16,14 @@ function focusableElements(container: HTMLElement): HTMLElement[] {
   )
 }
 
+/**
+ * Traps focus in a modal dialog. `alsoFocusable` names controls outside it that stay usable while
+ * it is open (Settings leaves the title bar's actions showing); Tab cycles through those first.
+ */
 export function useModalDialog<T extends HTMLElement>(
   isOpen: boolean,
-  onClose: () => void
+  onClose: () => void,
+  alsoFocusable?: string
 ): RefObject<T | null> {
   const dialogRef = useRef<T>(null)
   const closeRef = useRef(onClose)
@@ -48,20 +53,34 @@ export function useModalDialog<T extends HTMLElement>(
         return
       }
       if (event.key !== 'Tab') return
-      const focusable = focusableElements(dialog)
+      const outside = alsoFocusable
+        ? Array.from(document.querySelectorAll<HTMLElement>(alsoFocusable)).flatMap((element) =>
+            focusableElements(element).filter((item) => !dialog.contains(item))
+          )
+        : []
+      const inside = focusableElements(dialog)
+      const focusable = [...outside, ...inside]
       if (!focusable.length) {
         event.preventDefault()
         dialog.focus()
         return
       }
-      const first = focusable[0]
-      const last = focusable.at(-1)!
-      if (event.shiftKey && document.activeElement === first) {
+      const current = focusable.indexOf(document.activeElement as HTMLElement)
+      if (current === -1) {
         event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
+        ;(event.shiftKey ? focusable.at(-1)! : focusable[0]).focus()
+        return
+      }
+      const next =
+        focusable[(current + (event.shiftKey ? -1 : 1) + focusable.length) % focusable.length]
+      // Within one group the browser's own order holds; across groups, and at the ends, the
+      // cycle moves focus itself, since the two groups need not be neighbours in the page.
+      const sameGroup = (a: HTMLElement, b: HTMLElement): boolean =>
+        inside.includes(a) === inside.includes(b)
+      const wraps = event.shiftKey ? current === 0 : current === focusable.length - 1
+      if (wraps || !sameGroup(focusable[current], next)) {
         event.preventDefault()
-        first.focus()
+        next.focus()
       }
     }
 
@@ -71,7 +90,7 @@ export function useModalDialog<T extends HTMLElement>(
       document.removeEventListener('keydown', handleKeyDown)
       if (previouslyFocused?.isConnected) previouslyFocused.focus()
     }
-  }, [isOpen])
+  }, [isOpen, alsoFocusable])
 
   return dialogRef
 }

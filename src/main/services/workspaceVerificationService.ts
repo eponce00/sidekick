@@ -3,6 +3,13 @@ import { createHash, randomUUID } from 'crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'fs'
 import { dirname, extname, relative, resolve } from 'path'
 import { pathToFileURL } from 'url'
+import {
+  locateWorkspacePath,
+  qualifiedWorkspacePath,
+  workspaceAbsolutePath,
+  workspaceFolders,
+  workspacePathSpeller
+} from '../utils/workspacePaths'
 import type { ToolDiagnostic, ToolWorkspaceChange } from '../../shared/agentRuntime'
 import type { ShellCommandResult } from '../../shared/types'
 import type {
@@ -158,9 +165,30 @@ function commandSummary(kind: VerificationKind, result: ShellCommandResult): str
   return `${label} failed${detail ? `: ${detail.slice(0, 240)}` : ` with exit code ${result.exitCode}`}.`
 }
 
+/** Every project folder's files, by the project's spelling of their paths. */
 function snapshotWorkspace(workspaceRoot: string): WorkspaceCommandSnapshot {
-  const root = resolve(workspaceRoot)
   const entries = new Map<string, string>()
+  let complete = true
+  const folders = [
+    { root: resolve(workspaceRoot), folder: null as string | null },
+    ...workspaceFolders(workspaceRoot).map(({ name, path }) => ({
+      root: resolve(path),
+      folder: name
+    }))
+  ]
+  for (const { root, folder } of folders) {
+    const spell = workspacePathSpeller(workspaceRoot, folder)
+    snapshotFolder(root, spell, entries, () => (complete = false))
+  }
+  return { entries, complete }
+}
+
+function snapshotFolder(
+  root: string,
+  spell: (path: string) => string,
+  entries: Map<string, string>,
+  incomplete: () => void
+): void {
   let complete = true
   const visit = (directory: string): void => {
     if (!complete) return
@@ -178,7 +206,7 @@ function snapshotWorkspace(workspaceRoot: string): WorkspaceCommandSnapshot {
       }
       if (child.isDirectory() && SNAPSHOT_IGNORED_DIRECTORIES.has(child.name)) continue
       const absolute = resolve(directory, child.name)
-      const path = relative(root, absolute).replaceAll('\\', '/')
+      const path = spell(relative(root, absolute).replaceAll('\\', '/'))
       try {
         const stat = child.isSymbolicLink() ? lstatSync(absolute) : statSync(absolute)
         if (child.isDirectory()) visit(absolute)
@@ -189,7 +217,7 @@ function snapshotWorkspace(workspaceRoot: string): WorkspaceCommandSnapshot {
     }
   }
   visit(root)
-  return { entries, complete }
+  if (!complete) incomplete()
 }
 
 function workspaceChanges(
@@ -592,7 +620,7 @@ export class WorkspaceVerificationService {
       const pages = unseen
         .filter((path) => /\.html?$/i.test(path))
         .slice(0, 3)
-        .map((path) => pathToFileURL(resolve(root, path)).href)
+        .map((path) => pathToFileURL(workspaceAbsolutePath(root, path)).href)
       const where = pages.length
         ? `Open ${pages.length === 1 ? 'the page' : 'the pages'} (${pages.join(', ')}). If a page loads ES modules or fetches files, serve its folder over a local HTTP server instead of file://.`
         : `Open where these files render, such as the project's dev server.`
@@ -642,11 +670,10 @@ export class WorkspaceVerificationService {
       return { continue: false, summary }
     }
     const answerInstruction =
-      'Your previous reply stays the answer the user reads. After verifying, reply with one short sentence stating the result; do not repeat or summarize that answer. ' +
-      'If you had to change files, end instead with a complete answer, because it replaces the previous one.'
+      'Your previous reply was held back as a draft. After verifying, end with your complete answer, written for someone who has not seen the draft: ' +
+      'what you did, and what the check showed. It replaces the draft, so do not refer to it.'
     return {
-      // A check and a look are asked for in one pass: a second pass would take the first one's
-      // short result as the answer it keeps.
+      // A check and a look are asked for in one pass, so the model writes its answer once.
       afterTerminalTurn: async () => {
         const check = decide(answerInstruction)
         const look = visualDecision(check.continue ? '' : answerInstruction)
@@ -688,19 +715,29 @@ export class WorkspaceVerificationService {
     const suggestions = this.manifestChecks(root)
     const visited = new Set<string>()
     for (const path of changedPaths.slice(0, 64)) {
-      const relativePath = normalizedRelativePath(root, path)
-      if (!relativePath || relativePath === '.') continue
-      let directory = dirname(resolve(root, relativePath))
+      let located
+      try {
+        located = locateWorkspacePath(root, path)
+      } catch {
+        continue
+      }
+      if (!located.path || located.path.startsWith('..')) continue
+      // A change in another project folder looks for checks up to that folder's own root.
+      let directory = dirname(resolve(located.root, located.path))
       while (directory !== root && !visited.has(directory)) {
         visited.add(directory)
         const checks = this.manifestChecks(directory)
         if (checks.length) {
-          const cwd = relative(root, directory).replaceAll('\\', '/')
+          const cwd = qualifiedWorkspacePath(root, {
+            folder: located.folder,
+            path: relative(located.root, directory).replaceAll('\\', '/')
+          })
           for (const check of checks) {
             suggestions.push({ ...check, source: `${cwd}/${check.source}`, cwd })
           }
           break
         }
+        if (directory === located.root) break
         directory = dirname(directory)
       }
     }
@@ -769,7 +806,12 @@ export class WorkspaceVerificationService {
     for (const path of normalized) {
       const relativePath = normalizedRelativePath(root, path)
       if (!relativePath) continue
-      const absolute = resolve(root, relativePath)
+      let absolute: string
+      try {
+        absolute = workspaceAbsolutePath(root, relativePath)
+      } catch {
+        continue
+      }
       hash.update(relativePath)
       try {
         const stat = statSync(absolute)

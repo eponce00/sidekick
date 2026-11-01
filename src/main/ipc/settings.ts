@@ -5,6 +5,7 @@ import type { PinnedModel } from '../../shared/models'
 import type { ProviderSettings } from '../../shared/settings'
 import {
   migrateLegacyProviderInstances,
+  sameProviderBaseUrl,
   syncLegacyProviderSettings
 } from '../../shared/providerInstances'
 import { appState, getStore } from './state'
@@ -21,6 +22,7 @@ import {
 import { showTrustedDialog } from '../services/trustedDialog'
 import { RETIRED_SETTING_KEYS } from '../../shared/settingsSchema'
 import { ACCENT_PALETTE_VERSION, migrateAccentPalette } from '../../shared/accentPalettes'
+import { legacyTextScale } from '../../shared/textScale'
 import {
   resolveStoredToolCallLimit,
   TOOL_CALL_LIMIT_POLICY_VERSION
@@ -106,7 +108,13 @@ export function protectSettings(value: unknown, existingValue?: unknown): unknow
             (candidate) => candidate && typeof candidate === 'object' && candidate.id === id
           )
         : undefined
-      const secret = instance.apiKey === undefined ? previousInstance?.apiKey : instance.apiKey
+      // A saved key goes only to the address it was saved with; moving the provider without a
+      // new key drops it, so the user enters it again for the new address.
+      const moved =
+        previousInstance !== undefined &&
+        !sameProviderBaseUrl(previousInstance.baseUrl, instance.baseUrl)
+      const secret =
+        instance.apiKey === undefined ? (moved ? '' : previousInstance?.apiKey) : instance.apiKey
       delete instance.apiKeyConfigured
       if (id) retainedProviderIds.add(id)
       if (id && typeof secret === 'string' && secret) {
@@ -218,9 +226,7 @@ export function loadStoredSettings(): SettingsRecord {
  * Changes stored settings in one synchronous read-modify-write. Each writer starts from what is
  * stored at that moment, so none can write back another writer's fields from an older copy.
  */
-function updateStoredSettings(
-  change: (current: SettingsRecord) => SettingsRecord
-): SettingsRecord {
+function updateStoredSettings(change: (current: SettingsRecord) => SettingsRecord): SettingsRecord {
   const store = getStore()
   const stored = store.get('settings', {})
   const next = asSettingsRecord(change(asSettingsRecord(revealSettings(stored))))
@@ -240,6 +246,14 @@ function applySettingsChanges(current: SettingsRecord, changes: SettingsRecord):
       ? randomUUID()
       : current.officeHelperConfigurationId
   return next
+}
+
+/**
+ * Saves settings a main-process caller changes, such as the phone choosing how hard a model
+ * thinks, the way a save from the window applies them.
+ */
+export function saveSettingsChanges(changes: SettingsRecord): SettingsRecord {
+  return updateStoredSettings((current) => applySettingsChanges(current, changes))
 }
 
 export function publicSettings(value: unknown): unknown {
@@ -388,7 +402,15 @@ export async function confirmSensitiveSettingsChange(
   const officeInterpreterChanged =
     previous.officeHelperInterpreter !== next.officeHelperInterpreter &&
     Boolean(next.officeHelperInterpreter)
-  if (!enablingFullAccess && !mcpChanged && !disablingShellIsolation && !officeInterpreterChanged)
+  const enablingComputerUse =
+    next.computerUseEnabled === true && previous.computerUseEnabled !== true
+  if (
+    !enablingFullAccess &&
+    !mcpChanged &&
+    !disablingShellIsolation &&
+    !officeInterpreterChanged &&
+    !enablingComputerUse
+  )
     return true
 
   const reasons = [
@@ -401,6 +423,9 @@ export async function confirmSensitiveSettingsChange(
       : null,
     enablingFullAccess
       ? 'Full access lets in-scope agent operations run without approval prompts.'
+      : null,
+    enablingComputerUse
+      ? 'The agent will be able to ask to operate apps on this computer, each only after you allow it.'
       : null,
     mcpChanged
       ? `These MCP connectors are new or changed. Local connectors launch processes with your account's permissions; remote connectors send requests to the listed endpoint. SideKick asks again whenever one changes.\n\n${mcpServers.map(describeMcpServer).join('\n\n')}`
@@ -437,8 +462,29 @@ export function notifySettingsSaved(settings: SettingsRecord): void {
   for (const listener of settingsSavedListeners) listener(settings)
 }
 
+const LEGACY_ZOOM_KEY = 'desktopZoomFactorV1'
+
+/**
+ * Earlier versions sized the window and the conversation text separately. Folds both into the one
+ * text size, keeping what the user saw, and drops the old values.
+ */
+export function migrateTextScale(): void {
+  const store = getStore()
+  const zoom = store.get(LEGACY_ZOOM_KEY)
+  const stored = asSettingsRecord(store.get('settings', {}))
+  if (typeof zoom !== 'number' && !Object.hasOwn(stored, 'contentFontSize')) return
+  updateStoredSettings((current) => {
+    const next = { ...current }
+    if (next.textScale === undefined) next.textScale = legacyTextScale(zoom, next.contentFontSize)
+    delete next.contentFontSize
+    return next
+  })
+  store.delete(LEGACY_ZOOM_KEY)
+}
+
 export function registerSettingsHandlers(): void {
   const store = getStore()
+  migrateTextScale()
   ipcMain.handle('settings:selectOfficeInterpreter', async (event) => {
     const parent = BrowserWindow.fromWebContents(event.sender)
     const options = {
@@ -454,6 +500,15 @@ export function registerSettingsHandlers(): void {
     } catch {
       return { canceled: false, error: 'Selected interpreter is unavailable or invalid' }
     }
+  })
+
+  // Listing and forgetting only: nothing but SideKick's own dialog may add an app.
+  ipcMain.handle('computerUse:rememberedApps', async () =>
+    (await import('../services/computerUseHost')).rememberedApps.list()
+  )
+  ipcMain.handle('computerUse:forgetApp', async (_event, path: unknown) => {
+    if (typeof path !== 'string') return
+    await (await import('../services/computerUseHost')).rememberedApps.remove(path)
   })
 
   // A save names only the settings it changes; every other setting keeps what is stored.

@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import type { AgentArtifactDraft } from '../../shared/agentRunApi'
 import {
   AgentToolLoopError,
   classifyAgentKernelFailure,
@@ -36,9 +37,11 @@ import {
   providerContextWindowError,
   providerImageLimitError,
   providerOutputLimitError,
+  providerQuotaExhausted,
   providerStreamDropped
 } from '../../shared/providerErrors'
 import { resolveMaxOutputTokens } from '../../shared/contextBudget'
+import { SCHEDULE_CHANGE_TOOLS } from '../../shared/scheduleTools'
 import {
   countTranscriptImages,
   enforceImageBudget,
@@ -137,13 +140,30 @@ export interface AgentKernelToolRouter {
   /** What an approval would change, shown on the approval card. */
   approvalPreview?: (
     name: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    context?: AgentCredentialContext
   ) => Promise<AgentApprovalPreview | undefined>
-  reserveBrowserHumanTakeover?: (conversationId: string) => Promise<string>
-  releaseBrowserHumanTakeover?: (conversationId: string, expectedSessionId: string) => Promise<void>
   /**
-   * The approval a call that names a stored credential needs, or why the call is refused when its
-   * scope does not allow that use here. Undefined when it names none.
+   * How much a call asks for when that depends on state the arguments do not carry, such as a
+   * web page's tool the page marks read-only. `always` asks every time, even in Full access, with
+   * no chat-wide grant. Undefined leaves it to the tool's catalog entry.
+   */
+  requestedAccess?: (
+    name: string,
+    args: Record<string, unknown>,
+    context: AgentCredentialContext
+  ) => RequestedAccess | 'always' | undefined
+  /** Holds the conversation's browser while the user clears a human check on its page. */
+  reserveBrowserForHumanCheck?: (conversationId: string) => Promise<string>
+  waitForBrowserHumanCheck?: (
+    conversationId: string,
+    expectedSessionId: string,
+    signal: AbortSignal
+  ) => Promise<void>
+  releaseBrowserHumanCheck?: (conversationId: string, expectedSessionId: string) => Promise<void>
+  /**
+   * The approval a call that names a stored credential needs, or why the call is refused when the
+   * use breaks a credential rule. Undefined when it names none.
    */
   credentialApproval?: (
     name: string,
@@ -175,8 +195,7 @@ export interface AgentCredentialContext {
 /** What a call that uses a credential shows before it runs. */
 export interface AgentCredentialApproval {
   alias: string
-  ask: 'every_use' | 'once_per_chat' | 'never'
-  /** The chat grant that covers the same entry with the same target. */
+  /** The chat grant that covers the same entries again. */
   keys: string[]
   label: string
   preview: AgentApprovalPreview
@@ -190,6 +209,8 @@ export interface AgentKernelContextManager {
     tools: readonly unknown[],
     maxOutputTokens: number | undefined
   ): number | undefined
+  /** The calibrated size of a request, as compaction measures it. */
+  requestTokens?(messages: ProviderChatMessage[], tools: readonly unknown[]): number
   /** Adopt a window the provider reported about itself. */
   applyContextLength?(contextLength: number, maxOutputTokens: number): void
   /** Learns from the provider's real prompt count; returns the estimate it compared against. */
@@ -232,6 +253,8 @@ export interface AgentKernelPlanController {
 
 /** Files named in one message that are read up front; more are left for the model to open. */
 const MAX_PRELOADED_READS = 4
+// How long a run waits for the user to clear a human check in the Browser panel.
+const HUMAN_CHECK_WAIT_MS = 10 * 60_000
 
 /**
  * How long a turn whose stream broke off waits before it is asked again, once. A local model
@@ -239,10 +262,21 @@ const MAX_PRELOADED_READS = 4
  */
 export const STREAM_DROP_RETRY_DELAY_MS = 3_000
 
+/**
+ * How long a run waits before asking again when the provider is limiting requests or busy (429,
+ * 503, 529), one wait per attempt. One 429 from a free tier or a LiteLLM limit ended a run in its
+ * first second. A gateway with nothing behind it (502, 504) fails at once: the user has a server
+ * to start, and waiting would only hide that.
+ */
+export const PROVIDER_BUSY_RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 20_000, 40_000]
+const PROVIDER_BUSY_STATUSES = new Set([429, 503, 529])
+/**
+ * The longest wait a provider's Retry-After is followed for. A provider that asks for longer, such
+ * as a daily limit, will not be ready while the user watches, and the run fails at once.
+ */
+const PROVIDER_RETRY_AFTER_LIMIT_MS = 60_000
+
 export interface StartAgentKernelRunInput extends StartAgentRunInput {
-  /** App-settings snapshot, never model/repository-discovered commands. Always requires approval. */
-  projectStartCommands?: string[]
-  projectCompletionCommands?: string[]
   /** Project files the user named in the message, read before the model's first turn. */
   preloadReads?: string[]
   catalog: AgentToolCatalogOptions | (() => AgentToolCatalogOptions)
@@ -391,7 +425,8 @@ const tokenCount = (value: number): string => `${value.toLocaleString('en-US')} 
 function cutOffToolResult(
   title: string,
   cutOff: ToolBatchCutOff,
-  startedAt: number
+  startedAt: number,
+  toolName: string
 ): ToolExecutionResult {
   const room =
     cutOffLimit(cutOff) === 'shrunk'
@@ -407,8 +442,11 @@ function cutOffToolResult(
       `their arguments may be incomplete.${room}`,
     retryable: true,
     recoveryAction: 'change_strategy',
+    // An artifact cannot be written in parts; the same artifact written more tightly fits.
     recovery:
-      'Re-issue fewer, smaller calls in a new response. Split a long file into several edits or appends, and save a long script to a file in parts before running it. Do not assume any call from this batch ran.',
+      toolName === 'create_artifact'
+        ? 'Write the artifact again, more compactly: build repeated elements from arrays with map, compute data instead of listing it value by value, and keep it to a few hundred lines. Plan it briefly: thinking counts toward the same limit.'
+        : 'Re-issue fewer, smaller calls in a new response. Split a long file into several edits or appends, and save a long script to a file in parts before running it. Do not assume any call from this batch ran.',
     startedAt
   })
 }
@@ -439,10 +477,11 @@ function uniqueToolCallIds(calls: readonly ProviderToolCall[]): ProviderToolCall
 
 function mergeToolCalls(existing: ProviderToolCall[], incoming: ProviderToolCall[]): void {
   for (const call of incoming) {
-    const index = existing.findIndex(
-      (candidate) =>
-        (call.id && candidate.id === call.id) ||
-        (call.index !== undefined && candidate.index === call.index)
+    // A stream's index names the call; two calls a server gave one id are still two calls.
+    const index = existing.findIndex((candidate) =>
+      call.index !== undefined && candidate.index !== undefined
+        ? candidate.index === call.index
+        : Boolean(call.id) && candidate.id === call.id
     )
     if (index >= 0) existing[index] = call
     else existing.push(call)
@@ -500,10 +539,15 @@ function toolNeedsPolicyDecision(catalog: AgentToolCatalogOptions, name: string)
     'update_goal',
     'complete_plan',
     'create_artifact',
+    // Changes an artifact in place, as create_artifact makes one; a builder's card is not shown.
+    'edit_artifact',
     // The sessions handler shows its own start card when the permission mode asks for one.
     'start_session',
     'send_message',
-    'stop_session'
+    'stop_session',
+    // A valid schedule change asks every time through the router; an invalid one is refused by
+    // its handler, which saves nothing, without a card.
+    ...SCHEDULE_CHANGE_TOOLS
   ].includes(name)
 }
 
@@ -600,13 +644,19 @@ export class AgentRunKernel {
     private readonly store: AgentRunStore,
     private readonly tools = new AgentToolRegistry(),
     private readonly sample: AgentKernelProviderSampler = sampleProviderTurn,
-    private readonly publish: (event: AgentRunEvent) => void = () => undefined
+    private readonly publish: (event: AgentRunEvent) => void = () => undefined,
+    private readonly publishArtifactDraft: (draft: AgentArtifactDraft) => void = () => undefined
   ) {}
 
   start(input: StartAgentKernelRunInput): Promise<AgentKernelRunResult> {
     if (this.active.has(input.id)) throw new Error(`Agent run is already active: ${input.id}`)
     const controller = new AbortController()
-    const promise = this.execute(input, controller.signal).finally(() => {
+    // The run is registered as active before it executes, so a steer or stop during its first model
+    // request finds it, and it executes at once, so it is in the store when this returns.
+    let execute!: (run: Promise<AgentKernelRunResult>) => void
+    const promise = new Promise<AgentKernelRunResult>((resolve) => {
+      execute = resolve
+    }).finally(() => {
       if (this.active.get(input.id)?.controller === controller) this.active.delete(input.id)
       try {
         input.toolRouter.releaseRun?.(input.id)
@@ -620,6 +670,7 @@ export class AgentRunKernel {
       }
     })
     this.active.set(input.id, { controller, promise })
+    execute(this.execute(input, controller.signal))
     return promise
   }
 
@@ -705,6 +756,23 @@ export class AgentRunKernel {
       this.pendingResolvers.delete(interactionId)
     }
     return interaction
+  }
+
+  /** Sends on an artifact's code as far as it has streamed; it is shown, never stored. */
+  private draftArtifact(runId: string, toolCallId: string, call: ProviderToolCall): void {
+    const args = call.function.arguments
+    if (!args || typeof args !== 'object' || typeof args.code !== 'string') return
+    try {
+      this.publishArtifactDraft({
+        runId,
+        toolCallId,
+        type: args.type === 'html' || args.type === 'svg' ? args.type : 'react',
+        title: typeof args.title === 'string' ? args.title : '',
+        code: args.code
+      })
+    } catch (error) {
+      console.warn('[AgentRun] Could not send an artifact draft:', error)
+    }
   }
 
   private append(
@@ -819,76 +887,90 @@ export class AgentRunKernel {
     })
   }
 
+  /**
+   * Waits, with no card, while the user clears a human check in the Browser panel: the step's
+   * title says what to do, the panel opens on the page, and the run goes on once the check is
+   * gone. It gives up after `HUMAN_CHECK_WAIT_MS`.
+   */
   private async executeBrowserRequestHuman(
     runId: string,
     title: string,
-    args: Record<string, unknown>,
     toolRouter: AgentKernelToolRouter,
     signal: AbortSignal,
     startedAt: number
   ): Promise<ToolExecutionResult> {
     const run = this.store.get(runId)
     const conversationId = run?.threadId ?? ''
-    if (!conversationId || !toolRouter.reserveBrowserHumanTakeover) {
+    if (
+      !conversationId ||
+      !toolRouter.reserveBrowserForHumanCheck ||
+      !toolRouter.waitForBrowserHumanCheck
+    ) {
       return toolExecutionFailed({
         title,
         code: 'not_found',
-        message: 'No browser session is available for human takeover',
+        message: 'No browser session is open for the user to finish this check in',
         recoveryAction: 'change_strategy',
         startedAt
       })
     }
-    const reason = String(args.reason || 'A human-only browser step is required.')
-      .trim()
-      .slice(0, 2_000)
-    const challengeType = String(args.challenge_type || 'other')
     let browserSessionId: string
     try {
-      browserSessionId = await toolRouter.reserveBrowserHumanTakeover(conversationId)
+      browserSessionId = await toolRouter.reserveBrowserForHumanCheck(conversationId)
     } catch (error) {
       return toolExecutionFailed({
         title,
         code: 'not_found',
-        message: error instanceof Error ? error.message : 'Browser takeover could not be reserved',
+        message:
+          error instanceof Error ? error.message : 'The browser could not be held for the user',
         recoveryAction: 'change_strategy',
         startedAt
       })
     }
+    const timeout = AbortSignal.timeout(HUMAN_CHECK_WAIT_MS)
+    // Waiting on the user, as for a question: the chat shows as waiting and frees its run slot.
+    this.transition(runId, 'awaiting_user')
     try {
-      const interaction = await this.suspendForInteraction(
-        runId,
-        'question',
-        {
-          intent: 'browser_takeover',
-          conversationId,
-          browserSessionId,
-          reason,
-          challengeType
-        },
-        signal
+      await toolRouter.waitForBrowserHumanCheck(
+        conversationId,
+        browserSessionId,
+        AbortSignal.any([signal, timeout])
       )
-      if (interaction.status !== 'resolved') {
+      return toolExecutionSucceeded({
+        title,
+        data: { completed: true },
+        modelContent:
+          'The user cleared the check on the page. Call browser_observe now and continue from the fresh page state.',
+        startedAt
+      })
+    } catch (error) {
+      if (signal.aborted) {
         return toolExecutionFailed({
           title,
           code: 'cancelled',
-          message: 'Human browser takeover was cancelled',
+          message: 'The run stopped while waiting for the user',
           status: 'cancelled',
           startedAt
         })
       }
-      const completed = interaction.response?.completed === true
-      return toolExecutionSucceeded({
+      return toolExecutionFailed({
         title,
-        data: { completed },
-        modelContent: completed
-          ? 'The user completed the human-only browser step in the same session. Call browser_observe now and continue from the fresh page state.'
-          : 'The user could not complete the human-only browser step. Use a legitimate alternate source or explain the remaining blocker; do not retry or bypass the challenge.',
+        code: timeout.aborted ? 'timeout' : 'not_found',
+        message: timeout.aborted
+          ? 'The user did not clear the check in time'
+          : error instanceof Error
+            ? error.message
+            : 'The browser page is no longer available',
+        recoveryAction: 'change_strategy',
+        recovery:
+          'Use a legitimate alternate source, or tell the user in one sentence what is still blocked. Do not retry or bypass the check.',
         startedAt
       })
     } finally {
-      if (toolRouter.releaseBrowserHumanTakeover) {
+      if (!signal.aborted) this.transition(runId, 'executing_tool')
+      if (toolRouter.releaseBrowserHumanCheck) {
         await toolRouter
-          .releaseBrowserHumanTakeover(conversationId, browserSessionId)
+          .releaseBrowserHumanCheck(conversationId, browserSessionId)
           .catch(() => undefined)
       }
     }
@@ -1107,6 +1189,12 @@ The user approved this exact plan revision. Act capabilities are now available a
     return decision
   }
 
+  /**
+   * A call that uses a stored credential is a sensitive action: the permission mode decides it as
+   * it decides any other, so Full access runs it without asking, and "Allow for this chat" covers
+   * the same credential again. A use that breaks a credential rule is refused here, before any
+   * card, whatever the mode.
+   */
   private async decideTool(
     input: StartAgentKernelRunInput,
     call: AgentToolCall,
@@ -1114,19 +1202,27 @@ The user approved this exact plan revision. Act capabilities are now available a
     signal: AbortSignal
   ): Promise<'approved' | 'denied' | 'denied_stop' | { refused: string }> {
     const catalog = currentCatalog(input)
-    const credential = await this.authorizeCredential(input, call, title, signal)
-    if (credential !== 'unasked') return credential
-    // Tools that change SideKick itself ask every time, even in full access.
-    const alwaysAsk = getAgentToolEntry(catalog, call.name)?.approval === 'always'
-    if (!alwaysAsk && !toolNeedsPolicyDecision(catalog, call.name)) return 'approved'
-    const requestedAccess = alwaysAsk
+    const context = { conversationId: input.threadId, runId: input.id, toolCallId: call.id }
+    const credential = input.toolRouter.credentialApproval?.(call.name, call.arguments, context)
+    if (credential && 'refused' in credential) return { refused: credential.refused }
+    const routedAccess = input.toolRouter.requestedAccess?.(call.name, call.arguments, context)
+    // Tools that change SideKick itself ask every time, even in full access, as do calls the
+    // router marks so.
+    const alwaysAsk =
+      getAgentToolEntry(catalog, call.name)?.approval === 'always' || routedAccess === 'always'
+    if (!alwaysAsk && !credential && !toolNeedsPolicyDecision(catalog, call.name)) {
+      return 'approved'
+    }
+    const toolAccess = alwaysAsk
       ? 'confirm'
-      : toolRequestedAccess(catalog, call.name, call.arguments)
+      : (routedAccess ?? toolRequestedAccess(catalog, call.name, call.arguments))
+    const requestedAccess = credential ? 'confirm' : toolAccess
     const decision = alwaysAsk
       ? { effectiveAccess: 'confirm' as const }
       : resolvePermissionPolicy(input.permissionMode, requestedAccess)
     const safeArguments =
       input.toolRouter.safeArguments?.(call.name, call.arguments) ?? call.arguments
+    const credentialFacts = credential ? { credential: credential.alias } : {}
     if (decision.effectiveAccess === 'auto') {
       this.append(input.id, 'permission.resolved', {
         toolCallId: call.id,
@@ -1137,11 +1233,28 @@ The user approved this exact plan revision. Act capabilities are now available a
         mode: input.permissionMode,
         approved: true,
         source: 'policy',
-        arguments: safeArguments
+        arguments: safeArguments,
+        ...credentialFacts
       })
       return 'approved'
     }
-    const scope = alwaysAsk ? null : agentPermissionScope(call.name, call.arguments)
+    // A chat grant covers what the call does on its own, when that asks, and every credential it
+    // uses; a call that would run unasked but for its credential needs only the credential's.
+    const ownScope = alwaysAsk ? null : agentPermissionScope(call.name, call.arguments)
+    const asksOnItsOwn =
+      resolvePermissionPolicy(input.permissionMode, toolAccess).effectiveAccess === 'confirm'
+    const scope = alwaysAsk
+      ? null
+      : credential
+        ? !asksOnItsOwn
+          ? { keys: credential.keys, label: credential.label }
+          : ownScope
+            ? {
+                keys: [...ownScope.keys, ...credential.keys],
+                label: `${ownScope.label}, with ${credential.label}`
+              }
+            : null
+        : ownScope
     const grants = this.chatGrants.get(input.threadId)
     if (scope && grants && scope.keys.every((key) => grants.has(key))) {
       this.append(input.id, 'permission.resolved', {
@@ -1155,30 +1268,34 @@ The user approved this exact plan revision. Act capabilities are now available a
         source: 'chat_grant',
         decision: 'chat_grant',
         chatScope: scope.label,
-        arguments: safeArguments
+        arguments: safeArguments,
+        ...credentialFacts
       })
       return 'approved'
     }
-    const preview = await input.toolRouter
-      .approvalPreview?.(call.name, call.arguments)
-      .catch(() => undefined)
+    const preview = credential
+      ? credential.preview
+      : await input.toolRouter
+          .approvalPreview?.(call.name, call.arguments, context)
+          .catch(() => undefined)
     const interaction = await this.suspendForInteraction(
       input.id,
       'permission',
       {
         toolCallId: call.id,
         name: call.name,
-        title,
+        title: credential ? `Use ${credential.alias}: ${title}` : title,
         requestedAccess,
         mode: input.permissionMode,
         arguments: safeArguments,
+        ...credentialFacts,
         ...(scope ? { chatScope: scope.label } : {}),
         ...(preview ? { preview } : {})
       },
       signal
     )
-    if (interaction.status !== 'resolved') return 'denied'
-    const answer = agentPermissionDecision(interaction.response)
+    const answer =
+      interaction.status === 'resolved' ? agentPermissionDecision(interaction.response) : 'deny'
     if (answer === 'allow_chat' && scope) {
       // Only the scope computed here is granted; the response cannot name its own.
       const granted = this.chatGrants.get(input.threadId) ?? new Set<string>()
@@ -1186,57 +1303,7 @@ The user approved this exact plan revision. Act capabilities are now available a
       this.chatGrants.set(input.threadId, granted)
     }
     if (answer === 'allow_once' || answer === 'allow_chat') return 'approved'
-    return answer === 'deny_stop' ? 'denied_stop' : 'denied'
-  }
-
-  /**
-   * A stored credential's own approval setting applies before the permission mode, so it asks
-   * even in Full access. Its card stands for the whole call: once approved, the call needs no
-   * second approval. A use outside scope is refused here, before any card, whatever the mode.
-   * `unasked` lets the usual policy decide, as when the entry never asks.
-   */
-  private async authorizeCredential(
-    input: StartAgentKernelRunInput,
-    call: AgentToolCall,
-    title: string,
-    signal: AbortSignal
-  ): Promise<'approved' | 'denied' | 'denied_stop' | 'unasked' | { refused: string }> {
-    const context = { conversationId: input.threadId, runId: input.id, toolCallId: call.id }
-    const credential = input.toolRouter.credentialApproval?.(call.name, call.arguments, context)
-    if (!credential) return 'unasked'
-    if ('refused' in credential) return { refused: credential.refused }
-    if (credential.ask === 'never') return 'unasked'
-    const grants = this.chatGrants.get(input.threadId)
-    if (credential.ask === 'once_per_chat' && credential.keys.every((key) => grants?.has(key))) {
-      return 'unasked'
-    }
-    const safeArguments =
-      input.toolRouter.safeArguments?.(call.name, call.arguments) ?? call.arguments
-    const interaction = await this.suspendForInteraction(
-      input.id,
-      'permission',
-      {
-        toolCallId: call.id,
-        name: call.name,
-        title: `Use ${credential.alias}: ${title}`,
-        requestedAccess: 'confirm',
-        mode: input.permissionMode,
-        arguments: safeArguments,
-        credential: credential.alias,
-        ...(credential.ask === 'once_per_chat' ? { chatScope: credential.label } : {}),
-        preview: credential.preview
-      },
-      signal
-    )
-    const answer =
-      interaction.status === 'resolved' ? agentPermissionDecision(interaction.response) : 'deny'
-    if (answer === 'allow_chat' && credential.ask === 'once_per_chat') {
-      const granted = this.chatGrants.get(input.threadId) ?? new Set<string>()
-      for (const key of credential.keys) granted.add(key)
-      this.chatGrants.set(input.threadId, granted)
-    }
-    if (answer === 'allow_once' || answer === 'allow_chat') return 'approved'
-    input.toolRouter.credentialDenied?.(call.name, call.arguments, context)
+    if (credential) input.toolRouter.credentialDenied?.(call.name, call.arguments, context)
     return answer === 'deny_stop' ? 'denied_stop' : 'denied'
   }
 
@@ -1282,6 +1349,25 @@ The user approved this exact plan revision. Act capabilities are now available a
       })
     }
     this.append(input.id, 'run.retrying', { reason: 'runaway_tool_calls', ...stopped })
+  }
+
+  /**
+   * Records a call SideKick made for the model before its first turn, such as a project hook or a
+   * file the user attached. No model turn announces it, so the call itself is recorded with its
+   * result; without it the next reply's history held a result with no call, which was dropped.
+   */
+  private appendCallBySideKick(
+    runId: string,
+    call: AgentToolCall,
+    result: ToolExecutionResult
+  ): void {
+    this.append(runId, 'tool.completed', {
+      toolCallId: call.id,
+      name: call.name,
+      arguments: call.arguments,
+      calledBySideKick: true,
+      result
+    })
   }
 
   private async compactContext(
@@ -1352,6 +1438,10 @@ The user approved this exact plan revision. Act capabilities are now available a
     let imageLimitRetryAttempted = false
     let outputLimitRetryAttempted = false
     let streamDropRetryAttempted = false
+    let providerBusyRetries = 0
+    // Whether any turn of this run wrote text; until one does, an empty reply is asked again once.
+    let repliedWithText = false
+    let emptyReplyRetryAttempted = false
     // A reply that ran away is stopped and the model told once; a second one ends the run.
     let runawayStopped = false
     // Learned from a provider's image-count rejection and enforced on every
@@ -1397,107 +1487,7 @@ The user approved this exact plan revision. Act capabilities are now available a
       activeRequest = { ...activeRequest, maxOutputTokens: limit }
     }
     let activeContextManager = input.contextManager
-    let completionHooksRun = false
-    // The answer a verification request held back. When the pass that follows
-    // leaves the workspace as it was, that answer stays the response and the
-    // pass's closing reply is only a note on the verification.
-    let deferredAnswer: { content: string; contentBefore: string; revision: number } | undefined
 
-    const runProjectHooks = async (
-      commands: string[] | undefined,
-      title: string
-    ): Promise<void> => {
-      if (
-        input.profile.executionMode !== 'plan' &&
-        getAgentToolEntry(currentCatalog(input), 'shell')
-      ) {
-        // Snapshot before waiting for approval; changes to settings cannot replace reviewed commands.
-        const hooks = [...(commands ?? [])].slice(0, 10)
-        for (const command of hooks) {
-          const call: AgentToolCall = { id: randomUUID(), name: 'shell', arguments: { command } }
-          const startedAt = Date.now()
-          this.append(input.id, 'tool.pending', {
-            toolCallId: call.id,
-            name: call.name,
-            title,
-            arguments: call.arguments
-          })
-          const approval = await this.suspendForInteraction(
-            input.id,
-            'permission',
-            {
-              toolCallId: call.id,
-              name: call.name,
-              title,
-              arguments: call.arguments,
-              requestedAccess: 'confirm',
-              mode: 'always-ask',
-              workspaceRoot: input.workspaceRoot
-            },
-            signal
-          )
-          if (
-            signal.aborted ||
-            approval.status !== 'resolved' ||
-            approval.response?.approved !== true
-          ) {
-            this.append(input.id, 'tool.completed', {
-              toolCallId: call.id,
-              name: call.name,
-              result: toolExecutionFailed({
-                title,
-                code: 'permission_denied',
-                message: `${title} was not approved`,
-                status: 'denied',
-                startedAt
-              })
-            })
-            throw new Error(`${title} was not approved; the run was stopped`)
-          }
-          this.transition(input.id, 'executing_tool')
-          this.append(input.id, 'tool.running', {
-            toolCallId: call.id,
-            name: call.name,
-            title,
-            arguments: call.arguments
-          })
-          const result = await this.tools.execute(
-            {
-              catalog: currentCatalog(input),
-              call,
-              title,
-              context: {
-                runId: input.id,
-                conversationId: input.threadId,
-                workspaceRoot: input.workspaceRoot,
-                signal,
-                onOutput: ({ chunk, stream }) =>
-                  this.append(input.id, 'tool.output.delta', { toolCallId: call.id, stream, chunk })
-              }
-            },
-            ((args, context) =>
-              input.toolRouter.execute('shell', args, context)) as AgentToolExecutor
-          )
-          this.append(input.id, 'tool.completed', { toolCallId: call.id, name: call.name, result })
-          if (result.status !== 'success')
-            throw new Error(`${title} failed; inspect its output before retrying`)
-          messages.push(
-            {
-              role: 'assistant',
-              content: null,
-              tool_calls: [
-                {
-                  id: call.id,
-                  type: 'function',
-                  function: { name: 'shell', arguments: JSON.stringify(call.arguments) }
-                }
-              ]
-            },
-            { role: 'tool', tool_call_id: call.id, content: result.modelContent }
-          )
-        }
-      }
-    }
     // Files the user named come back as reads the model already made, so its first turn starts
     // from their contents instead of spending a round opening them. They run through the read
     // tool, which records the receipts an edit of those files needs.
@@ -1534,7 +1524,7 @@ The user approved this exact plan revision. Act capabilities are now available a
           },
           ((args, context) => input.toolRouter.execute('read', args, context)) as AgentToolExecutor
         )
-        this.append(input.id, 'tool.completed', { toolCallId: call.id, name: call.name, result })
+        this.appendCallBySideKick(input.id, call, result)
         messages.push(
           {
             role: 'assistant',
@@ -1547,7 +1537,13 @@ The user approved this exact plan revision. Act capabilities are now available a
               }
             ]
           },
-          { role: 'tool', tool_call_id: call.id, content: result.modelContent }
+          {
+            role: 'tool',
+            tool_call_id: call.id,
+            content: result.modelContent,
+            // An attached PDF's scanned or illustrated pages arrive as images.
+            ...(result.media?.length ? { media: result.media } : {})
+          }
         )
       }
     }
@@ -1555,7 +1551,6 @@ The user approved this exact plan revision. Act capabilities are now available a
     const rememberedOutputLimit = learnedOutputLimits.get(learnedKey)
     if (rememberedOutputLimit) applyOutputLimit(rememberedOutputLimit)
     try {
-      await runProjectHooks(input.projectStartCommands, 'Project start hook')
       if (input.preloadReads?.length) await preloadReads(input.preloadReads)
       this.transition(started.id, 'streaming')
       while (!signal.aborted) {
@@ -1628,6 +1623,12 @@ The user approved this exact plan revision. Act capabilities are now available a
             toolDefinitions,
             activeRequest.maxOutputTokens
           ) ?? activeRequest.maxOutputTokens
+        const requestEstimate = activeContextManager?.requestTokens?.(
+          requestMessages,
+          toolDefinitions
+        )
+        if (requestEstimate)
+          this.append(input.id, 'context.estimated', { promptTokens: requestEstimate })
         let pendingContent = separateNextTurn ? '\n\n' : ''
         let pendingThinking = ''
         let lastDeltaAt = Date.now()
@@ -1675,6 +1676,8 @@ The user approved this exact plan revision. Act capabilities are now available a
                 for (const [position, call] of (chunk.message?.tool_calls ?? []).entries()) {
                   runaway ??= runawayGuard.begin(guardKey(call, position))
                   const id = call.id || `tool_index_${call.index ?? 0}`
+                  if (call.function.name === 'create_artifact')
+                    this.draftArtifact(input.id, id, call)
                   const preview = safePreview(call)
                   const signature = JSON.stringify([call.function.name, preview])
                   if (previewSignatures.get(id) === signature) continue
@@ -1709,6 +1712,10 @@ The user approved this exact plan revision. Act capabilities are now available a
         } finally {
           acceptingChunks = false
           flushDelta()
+        }
+        sampled = {
+          ...sampled,
+          turn: { ...sampled.turn, toolCalls: uniqueToolCallIds(sampled.turn.toolCalls) }
         }
         // A reply that arrived whole, or was not stopped while it streamed, is checked once.
         runaway ??=
@@ -1821,16 +1828,42 @@ The user approved this exact plan revision. Act capabilities are now available a
             )
             continue
           }
-          throw new ProviderRequestError(providerError, sampled.result.status)
+          const status = sampled.result.status
+          const retryAfterMs = (sampled.result.retryAfter ?? 0) * 1_000
+          if (
+            status !== undefined &&
+            PROVIDER_BUSY_STATUSES.has(status) &&
+            providerBusyRetries < PROVIDER_BUSY_RETRY_DELAYS_MS.length &&
+            retryAfterMs <= PROVIDER_RETRY_AFTER_LIMIT_MS &&
+            !providerQuotaExhausted(sampled.result)
+          ) {
+            const scheduledMs = PROVIDER_BUSY_RETRY_DELAYS_MS[providerBusyRetries++]
+            const delayMs = retryAfterMs > 0 ? retryAfterMs : scheduledMs
+            // An overloaded server can fail a reply it has begun; as for a dropped stream, what
+            // it streamed is not part of the reply.
+            this.append(input.id, 'run.retrying', {
+              reason: 'provider_unavailable',
+              discardsPartialTurn: true,
+              status,
+              attempt: providerBusyRetries,
+              delayMs,
+              error: providerError
+            })
+            await abortablePromise(
+              new Promise((resolve) => setTimeout(resolve, delayMs)),
+              signal,
+              'Agent run cancelled'
+            )
+            continue
+          }
+          throw new ProviderRequestError(providerError, sampled.result.status, sampled.result.code)
         }
+        providerBusyRetries = 0
         contextOverflowRetryAttempted = false
         imageLimitRetryAttempted = false
         outputLimitRetryAttempted = false
         streamDropRetryAttempted = false
-        const turn = {
-          ...sampled.turn,
-          toolCalls: uniqueToolCallIds(sampled.turn.toolCalls)
-        }
+        const turn = sampled.turn
         // Some servers (LM Studio among them) report a turn the output limit cut off as finished
         // normally, even `tool_calls`; a turn that used its whole allowance was cut off whatever
         // the reason says.
@@ -1866,6 +1899,7 @@ The user approved this exact plan revision. Act capabilities are now available a
         const projectedTurnContent =
           separateNextTurn && turn.content ? `\n\n${turn.content}` : turn.content
         separateNextTurn = false
+        if (turn.content.trim()) repliedWithText = true
 
         // A reply the output limit cut off while the model was still thinking produced nothing,
         // and is not an answer. As in Codex, the turn ends with that reason rather than completing
@@ -1913,34 +1947,16 @@ The user approved this exact plan revision. Act capabilities are now available a
             ? await input.planController?.afterTerminalTurn()
             : undefined
         const planDecision = planningDecision ?? executionPlanDecision
-        const completionHooksPending =
-          !completionHooksRun &&
-          input.profile.executionMode === 'act' &&
-          input.profile.surface === 'conversation' &&
-          !input.goalController &&
-          (!input.planController || input.planController.stage() === 'inactive') &&
-          !turn.toolCalls.length &&
-          verificationDecision?.continue !== true &&
-          Boolean(input.projectCompletionCommands?.length) &&
-          Boolean(getAgentToolEntry(currentCatalog(input), 'shell'))
         if (verificationDecision) {
           this.append(input.id, 'verification.updated', {
             summary: verificationDecision.summary
           })
         }
         const provisional =
-          completionHooksPending ||
           needsResearchSource ||
           verificationDecision?.continue === true ||
           planDecision?.continue === true ||
           Boolean(planDecision?.error)
-        const closesVerification = Boolean(deferredAnswer && !turn.toolCalls.length && !provisional)
-        // A reply that changed nothing is a note on the answer it followed. When that answer was
-        // empty (the model went straight to checking), the reply is the answer.
-        const verificationNote =
-          closesVerification &&
-          Boolean(deferredAnswer?.content.trim()) &&
-          verificationDecision?.summary.currentRevision === deferredAnswer?.revision
         this.append(input.id, 'assistant.completed', {
           content: projectedTurnContent,
           thinking: turn.thinking,
@@ -1958,8 +1974,7 @@ The user approved this exact plan revision. Act capabilities are now available a
           usage: turn.usage,
           ...(cutOff ? { outputLimit: cutOff } : {}),
           generationId: turn.generationId,
-          provisional,
-          ...(verificationNote ? { verificationNote: true } : {})
+          provisional
         })
         // The estimate beside the real count lets the next run start calibrated.
         this.append(input.id, 'usage.updated', {
@@ -1995,16 +2010,13 @@ The user approved this exact plan revision. Act capabilities are now available a
           }
         }
 
-        if (verificationNote && deferredAnswer) {
-          finalContent = deferredAnswer.contentBefore + deferredAnswer.content
-          finalThinking += turn.thinking
-        } else if (!provisional) {
+        // A reply a verification request held back is a draft: the pass's closing reply is the
+        // whole answer, so the user reads the answer last.
+        if (!provisional) {
           finalContent += projectedTurnContent
           finalThinking += turn.thinking
         }
-        const finalResponse =
-          verificationNote && deferredAnswer ? deferredAnswer.content : turn.content
-        if (closesVerification) deferredAnswer = undefined
+        const finalResponse = turn.content
 
         if (!turn.toolCalls.length) {
           if (planDecision?.error) throw new AgentToolLoopError(planDecision.error)
@@ -2025,11 +2037,6 @@ The user approved this exact plan revision. Act capabilities are now available a
             continue
           }
           if (verificationDecision?.continue) {
-            deferredAnswer = {
-              content: projectedTurnContent,
-              contentBefore: finalContent,
-              revision: verificationDecision.summary.currentRevision
-            }
             this.append(input.id, 'run.retrying', { reason: 'workspace_verification_required' })
             messages = [
               ...messages,
@@ -2063,19 +2070,24 @@ The user approved this exact plan revision. Act capabilities are now available a
               continue
             }
           }
-          if (completionHooksPending) {
-            completionHooksRun = true
-            await runProjectHooks(input.projectCompletionCommands, 'Project completion hook')
-            messages.push({
-              role: 'user',
-              content:
-                'The approved completion hooks finished. Inspect their results, reverify any changed workspace state, then give the final response. Do not repeat the hooks.'
-            })
-            this.transition(input.id, 'streaming')
-            continue
-          }
           // A message the user sent during this last turn deserves a reply of its own.
           if (this.hasPendingSteer(input.id)) continue
+          // A run that would end without having written any text, its last reply empty or only
+          // thinking, has no answer. As in Gemini CLI, that reply is asked for again once, and a
+          // second ends the run with the reason rather than completing empty.
+          if (!repliedWithText) {
+            const onlyThought = Boolean(turn.thinking.trim())
+            if (emptyReplyRetryAttempted) {
+              throw new Error(
+                `The model ended its reply ${onlyThought ? 'after only thinking, ' : ''}without an answer, twice. Ask it again, or choose another model.`
+              )
+            }
+            emptyReplyRetryAttempted = true
+            this.append(input.id, 'run.retrying', { reason: 'empty_reply', onlyThought })
+            // Providers refuse an assistant message with nothing in it.
+            messages = requestMessages
+            continue
+          }
           this.transition(input.id, 'completed')
           return {
             runId: input.id,
@@ -2202,8 +2214,10 @@ The user approved this exact plan revision. Act capabilities are now available a
             prepared.prepared.argumentSnapshotFailed
           ) ?? undefined
         for (let callIndex = 0; callIndex < preparedBatch.length; callIndex++) {
-          if (signal.aborted) break
           const item = preparedBatch[callIndex]
+          // A stop starts no more calls, but every call that ran together with others still
+          // records how it ended.
+          if (signal.aborted && !preExecuted.has(item.call.id)) continue
           const { prepared, call, title, safeArguments } = item
           const entry = getAgentToolEntry(currentCatalog(input), call.name)
           const concurrency = entry?.concurrency
@@ -2257,7 +2271,7 @@ The user approved this exact plan revision. Act capabilities are now available a
           if (parallelResult) {
             result = parallelResult
           } else if (cutOff) {
-            result = cutOffToolResult(title, cutOff, startedAt)
+            result = cutOffToolResult(title, cutOff, startedAt, call.name)
           } else if (goalAlreadyComplete) {
             result = toolExecutionFailed({
               title,
@@ -2305,7 +2319,6 @@ The user approved this exact plan revision. Act capabilities are now available a
               result = await this.executeBrowserRequestHuman(
                 input.id,
                 title,
-                call.arguments,
                 input.toolRouter,
                 signal,
                 startedAt

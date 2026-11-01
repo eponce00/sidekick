@@ -24,13 +24,94 @@ tools the model can see. A tool missing from that catalog cannot be invoked thro
 
 Project-bound runs can also receive the bounded `read` tool and the file editor the model was
 trained on: `apply_patch` for OpenAI models, `Edit`/`Write` for Claude, search-and-replace for Grok,
-and `edit`/`write`/`delete_file` for other models such as Qwen. Files must be read in the same run
-before they are changed, and every edit uses the same transactional workspace mutation service.
+and `edit`/`write`/`delete_file` for other models such as Qwen. A file must be read earlier in the
+same chat before it is changed, though not before it is deleted, and every edit uses the same
+transactional workspace mutation service.
+
+`read` also opens PDFs, without Python or any other program installed. It returns each page's
+text, up to 20 pages at a time. A model that can see images also gets a picture of the pages whose
+text misses something: scanned pages first, then pages with charts, diagrams or photos, as many as
+its provider takes in one request (four for cloud providers, two for local ones). Reading one or
+two pages by number shows them as pictures. The chat shows the pages the model was given as
+thumbnails under its work; click one to enlarge it and move between them. Newer pictures take the
+place of older ones, and the model is told when one has left. A scanned page's words come from the computer's own text
+recognition, so they stay in the conversation: the recognizer built into Windows or macOS, or
+Tesseract on Linux when it is installed. It runs on your computer, and the pages never leave it for
+that.
+
+## Computer use
+
+On Windows, the agent can operate other apps on this computer when you turn this on in
+**Settings › Computer use**. It is off by default, and there is nothing else to install.
+
+- **You approve each app.** The agent asks, and SideKick shows you the app and its path. Allow it
+  for this chat, or always. An app you always allow asks again if its program changes, and you can
+  remove it in Settings. Software that may control real equipment asks every time. A denial is final
+  for that request. If the app isn't open and has a Start Menu entry, SideKick
+  starts it once you allow it.
+- **Some apps are never available:** password managers, Windows security and sign-in prompts, and
+  SideKick itself.
+- **Some apps come with a warning,** because allowing one hands over much more than one app:
+  browsers hold your signed-in accounts, terminals and code editors run commands without SideKick's
+  approvals or Docker isolation, and system tools and File Explorer can change your computer's setup
+  and reach any file.
+- **Software that may control real equipment,** such as TwinCAT, gets an extra warning. A wrong click
+  or value could move a machine.
+- **Press Esc to stop it.** Everything the chat was allowed ends, and it has to ask you again. While
+  the border shows, for up to a minute after each action, other apps don't receive Esc.
+- **One chat at a time,** until its reply ends, and never in a scheduled chat.
+- **What the app shows goes to your selected model,** including any personal details on screen. A
+  model that can't see images works from the app's list of controls alone.
+
+The agent normally works in the background without moving your mouse or taking focus. While it works,
+a soft glow and a label mark the app, SideKick's own pointer shows where it is acting, and the chat
+shows its latest look at the app. Clicks pass through all of this, and it ends when the reply does.
+An app you have minimized comes back behind your other windows while the agent works in it, and goes
+back to minimized afterwards. Store apps such as Calculator work too, and open menus and dropdowns
+show in what the agent sees.
+
+Some apps ignore background input for some steps. WhatsApp scrolls in the background, for example,
+but needs a real click to type, and Docker Desktop takes no background clicks at all. The agent then chooses: it can tell you what it needs, or wait until
+you have stepped away for 10 seconds, bring the app to the front, and use your real mouse and keyboard.
+SideKick's pointer stays the one to watch. Your real one goes to the spot only for as long as a step
+needs it and then goes back where you left it, and if you touch the mouse or keyboard the agent waits again.
+The app stays in front until the reply ends, and then what you had open comes back, unless you have
+already moved on. This is never done for software that may control real
+equipment. If the app is covered or minimized, the glow gives way to a small label in the corner with a picture
+of what the agent last saw.
+
+Three more things it can ask for, each with its own limits:
+
+- **Your clipboard.** It can put text there to paste it, and what you had copied comes back when the
+  reply ends, unless you have copied something else by then. Neither reaches your clipboard history.
+  It keeps text there only if you asked for that. It can read what it copied from an app you gave it;
+  for anything you copied elsewhere it asks you first, once per chat. Anything from a password manager,
+  or that the app copying it marked as private, stays out of its reach.
+- **Your whole screen.** It asks you first, once per chat, and can then look at a display but not act
+  on it: to click or type in an app, it still has to ask for that app. Windows of password managers,
+  Windows security prompts and SideKick are blanked out before the picture leaves your computer, and
+  the chat shows you the picture it got. Passwords shown inside another app, such as a browser, are not.
+- **Showing you how.** Ask it to walk you through something in an app. It brings the app forward, points
+  at the step, and waits beside it with **Next** and **Exit**. If Next will do something in the app,
+  the step says so first.
+
+For gestures that a drag can't make, it can keep a real mouse button down and move with it, and hold a
+key for up to 10 seconds. A held button lets go by itself when you move the mouse, press Esc, the reply
+ends or 30 seconds pass. A held key lets go as soon as the app stops being in front.
+
+Before a click, SideKick checks what is being pressed where it can tell. A control named something
+like Send, Delete or Pay is refused until the agent confirms that you asked for it. Names can't catch
+everything: web-based apps may not name their controls, and a covered app can't be checked.
+
+After each step the agent sees the app again and is told if nothing changed. After a few such steps
+it is told to stop and explain, and SideKick stops sending more.
 
 The native browser catalog includes `browser_open`, `browser_observe`, `browser_screenshot`,
 `browser_click`, `browser_type`, `browser_sign_in`, `browser_select`, `browser_fill_form`, `browser_scroll`, `browser_hover`,
 `browser_wait`, `browser_navigate`, `browser_tabs`, `browser_console`, `browser_network`,
-inspection-only `browser_evaluate`, `browser_verify`, and `browser_close`. Browser pages run in an
+inspection-only `browser_evaluate`, `browser_verify`, `browser_list_webmcp_tools` and
+`browser_call_webmcp_tool` for [tools a website offers](BROWSER.md#tools-that-websites-offer), and
+`browser_close`. Browser pages run in an
 isolated Electron session, not in the app renderer, and screenshots can be supplied directly to a
 vision-capable model. See [Visual browser](BROWSER.md).
 
@@ -47,10 +128,13 @@ plain pipes instead.
 - **In the chat.** A running command shows its last lines under its row, with **Stop**,
   **Background**, and **Open in Terminal**. Stop ends that one command; the agent is told you
   stopped it and goes on. Background stops the agent waiting on it while it keeps running.
-- **The Terminal tab.** The side panel lists the conversation's commands by title, each with a
-  status dot and its run time, or **Needs input** while it waits for an answer. Select one to see
-  its command, status, and folder above all of its output in a terminal view; the buttons beside
+- **The Terminal tab.** It works like an editor's terminal panel: the selected terminal fills the
+  tab, and a list on its right holds your own terminals and, under **Agent**, the chat's commands.
+  Each command shows its title, an icon coloured by its state, and its run time, its exit code if
+  it failed, or **Needs input** while it waits for an answer; hover a running one to stop it.
+  Select one to see its command, status, and folder above all of its output; the buttons beside
   the command copy the output, move it to the background, or stop it, and you can type into it.
+  In a narrow panel the list shows only icons; hover one for its name.
 - **Prompts.** A command that prints a question and then waits, such as `Ok to proceed? (y)`, is
   marked as waiting for input. You can answer it from the chat or the Terminal tab. If the agent
   was waiting on it, the agent gets it back as a background task, with the question, instead of
@@ -65,7 +149,11 @@ plain pipes instead.
 - **Waiting.** The agent does not guess how long work takes. A foreground command still running when
   its time is up (30 seconds unless the agent asks for more) goes on in the background, and the
   agent gets its output so far. When a background command ends, the agent is told before its next
-  step, with the exit code and last lines. `wait` ends as soon as what it names happens:
+  step, with the exit code and last lines. A background command whose shell exits while a program
+  it started, for example with `Start-Process` or `nohup`, is still running counts as running until
+  that program ends, and stopping the command stops the program too. Its terminal closes with the
+  shell, so what the program prints after that is lost, and the command's last line says so.
+  `wait` ends as soon as what it names happens:
   - a named command ends or stops at a prompt;
   - a command prints a line matching a pattern, such as `ready|error`;
   - for a plain wait, any background command of the conversation ends.
@@ -75,52 +163,95 @@ plain pipes instead.
 Commands from earlier app sessions are not listed in the Terminal tab; their output stays in the
 chat.
 
+### Your own terminals
+
+**+** in the Terminal tab's list (or **New terminal** in an empty tab) opens a terminal of your own:
+your default shell (PowerShell 7 when installed, else Windows PowerShell; your login shell on macOS
+and Linux) in the chat's project folder, or your home folder for a chat outside a project. Type
+into it as into any terminal; with text selected, Ctrl+C copies on Windows and Linux, and Ctrl+V
+pastes. It is not an agent command: nothing you type asks for permission, and the agent cannot
+see, read, or type into your terminals. They belong to the app, not to one chat, so every chat's
+Terminal tab lists the same ones, and they keep running while you switch chats. A terminal whose
+shell has exited stays listed with its exit code until you remove it. The trash button ends the
+shell and everything it started; quitting SideKick ends them all.
+
 ## Conditional tools
 
 - Persistent goals add `update_goal`.
 - Plan mode adds `enter_plan_mode`, `present_plan`, and `complete_plan` at the appropriate phase.
 - Installed skills may add `create_artifact` and trusted bundled helpers. `create_artifact` renders
-  the artifact the way the chat shows it and reports whether it rendered, any runtime errors, and,
-  for models that accept images, a screenshot, so the model can check its own result.
+  the artifact the way the chat shows it and reports whether it rendered, any runtime errors, layout
+  problems found in the rendered page (content wider than the chat, sideways scrolling, cut-off or
+  squeezed text, chart labels past the chart's edge, values such as `NaN`), and, for models that
+  accept images, a screenshot, so the model can check its own result.
   The tool is offered even before its skill loads, so the tool list stays the same across turns;
   an artifact made without the skill's guidance is rendered and the guidance comes back with it.
-- In a chat, an artifact is checked before it appears. A builder reviews how the agent's version
-  rendered and fixes what is wrong with it, up to three times, while the reply shows one
-  **Building** row with the version it is on. The chat then shows only the finished artifact;
-  open the row while it works to see each version. When there is nothing to review, because the
-  artifact could not be rendered, or it rendered cleanly and the model cannot see images, it
-  appears as the agent made it.
-- User-configured MCP servers add their advertised tools after schema normalization.
+- `edit_artifact` changes an existing artifact, this reply's or an earlier one's, by replacing exact
+  snippets of its code, then renders and checks it the same way; the chat shows the new version.
+- In a chat, the artifact shows while the agent writes it. A builder then reviews how it rendered
+  and fixes what is wrong, up to three times, with `edit_artifact`; each fix replaces the artifact
+  in place. The builder works without extended reasoning. When there is nothing to review, because
+  the artifact could not be rendered, or it rendered cleanly with no layout problems and the model
+  cannot see images, it stays as the agent made it.
+- An artifact cut off by the reply's output limit is not run; the agent is told to write it again
+  more compactly.
+- The Schedules skill adds `schedules_list`, `schedules_create`, `schedules_update`, and
+  `schedules_delete` to the run that loads it, and only then, so other runs carry none of them. A
+  later run that calls one first is told to load the skill. Listing changes nothing; every create,
+  change, pause, resume, and delete asks you first, even in Full access. See
+  [Asking the agent](SCHEDULES.md#asking-the-agent).
+- User-configured MCP servers add their advertised tools after schema normalization. A call has
+  two minutes to answer, and stopping the run cancels it on the server. A result the server marks
+  as an error is a failed call. A local server that exited starts again for the next run.
 
 During Plan mode's planning phase, only bounded workspace reads, code intelligence, web tools,
 questions, skills, todos, waits, plan tools, and retained output are eligible. Commands, workspace
-mutations, MCP, artifacts, starting or messaging other chats, and child agents remain unavailable even when the
-global policy is Full access.
+mutations, MCP, artifacts, schedules, starting or messaging other chats, and child agents remain
+unavailable even when the global policy is Full access.
 
 ## Execution guarantees
 
 - Tool arguments are normalized only when the meaning is unambiguous, then recursively validated
   before permission prompts or side effects.
 - Reads, searches, commands, and mutations resolve paths inside the active project and reject
-  traversal and symlink escapes. When a task needs a folder outside the project, the agent says
+  traversal and symlink escapes. In a project of
+  [several folders](PROJECTS.md#several-folders-in-one-project), a relative path means the primary
+  folder and `<name>/path` another folder; each folder is its own boundary, so a path or link that
+  leads from one folder into another or outside the project is refused. When a task needs a folder
+  outside the project, the agent says
   the folder is not granted to the chat instead of looking for another way in. You can add the
   folder as a project and work on it in a chat there, which a chat can also start for you with
   your approval, or copy the files into this project.
-- Existing files require a same-run read receipt before an edit. Stale, ambiguous, and no-op edits
-  fail rather than being reported as successful.
+- An existing file can be edited only after the agent read or wrote it earlier in the same chat,
+  and only if it has not changed since. A stale, ambiguous or no-op edit fails rather than being
+  reported as successful.
 - A multi-file patch is validated as one transaction. Any failure prevents the full change set or
-  rolls it back.
-- Foreground and background commands use an explicit project-relative working directory. Background
+  rolls it back. A patch across folders holds each folder's lock, taken in one fixed order, so two
+  such patches never wait on each other.
+- Foreground and background commands use an explicit project-relative working directory: the
+  primary folder by default, or another folder named as `cwd`. `WORKSPACE_FOLDER` is the primary
+  folder, and `SIDEKICK_PROJECT_FOLDERS` maps each other folder's name to its path as JSON. In a
+  Docker shell, a project of one folder is mounted at `/workspace`; with several, each folder is
+  mounted at `/workspace/<name>`, the primary under its own folder name. Background
   commands return an ID that can be read, answered, or cancelled from any reply in the conversation.
+- A command can be given stored credentials only when the program it runs is installed, not a file
+  in any of the project's folders.
 - Tool output is bounded. A long result keeps its start and its end, cut on whole lines, and a
   note where the middle was left out says that SideKick shortened it, gives an opaque handle and
-  the byte offset where the part left out starts. The whole result is kept in trusted storage, and
-  the agent reads on from that offset with `tool_output`; it is not silently inserted into the
-  prompt.
+  the byte offset where the part left out starts. A line too long to show whole, such as JSON on
+  one line, shows as much of its start and end as fits. The whole result is kept in trusted
+  storage, and the agent reads on from that offset with `tool_output`, or finds text in it with
+  `tool_output`'s `find`, which returns each match's offset and the text around it. None of it is
+  silently inserted into the prompt.
 - A command's result reaches the agent as text: its exit code, then stdout and stderr (or, in a
   terminal, the output) as plain lines, each shortened on its own. The note says the command's own
-  output was complete, so a shortened download log is not taken for a short file. The command row
-  in the chat shows the same result, with **Copy** copying the output as text.
+  output was complete, so a shortened download log is not taken for a short file. When SideKick
+  itself kept only part of it, the first 256 KB over pipes or the last lines a terminal keeps, the
+  note says so and names the log file that holds all of it. The command row in the chat shows the
+  same result, with **Copy** copying the output as text.
+- On Windows, a program's exit code decides whether a command failed even when its stderr was
+  redirected with `2>&1`, which Windows PowerShell otherwise counts as an error; a cmdlet's error
+  still fails it. Errors point at the command's own lines.
 - When a reply reaches its output limit while it writes tool calls, none of them run, and the
   model is asked for fewer, smaller calls. A reply that writes more than 64 calls, or the same call
   a fourth time, is stopped as it streams; none of its calls run, and the model is told why and

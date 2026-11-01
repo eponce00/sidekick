@@ -1,13 +1,14 @@
 import type { AxiosRequestConfig, AxiosResponse } from 'axios'
 import { toolExecutionFailed, toolExecutionSucceeded } from '../../shared/agentRuntime'
-import type { CredentialSend } from '../../shared/credentials'
+import { credentialSendFor, type CredentialSend } from '../../shared/credentials'
 import { HTTP_REQUEST_METHODS, HTTP_REQUEST_TOOL } from '../../shared/httpRequestTool'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
 import { browserNetworkApprovals, type BrowserNetworkPolicy } from './browserNetworkApprovals'
 import { aliasResponseTokens } from './credentialResponseTokens'
-import type { CredentialUses } from './credentialUses'
+import type { CredentialUseAudit, CredentialUses } from './credentialUses'
 import type { ToolOutputStore } from './toolOutputStore'
 import { requestAdmitted, webNetworkRefusal, type WebNetworkOptions } from './webNetworkGuard'
+import { decodeWebText } from './webResponseText'
 
 export type HttpSend = (
   url: URL,
@@ -65,22 +66,6 @@ function textual(contentType: string): boolean {
   )
 }
 
-/**
- * Decodes a response by its byte-order mark, then its declared charset, then as UTF-8. Text in an
- * encoding SideKick misreads would show a token in a form the redactor does not know.
- */
-function decodeBody(bytes: Buffer, contentType: string): string {
-  let charset = /charset\s*=\s*"?([\w.:-]+)/i.exec(contentType)?.[1] ?? 'utf-8'
-  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) charset = 'utf-8'
-  else if (bytes[0] === 0xff && bytes[1] === 0xfe) charset = 'utf-16le'
-  else if (bytes[0] === 0xfe && bytes[1] === 0xff) charset = 'utf-16be'
-  try {
-    return new TextDecoder(charset).decode(bytes)
-  } catch {
-    return new TextDecoder('utf-8').decode(bytes)
-  }
-}
-
 const sameName = (names: Iterable<string>, name: string): string | undefined =>
   [...names].find((item) => item.toLowerCase() === name.toLowerCase())
 
@@ -92,7 +77,7 @@ interface Body {
 }
 
 /**
- * Puts the credential where its entry says, refusing anything the model already set there in any
+ * Puts the credential where the call said, refusing anything the model already set there in any
  * letter case, and any header that would change how the server reads the part holding the value.
  */
 function place(
@@ -196,6 +181,12 @@ export function registerHttpToolHandlers(
 
     const alias = typeof args.credential === 'string' ? args.credential.trim() : ''
     let usedAlias: string | null = null
+    // The use is audited once the request goes out; a refusal before that is audited as one.
+    let audit: CredentialUseAudit | undefined
+    const refuse = (message: string) => {
+      audit?.notSent(message)
+      return invalid(title, message)
+    }
     if (alias) {
       const uses = options.credentials?.()
       if (!uses) {
@@ -206,15 +197,18 @@ export function registerHttpToolHandlers(
           retryable: false
         })
       }
-      const taken = uses.take({
-        alias,
-        tool: HTTP_REQUEST_TOOL,
-        kind: 'web',
-        target: url.href,
-        conversationId: context.conversationId,
-        runId: context.runId,
-        toolCallId: context.toolCallId
-      })
+      const taken = uses.take(
+        {
+          alias,
+          tool: HTTP_REQUEST_TOOL,
+          kind: 'web',
+          target: url.href,
+          conversationId: context.conversationId,
+          runId: context.runId,
+          toolCallId: context.toolCallId
+        },
+        { deferUse: true }
+      )
       if (!taken.ok) {
         return toolExecutionFailed({
           title,
@@ -225,13 +219,17 @@ export function registerHttpToolHandlers(
           recoveryAction: 'change_strategy'
         })
       }
-      if (!taken.send) return invalid(title, `${alias} cannot be sent in a web request.`)
-      const refusal = place(taken.send, taken.values, url, headers, body)
-      if (refusal) return invalid(title, refusal)
+      audit = taken.audit
+      const placement: CredentialSend | string = taken.derived
+        ? { as: 'header', name: 'Authorization', prefix: 'Bearer ' }
+        : credentialSendFor(args.credential_as, taken.summary.kind)
+      if (typeof placement === 'string') return refuse(placement)
+      const refusal = place(placement, taken.values, url, headers, body)
+      if (refusal) return refuse(refusal)
       usedAlias = alias.replace(/~\d+$/, '')
     }
     if ((method === 'GET' || method === 'HEAD') && body.kind !== 'none') {
-      return invalid(title, `${method} requests carry no body`)
+      return refuse(`${method} requests carry no body`)
     }
 
     const data =
@@ -243,7 +241,7 @@ export function registerHttpToolHandlers(
             ? new URLSearchParams(body.form).toString()
             : undefined
     if (data !== undefined && Buffer.byteLength(data) > MAX_REQUEST_BODY) {
-      return invalid(title, 'The request body is larger than 1 MB')
+      return refuse('The request body is larger than 1 MB')
     }
     const lower = Object.keys(headers).map((key) => key.toLowerCase())
     if (body.kind === 'json' && !lower.includes('content-type')) {
@@ -274,14 +272,18 @@ export function registerHttpToolHandlers(
     } catch (error) {
       const refusal = webNetworkRefusal(error)
       if (refusal) {
+        audit?.notSent(refusal.message)
         return toolExecutionFailed({
           title,
           code: 'permission_denied',
           status: 'denied',
           message: refusal.message,
-          retryable: false
+          retryable: false,
+          recoveryAction: 'change_strategy'
         })
       }
+      // The request was on its way when it failed.
+      audit?.sent()
       if (!context.signal.aborted && (error as { code?: unknown })?.code === 'ERR_CANCELED') {
         return toolExecutionFailed({
           title,
@@ -299,12 +301,14 @@ export function registerHttpToolHandlers(
         retryable: !context.signal.aborted
       })
     }
+    audit?.sent()
 
     const responseHeaders = response.headers as Record<string, unknown>
     const contentType = String(responseHeaders['content-type'] ?? '')
     const bytes = Buffer.from(response.data ?? new ArrayBuffer(0))
+    // Text in an encoding SideKick misreads would show a token in a form the redactor does not know.
     let text = textual(contentType)
-      ? decodeBody(bytes, contentType)
+      ? decodeWebText(bytes, contentType)
       : `[${bytes.byteLength} bytes of ${contentType || 'binary content'}]`
     let location =
       responseHeaders.location !== undefined ? String(responseHeaders.location) : undefined

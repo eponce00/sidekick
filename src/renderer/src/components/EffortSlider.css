@@ -1,0 +1,72 @@
+/* The track is a pill; its stops and thumb sit inside it, inset by half the thumb so the ends
+   line up with the first and last stop. */
+.effort-slider {
+  --effort-height: 36px;
+  --effort-thumb: 44px;
+  --effort-inset: calc(var(--effort-thumb) / 2);
+  --effort-span: calc(100% - var(--effort-thumb));
+  /* The thumb is the lightest surface in either theme, as a switch's knob is. */
+  --effort-thumb-bg: var(--text-primary);
+  position: relative;
+  height: var(--effort-height);
+  border-radius: var(--radius-full);
+  background: var(--surface-3);
+  cursor: pointer;
+  touch-action: none;
+  outline: none;
+}
+
+.effort-slider:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.effort-slider-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: calc(var(--effort-inset) + var(--effort-at) * var(--effort-span));
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  transition: width var(--duration-fast) var(--ease-out);
+}
+
+.effort-slider-stop {
+  position: absolute;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: var(--radius-full);
+  background: var(--text-muted);
+  opacity: 0.55;
+}
+
+.effort-slider-stop.is-passed {
+  background: var(--on-accent);
+  opacity: 0.5;
+}
+
+.effort-slider-thumb {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--effort-inset) + var(--effort-at) * var(--effort-span));
+  width: var(--effort-thumb);
+  height: var(--effort-thumb);
+  margin: calc(var(--effort-thumb) / -2) 0 0 calc(var(--effort-thumb) / -2);
+  border-radius: var(--radius-full);
+  background: var(--effort-thumb-bg);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+  transition: left var(--duration-fast) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .effort-slider-fill,
+  .effort-slider-thumb {
+    transition: none;
+  }
+}
+
+body[data-theme='light'] .effort-slider {
+  --effort-thumb-bg: var(--surface-1);
+}

@@ -70,6 +70,49 @@ describe('CommandRunner', () => {
     expect(result.error).toBe('Command cancelled')
   })
 
+  it('keeps a terminal command running while a program it started outlives its shell', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sidekick-command-'))
+    tempDirs.push(dir)
+    const command =
+      process.platform === 'win32'
+        ? "Start-Process -NoNewWindow powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep 3'"
+        : // Time for nohup to ignore the hangup the terminal sends when the shell exits.
+          'nohup sleep 3 >/dev/null 2>&1 & sleep 1'
+    const startedAt = Date.now()
+    const result = await new CommandRunner().run({
+      id: 'outlived',
+      command,
+      cwd: dir,
+      timeoutMs: 20_000,
+      outputPath: join(dir, 'outlived.log'),
+      terminal: true,
+      followLeftovers: () => true
+    })
+    expect(result).toMatchObject({ success: true, outlived: true })
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(2_500)
+  }, 30_000)
+
+  it.runIf(process.platform === 'win32')(
+    'prints PowerShell objects, runs curl.exe for curl, and draws no progress bars',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'sidekick-command-'))
+      tempDirs.push(dir)
+      const result = await new CommandRunner().run({
+        id: 'objects',
+        command:
+          '[pscustomobject]@{ answer = 4217 }; (Get-Command curl).CommandType; "progress=$ProgressPreference"; cmd.exe /d /c \'exit 5\'',
+        cwd: dir,
+        timeoutMs: 20_000,
+        outputPath: join(dir, 'objects.log')
+      })
+      expect(result.stdout).toMatch(/answer[\s\S]*4217/)
+      expect(result.stdout).toContain('Application')
+      expect(result.stdout).toContain('progress=SilentlyContinue')
+      expect(result.exitCode).toBe(5)
+    },
+    30_000
+  )
+
   it.runIf(process.platform === 'win32')(
     'preserves the exit code from a failing native Windows command',
     async () => {
@@ -88,6 +131,30 @@ describe('CommandRunner', () => {
   )
 
   it.runIf(process.platform === 'win32')(
+    'reports native stderr and Write-Error as PowerShell does, without the wrapper',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'sidekick-command-'))
+      tempDirs.push(dir)
+      const run = (id: string, command: string): ReturnType<CommandRunner['run']> =>
+        new CommandRunner().run({
+          id,
+          command,
+          cwd: dir,
+          timeoutMs: 15_000,
+          outputPath: join(dir, `${id}.log`)
+        })
+      // Redirected stderr is an error record in Windows PowerShell, which made `$?` false.
+      const native = await run('native-stderr', `node -e "console.error('warn')" 2>&1`)
+      expect(native).toMatchObject({ success: true, exitCode: 0 })
+      const written = await run('write-error', "Write-Error 'boom'")
+      expect(written.exitCode).toBe(1)
+      expect(written.stderr).toMatch(/^Write-Error : boom\r?\nAt line:1 char:1\r?\n/)
+      expect(written.stderr).not.toContain('SideKick')
+    },
+    30_000
+  )
+
+  it.runIf(process.platform === 'win32')(
     'runs quotes, pipelines, and non-ASCII text intact without -EncodedCommand, then removes its script',
     async () => {
       const dir = mkdtempSync(join(tmpdir(), "sidekick command's "))
@@ -96,8 +163,9 @@ describe('CommandRunner', () => {
       const command = [
         `node -e "process.stdout.write('node:' + JSON.stringify({ quoted: 'yes' }))"`,
         `1..3 | Where-Object { $_ -gt 1 } | ForEach-Object { "item:$_" }`,
-        // Console output uses the OEM code page; a file shows the script text arrived intact.
+        // A file shows the script text arrived intact, the output that it is read intact.
         `[IO.File]::WriteAllText((Join-Path $PWD 'unicode.txt'), 'café ✓')`,
+        `'printed café ✓'`,
         `(Get-CimInstance Win32_Process -Filter "ProcessId=$PID").CommandLine`
       ].join('; ')
       for (const terminal of [false, true]) {
@@ -117,6 +185,7 @@ describe('CommandRunner', () => {
         expect(output).toContain('item:2\n')
         expect(output).toContain('item:3')
         expect(readFileSync(join(dir, 'unicode.txt'), 'utf8')).toBe('café ✓')
+        expect(output).toContain('printed café ✓')
         expect(output).not.toMatch(/EncodedCommand|ExecutionPolicy/i)
         expect(existsSync(`${outputPath}.ps1`)).toBe(false)
       }

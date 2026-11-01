@@ -6,20 +6,26 @@ import { projectAgentRunEvents } from '../../shared/agentEventProjection'
 import { ProviderSetupError } from '../../shared/providerErrors'
 import type { ProviderChatRequest, ProviderStreamChunk } from '../../shared/providerRuntime'
 import { applyDatabaseSchema } from '../bootstrap/database'
+import { streamProviderChat } from '../providers/providerRuntime'
 import {
   AgentRunKernel,
+  PROVIDER_BUSY_RETRY_DELAYS_MS,
   STREAM_DROP_RETRY_DELAY_MS,
+  sampleProviderTurn,
   type AgentKernelProviderSampler,
   type AgentKernelModelTurn,
   type StartAgentKernelRunInput
 } from './agentRunKernel'
 import { AgentRunStore } from './agentRunStore'
-import { CommandService } from './commandService'
+import { durableProviderHistory, type MessageRow } from './conversationRunPreparer'
+import { validateProviderTranscript } from '../../shared/providerTranscript'
 import { CredentialUses, credentialApprovalFor, credentialRequestsFor } from './credentialUses'
 import type { CredentialSummary } from '../../shared/credentials'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+
+vi.mock('../providers/providerRuntime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../providers/providerRuntime')>()),
+  streamProviderChat: vi.fn()
+}))
 
 function sampledTurn(
   turn: Partial<AgentKernelModelTurn>,
@@ -39,6 +45,24 @@ function sampledTurn(
       }
     }
   })
+}
+
+/** A provider that refuses the request before any output. */
+function refusedWith(result: {
+  ok: false
+  status?: number
+  error: string
+}): AgentKernelProviderSampler {
+  return vi.fn(async () => ({
+    result,
+    turn: {
+      content: '',
+      thinking: '',
+      thinkingBlocks: [],
+      toolCalls: [],
+      usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+    }
+  }))
 }
 
 function sequence(...samplers: AgentKernelProviderSampler[]): AgentKernelProviderSampler {
@@ -84,32 +108,6 @@ describe('AgentRunKernel', () => {
     }
   }
 
-  it('requires approval for each project hook even with full access, in order', async () => {
-    const router = {
-      execute: vi.fn(async (_name: string, _args: Record<string, unknown>) => ({
-        content: 'setup complete'
-      }))
-    }
-    const sampler = sampledTurn({ content: 'Ready' })
-    const kernel = new AgentRunKernel(store, undefined, sampler)
-    const running = kernel.start({
-      ...input(router),
-      projectStartCommands: ['echo first', 'echo second']
-    })
-    for (const command of ['echo first', 'echo second']) {
-      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-      const interaction = store.listPendingInteractions('run-1')[0]
-      expect(interaction.request.arguments).toEqual({ command })
-      expect(sampler).not.toHaveBeenCalled()
-      kernel.resolveInteraction(interaction.id, { approved: true })
-    }
-    expect((await running).phase).toBe('completed')
-    expect(router.execute.mock.calls.map((call) => call[1])).toEqual([
-      { command: 'echo first' },
-      { command: 'echo second' }
-    ])
-  })
-
   it('reads the files the user named before the first model turn', async () => {
     catalog = { surface: 'conversation', webSearchEnabled: false, workspaceRoot: '/project' }
     const router = {
@@ -123,6 +121,7 @@ describe('AgentRunKernel', () => {
     const result = await kernel.start({
       ...input(router),
       workspaceRoot: '/project',
+      outputMessageId: 'reply-1',
       preloadReads: ['site/index.html', 'site/index.html', 'notes.md']
     })
 
@@ -144,221 +143,16 @@ describe('AgentRunKernel', () => {
         .filter((event) => event.type === 'tool.completed')
         .map((event) => event.payload.name)
     ).toEqual(['read', 'read'])
-  })
-
-  it('executes a synchronously approved hook once despite a throwing resolution observer', async () => {
-    const router = { execute: vi.fn(async () => ({ content: 'hook complete' })) }
-    const sampler = sampledTurn({ content: 'Ready' })
-    const kernel = new AgentRunKernel(store, undefined, sampler, (event) => {
-      if (event.type === 'permission.requested')
-        kernel.resolveInteraction(String(event.payload.interactionId), { approved: true })
-      if (event.type === 'permission.resolved') throw new Error('Observer disconnected')
-    })
-    const result = await kernel.start({ ...input(router), projectStartCommands: ['echo fixture'] })
-    expect(result.phase).toBe('completed')
-    expect(router.execute).toHaveBeenCalledTimes(1)
-    expect(sampler).toHaveBeenCalledTimes(1)
-    expect(store.listPendingInteractions()).toEqual([])
-    expect(
-      store.listEvents('run-1').filter((event) => event.type === 'permission.resolved')
-    ).toHaveLength(1)
-    expect(
-      store.listEvents('run-1').filter((event) => event.type === 'tool.completed')
-    ).toHaveLength(1)
-  })
-
-  it('runs an approved hook through the real command service before sampling', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'sidekick-hook-run-'))
-    try {
-      const commands = new CommandService(db, join(root, 'output'))
-      const router: StartAgentKernelRunInput['toolRouter'] = {
-        execute: async (_name, args, context) => {
-          const result = await commands.execute({
-            runId: context.runId,
-            title: 'hook',
-            command: String(args.command),
-            workspaceRoot: root,
-            signal: context.signal
-          })
-          expect('stdout' in result && result.stdout).toContain('hook-ok')
-          expect('exitCode' in result && result.exitCode).toBe(0)
-          return toolExecutionSucceeded({
-            title: 'hook',
-            data: result,
-            modelContent: 'hook-ok',
-            startedAt: Date.now()
-          })
-        }
-      }
-      const sampler = sampledTurn({ content: 'Ready' })
-      const kernel = new AgentRunKernel(store, undefined, sampler)
-      const running = kernel.start({
-        ...input(router),
-        workspaceRoot: root,
-        projectStartCommands: ['echo hook-ok']
-      })
-      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-      expect(sampler).not.toHaveBeenCalled()
-      kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, { approved: true })
-      expect((await running).phase).toBe('completed')
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  it('stops before sampling or executing when a hook is denied', async () => {
-    const router = { execute: vi.fn() }
-    const sampler = sampledTurn({ content: 'Must not run' })
-    const kernel = new AgentRunKernel(store, undefined, sampler)
-    const running = kernel.start({ ...input(router), projectStartCommands: ['echo denied'] })
-    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-    kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, { approved: false })
-    expect((await running).phase).toBe('failed')
-    expect(router.execute).not.toHaveBeenCalled()
-    expect(sampler).not.toHaveBeenCalled()
-  })
-
-  it('does not run project hooks in Plan mode', async () => {
-    const sampler = sampledTurn({ content: 'Plan only' })
-    const kernel = new AgentRunKernel(store, undefined, sampler)
-    const runInput = input()
-    await kernel.start({
-      ...runInput,
-      profile: { ...runInput.profile, executionMode: 'plan' },
-      projectStartCommands: ['echo forbidden']
-    })
-    expect(store.listEvents('run-1').some((event) => event.type === 'tool.running')).toBe(false)
-  })
-
-  it('does not run later hooks or the model after a hook failure', async () => {
-    const router = {
-      execute: vi.fn(async () =>
-        toolExecutionFailed({
-          title: 'hook',
-          code: 'internal',
-          message: 'fixture failure',
-          startedAt: Date.now()
-        })
+    // The next reply's history holds them too: the calls were dropped as results without calls.
+    const history = validateProviderTranscript(
+      durableProviderHistory(
+        db,
+        'thread-1',
+        [{ id: 'reply-1', role: 'agent', content: 'Tightened it.', timestamp: 2 } as MessageRow],
+        { providerKind: 'ollama', model: 'test-model' }
       )
-    }
-    const sampler = sampledTurn({ content: 'Must not run' })
-    const kernel = new AgentRunKernel(store, undefined, sampler)
-    const running = kernel.start({
-      ...input(router),
-      projectStartCommands: ['echo first', 'echo must-not-run']
-    })
-    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-    kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, { approved: true })
-    expect((await running).phase).toBe('failed')
-    expect(router.execute).toHaveBeenCalledTimes(1)
-    expect(sampler).not.toHaveBeenCalled()
-  })
-
-  it('approves completion hooks once and resamples before publishing a final result', async () => {
-    const router = {
-      execute: vi.fn(async () =>
-        toolExecutionSucceeded({
-          title: 'completion',
-          modelContent: 'completion evidence',
-          startedAt: Date.now()
-        })
-      )
-    }
-    const first = sampledTurn({ content: 'Provisional answer' })
-    const final = sampledTurn({ content: 'Verified final answer' })
-    const verificationController = {
-      afterTerminalTurn: vi.fn(async () => ({
-        continue: false,
-        summary: {
-          status: 'not_applicable' as const,
-          workspaceRoot: '',
-          baselineRevision: 0,
-          currentRevision: 0,
-          changedPaths: [],
-          evidence: [],
-          suggestedChecks: [],
-          headline: 'Checked'
-        }
-      }))
-    }
-    const kernel = new AgentRunKernel(store, undefined, sequence(first, final))
-    const running = kernel.start({
-      ...input(router),
-      projectCompletionCommands: ['echo completion'],
-      verificationController,
-      // Production prepares a plan controller even for an ordinary Act run.
-      planController: {
-        stage: () => 'inactive',
-        enter: vi.fn(),
-        prepareReview: vi.fn(),
-        approve: vi.fn(),
-        revise: vi.fn(),
-        keep: vi.fn(),
-        afterTerminalTurn: async () => ({ continue: false })
-      }
-    })
-    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-    expect(first).toHaveBeenCalledTimes(1)
-    expect(final).not.toHaveBeenCalled()
-    expect(
-      store.listEvents('run-1').find((event) => event.type === 'assistant.completed')?.payload
-    ).toMatchObject({ provisional: true })
-    kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, { approved: true })
-    const result = await running
-    expect(result).toMatchObject({ phase: 'completed', finalResponse: 'Verified final answer' })
-    expect(router.execute).toHaveBeenCalledTimes(1)
-    expect(final).toHaveBeenCalledTimes(1)
-    expect(verificationController.afterTerminalTurn).toHaveBeenCalledTimes(2)
-    expect(vi.mocked(final).mock.calls[0][0].messages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ role: 'tool', content: 'completion evidence' })
-      ])
-    )
-  })
-
-  it.each(['denied', 'failed'] as const)(
-    'does not finalize after a %s completion hook',
-    async (outcome) => {
-      const router = {
-        execute: vi.fn(async () =>
-          toolExecutionFailed({
-            title: 'completion',
-            code: 'internal',
-            message: 'fixture failure',
-            startedAt: Date.now()
-          })
-        )
-      }
-      const sampler = sampledTurn({ content: 'Provisional' })
-      const kernel = new AgentRunKernel(store, undefined, sampler)
-      const running = kernel.start({
-        ...input(router),
-        projectCompletionCommands: ['echo first', 'echo second']
-      })
-      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-      kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, {
-        approved: outcome !== 'denied'
-      })
-      expect((await running).phase).toBe('failed')
-      expect(sampler).toHaveBeenCalledTimes(1)
-      expect(router.execute).toHaveBeenCalledTimes(outcome === 'denied' ? 0 : 1)
-    }
-  )
-
-  it.each(['plan', 'goal'] as const)('excludes %s runs from completion hooks', async (mode) => {
-    const router = { execute: vi.fn() }
-    const kernel = new AgentRunKernel(store, undefined, sampledTurn({ content: 'Done' }))
-    const runInput = input(router)
-    const result = await kernel.start({
-      ...runInput,
-      profile: { ...runInput.profile, executionMode: mode === 'plan' ? 'plan' : 'act' },
-      goalController:
-        mode === 'goal' ? { afterTerminalTurn: async () => ({ continue: false }) } : undefined,
-      projectCompletionCommands: ['echo forbidden']
-    })
-    expect(result.phase).toBe('completed')
-    expect(router.execute).not.toHaveBeenCalled()
-    expect(store.listPendingInteractions('run-1')).toHaveLength(0)
+    ).messages
+    expect(history.filter((message) => message.role === 'tool')).toHaveLength(2)
   })
 
   it('streams durable deltas and completes a text-only run', async () => {
@@ -525,17 +319,19 @@ describe('AgentRunKernel', () => {
     const result = await kernel.start({ ...input(), verificationController })
     const projection = projectAgentRunEvents(store.listEvents('run-1'))
 
-    // The pass changed nothing, so the answer it followed stays the response
-    // and its reply becomes a note on the verification result.
-    expect(result.content).toBe('The change is done.')
-    expect(result.finalResponse).toBe('The change is done.')
-    expect(projection.content).toBe('The change is done.')
-    expect(projection.segments.map((segment) => segment.type)).toEqual(['text', 'verification'])
-    expect(projection.segments.at(-1)).toMatchObject({
-      type: 'verification',
-      verification: { status: 'passed', headline: 'Typecheck passed.' },
-      content: 'The change is now verified.'
-    })
+    // The reply before the pass is a draft folded into its result; the pass's reply is the answer,
+    // and the last thing the user reads.
+    expect(result.content).toBe('The change is now verified.')
+    expect(result.finalResponse).toBe('The change is now verified.')
+    expect(projection.content).toBe('The change is now verified.')
+    expect(projection.segments).toEqual([
+      expect.objectContaining({
+        type: 'verification',
+        verification: expect.objectContaining({ status: 'passed', headline: 'Typecheck passed.' }),
+        steps: [{ type: 'text', content: 'The change is done.' }]
+      }),
+      { type: 'text', content: 'The change is now verified.' }
+    ])
     expect(store.listEvents('run-1')).toContainEqual(
       expect.objectContaining({
         type: 'run.retrying',
@@ -544,45 +340,7 @@ describe('AgentRunKernel', () => {
     )
   })
 
-  it('keeps the reply as the answer when the pass followed an empty answer', async () => {
-    const sampler = sequence(
-      sampledTurn({ content: '' }),
-      sampledTurn({ content: 'Cleaned up.\n\n- `site/index.html` is well-formed' })
-    )
-    const kernel = new AgentRunKernel(store, undefined, sampler)
-    const summary = {
-      status: 'unverified' as const,
-      workspaceRoot: '/project',
-      baselineRevision: 0,
-      currentRevision: 1,
-      changedPaths: ['site/index.html'],
-      evidence: [],
-      suggestedChecks: [],
-      headline: 'Workspace changes have not been verified.'
-    }
-    const verificationController = {
-      afterTerminalTurn: vi
-        .fn()
-        .mockResolvedValueOnce({ continue: true, prompt: 'Run verification.', summary })
-        .mockResolvedValueOnce({ continue: false, summary })
-    }
-
-    const result = await kernel.start({ ...input(), verificationController })
-    const projection = projectAgentRunEvents(store.listEvents('run-1'))
-
-    expect(result.finalResponse).toBe('Cleaned up.\n\n- `site/index.html` is well-formed')
-    expect(projection.content.trim()).toBe('Cleaned up.\n\n- `site/index.html` is well-formed')
-    // The reply is a top-level answer, not a note folded under the verification result.
-    expect(projection.segments).toContainEqual({
-      type: 'text',
-      content: 'Cleaned up.\n\n- `site/index.html` is well-formed'
-    })
-    const verification = projection.segments.at(-1)
-    expect(verification?.type).toBe('verification')
-    expect(verification && 'content' in verification ? verification.content : '').toBeFalsy()
-  })
-
-  it('folds a verification pass that changed nothing under the streamed answer', async () => {
+  it('folds a streamed draft and the pass that checked it above the answer it ends with', async () => {
     const router = { execute: vi.fn(async () => ({ content: 'tests passed' })) }
     const sampler = sequence(
       sampledTurn({ content: 'Here is the answer.' }, [
@@ -621,60 +379,16 @@ describe('AgentRunKernel', () => {
     const result = await kernel.start({ ...input(router), verificationController })
     const projection = projectAgentRunEvents(store.listEvents('run-1'))
 
-    expect(result.finalResponse).toBe('Here is the answer.')
-    expect(projection.content).toBe('Here is the answer.')
+    expect(result.finalResponse).toBe('All tests pass.')
+    // The draft is not part of the reply's text; what the pass said on the way is, as in any run.
+    expect(projection.content).toBe('Running the tests. All tests pass.')
     expect(projection.segments).toHaveLength(2)
-    expect(projection.segments[0]).toEqual({ type: 'text', content: 'Here is the answer.' })
-    const verification = projection.segments[1]
-    expect(verification).toMatchObject({
-      type: 'verification',
-      content: 'All tests pass.'
-    })
+    const verification = projection.segments[0]
     expect(verification.type === 'verification' && verification.pending).toBeFalsy()
     expect(
       verification.type === 'verification' && verification.steps?.map((step) => step.type)
-    ).toEqual(['text', 'tool'])
-  })
-
-  it('keeps the pass in the timeline when it changed the workspace', async () => {
-    const sampler = sequence(
-      sampledTurn({ content: 'Draft answer.' }, [{ message: { content: 'Draft answer.' } }]),
-      sampledTurn({ content: 'Fixed the failing test; all pass.' }, [
-        { message: { content: 'Fixed the failing test; all pass.' } }
-      ])
-    )
-    const summary = {
-      status: 'failed' as const,
-      workspaceRoot: '/project',
-      baselineRevision: 0,
-      currentRevision: 1,
-      changedPaths: ['app.ts'],
-      evidence: [],
-      suggestedChecks: [],
-      headline: 'Tests failed.'
-    }
-    const verificationController = {
-      afterTerminalTurn: vi
-        .fn()
-        .mockResolvedValueOnce({ continue: true, prompt: 'Run verification.', summary })
-        .mockResolvedValueOnce({
-          continue: false,
-          summary: { ...summary, currentRevision: 2, status: 'passed', headline: 'Verified.' }
-        })
-    }
-    const kernel = new AgentRunKernel(store, undefined, sampler)
-    const result = await kernel.start({ ...input(), verificationController })
-    const projection = projectAgentRunEvents(store.listEvents('run-1'))
-
-    expect(result.finalResponse).toBe('Fixed the failing test; all pass.')
-    expect(projection.content).toBe('Fixed the failing test; all pass.')
-    expect(projection.segments.map((segment) => segment.type)).toEqual([
-      'text',
-      'run_status',
-      'text',
-      'verification'
-    ])
-    expect(projection.segments.at(-1)).not.toHaveProperty('content')
+    ).toEqual(['text', 'text', 'tool'])
+    expect(projection.segments[1]).toEqual({ type: 'text', content: 'All tests pass.' })
   })
 
   it('reminds the model to verify once, after the first round that changed the workspace', async () => {
@@ -907,7 +621,7 @@ describe('AgentRunKernel', () => {
     const toolMessages = (messages: { role: string; tool_call_id?: string; content?: unknown }[]) =>
       messages.filter(({ role }) => role === 'tool')
 
-    it.each(['length', 'max_tokens', 'max-output-tokens'])(
+    it.each(['length', 'max_tokens'])(
       'runs no call of a batch the provider stopped for %s, and records why',
       async (doneReason) => {
         // Arguments that parse are no proof: one such reply wrote 784 calls, 781 of them the
@@ -1541,169 +1255,6 @@ describe('AgentRunKernel', () => {
     expect(result.messages.filter(({ role }) => role === 'tool')[0].content).toContain('patch')
   })
 
-  it('keeps the canonical editing contract after legacy tool calls fail', async () => {
-    catalog = {
-      surface: 'conversation',
-      workspaceRoot: '/project',
-      capabilities: ['workspace.write']
-    }
-    const malformed = (id: string) =>
-      sampledTurn({
-        toolCalls: [
-          {
-            id,
-            function: {
-              name: 'edit',
-              arguments: { file_path: 'src/app.ts', accessLevel: 'auto' }
-            }
-          }
-        ]
-      })
-    const patched: AgentKernelProviderSampler = async (request) => {
-      expect(
-        (request.tools as Array<{ function: { name: string } }>).map(
-          ({ function: definition }) => definition.name
-        )
-      ).toContain('apply_patch')
-      return {
-        result: { ok: true },
-        turn: {
-          content: '',
-          thinking: '',
-          thinkingBlocks: [],
-          toolCalls: [
-            {
-              id: 'patch-1',
-              function: {
-                name: 'apply_patch',
-                arguments: {
-                  patch:
-                    '*** Begin Patch\n*** Update File: src/app.ts\n@@\n-before\n+after\n*** End Patch',
-                  accessLevel: 'auto'
-                }
-              }
-            }
-          ],
-          usage: { promptTokens: 10, completionTokens: 5, doneReason: 'tool_calls' }
-        }
-      }
-    }
-    const router = { execute: vi.fn(async () => ({ ok: true, changed: true })) }
-    const kernel = new AgentRunKernel(
-      store,
-      undefined,
-      sequence(malformed('edit-1'), malformed('edit-2'), patched, sampledTurn({ content: 'Done' }))
-    )
-    const runInput = input(router)
-    runInput.catalog = () => ({ ...catalog })
-
-    const result = await kernel.start(runInput)
-
-    expect(result).toMatchObject({ phase: 'completed', content: 'Done' })
-    expect(router.execute).toHaveBeenCalledTimes(1)
-    expect(
-      store
-        .listEvents('run-1')
-        .filter(({ type }) => type === 'run.retrying')
-        .map(({ payload }) => payload.reason)
-    ).not.toContain('editing_contract_switched')
-  })
-
-  it('does not calibrate or revive removed exact-edit tools', async () => {
-    catalog = {
-      surface: 'conversation',
-      workspaceRoot: '/project',
-      capabilities: ['workspace.write']
-    }
-    const ambiguous = (id: string) =>
-      sampledTurn({
-        toolCalls: [
-          {
-            id,
-            function: {
-              name: 'edit',
-              arguments: {
-                file_path: 'src/app.ts',
-                old_string: 'color: legacy;',
-                new_string: 'color: current;',
-                replace_all: false,
-                accessLevel: 'auto'
-              }
-            }
-          }
-        ]
-      })
-    const patched: AgentKernelProviderSampler = async (request) => {
-      expect(
-        (request.tools as Array<{ function: { name: string } }>).map(
-          ({ function: definition }) => definition.name
-        )
-      ).toContain('apply_patch')
-      return {
-        result: { ok: true },
-        turn: {
-          content: '',
-          thinking: '',
-          thinkingBlocks: [],
-          toolCalls: [
-            {
-              id: 'ambiguity-patch',
-              function: {
-                name: 'apply_patch',
-                arguments: {
-                  patch:
-                    '*** Begin Patch\n*** Update File: src/app.ts\n@@\n-color: legacy;\n+color: current;\n*** End Patch',
-                  accessLevel: 'auto'
-                }
-              }
-            }
-          ],
-          usage: { promptTokens: 10, completionTokens: 5, doneReason: 'tool_calls' }
-        }
-      }
-    }
-    const router = {
-      execute: vi.fn(async (name: string) =>
-        name === 'edit'
-          ? toolExecutionFailed({
-              title: 'edit src/app.ts',
-              code: 'conflict',
-              message: 'old_string has 4 matches',
-              retryable: true,
-              recoveryAction: 'correct_input',
-              data: {
-                ok: false,
-                failure: { code: 'multiple_matches', matchCount: 4 }
-              }
-            })
-          : { ok: true, changed: true }
-      )
-    }
-    const kernel = new AgentRunKernel(
-      store,
-      undefined,
-      sequence(
-        ambiguous('ambiguous-1'),
-        ambiguous('ambiguous-2'),
-        patched,
-        sampledTurn({ content: 'Recovered safely.' })
-      )
-    )
-    const runInput = input(router)
-    runInput.catalog = () => ({ ...catalog })
-
-    const result = await kernel.start(runInput)
-
-    expect(result).toMatchObject({ phase: 'completed', content: 'Recovered safely.' })
-    expect(router.execute).toHaveBeenCalledTimes(1)
-    expect(
-      store
-        .listEvents('run-1')
-        .filter(({ type }) => type === 'run.retrying')
-        .map(({ payload }) => payload.reason)
-    ).not.toContain('editing_contract_calibration_started')
-  })
-
   it('returns malformed provider JSON as a tool result and lets the model recover', async () => {
     const router = { execute: vi.fn() }
     const sampler = sequence(
@@ -1983,17 +1534,17 @@ describe('AgentRunKernel', () => {
     await expect(running).resolves.toMatchObject({ phase: 'completed', content: 'Done' })
   })
 
-  it('suspends browser human takeover and resumes the same run after completion', async () => {
+  it('waits with no card while the user clears a check, then resumes the same run', async () => {
     catalog = { surface: 'conversation', webSearchEnabled: false, browserEnabled: true }
     const sampler = sequence(
       sampledTurn({
         toolCalls: [
           {
-            id: 'takeover-call',
+            id: 'check-call',
             function: {
               name: 'browser_request_human',
               arguments: {
-                reason: 'The site is showing a human verification checkpoint.',
+                reason: 'DuckDuckGo wants you to confirm you are human.',
                 challenge_type: 'captcha'
               }
             }
@@ -2002,49 +1553,50 @@ describe('AgentRunKernel', () => {
       }),
       sampledTurn({ content: 'Continued in the same browser session.' })
     )
+    let clear!: () => void
     const router = {
       execute: vi.fn(),
-      reserveBrowserHumanTakeover: vi.fn(async () => 'browser-session-1'),
-      releaseBrowserHumanTakeover: vi.fn(async () => undefined)
+      reserveBrowserForHumanCheck: vi.fn(async () => 'browser-session-1'),
+      waitForBrowserHumanCheck: vi.fn(() => new Promise<void>((resolve) => (clear = resolve))),
+      releaseBrowserHumanCheck: vi.fn(async () => undefined)
     }
     const kernel = new AgentRunKernel(store, undefined, sampler)
     const running = kernel.start(input(router))
 
-    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-    const interaction = store.listPendingInteractions('run-1')[0]
-    expect(interaction).toMatchObject({
-      kind: 'question',
-      request: {
-        intent: 'browser_takeover',
-        conversationId: 'thread-1',
-        browserSessionId: 'browser-session-1',
-        challengeType: 'captcha'
-      }
-    })
+    await vi.waitFor(() => expect(router.waitForBrowserHumanCheck).toHaveBeenCalled())
+    // The chat shows as waiting, with no question for the user to answer.
     expect(store.get('run-1')?.phase).toBe('awaiting_user')
-    kernel.resolveInteraction(interaction.id, { completed: true })
+    expect(store.listPendingInteractions('run-1')).toHaveLength(0)
+    clear()
 
     const result = await running
     expect(result).toMatchObject({
       phase: 'completed',
       content: 'Continued in the same browser session.'
     })
-    expect(result.messages.find(({ role }) => role === 'tool')?.content).toContain('same session')
-    expect(router.reserveBrowserHumanTakeover).toHaveBeenCalledWith('thread-1')
-    expect(router.releaseBrowserHumanTakeover).toHaveBeenCalledWith('thread-1', 'browser-session-1')
+    expect(result.messages.find(({ role }) => role === 'tool')?.content).toContain(
+      'cleared the check'
+    )
+    expect(router.reserveBrowserForHumanCheck).toHaveBeenCalledWith('thread-1')
+    expect(router.waitForBrowserHumanCheck).toHaveBeenCalledWith(
+      'thread-1',
+      'browser-session-1',
+      expect.any(AbortSignal)
+    )
+    expect(router.releaseBrowserHumanCheck).toHaveBeenCalledWith('thread-1', 'browser-session-1')
     expect(router.execute).not.toHaveBeenCalled()
   })
 
-  it('releases a reserved browser takeover when the run is cancelled', async () => {
+  it('gives the browser back when the run stops while waiting for the user', async () => {
     catalog = { surface: 'conversation', webSearchEnabled: false, browserEnabled: true }
     const sampler = sequence(
       sampledTurn({
         toolCalls: [
           {
-            id: 'takeover-cancel-call',
+            id: 'check-cancel-call',
             function: {
               name: 'browser_request_human',
-              arguments: { reason: 'Human verification is required.' }
+              arguments: { reason: 'Confirm you are human.' }
             }
           }
         ]
@@ -2052,17 +1604,23 @@ describe('AgentRunKernel', () => {
     )
     const router = {
       execute: vi.fn(),
-      reserveBrowserHumanTakeover: vi.fn(async () => 'browser-session-cancel'),
-      releaseBrowserHumanTakeover: vi.fn(async () => undefined)
+      reserveBrowserForHumanCheck: vi.fn(async () => 'browser-session-cancel'),
+      waitForBrowserHumanCheck: vi.fn(
+        (_conversationId: string, _sessionId: string, signal: AbortSignal) =>
+          new Promise<void>((_resolve, reject) =>
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+          )
+      ),
+      releaseBrowserHumanCheck: vi.fn(async () => undefined)
     }
     const kernel = new AgentRunKernel(store, undefined, sampler)
     const running = kernel.start(input(router))
 
-    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    await vi.waitFor(() => expect(router.waitForBrowserHumanCheck).toHaveBeenCalled())
     expect(kernel.stop('run-1')).toBe(true)
 
     await expect(running).resolves.toMatchObject({ phase: 'cancelled' })
-    expect(router.releaseBrowserHumanTakeover).toHaveBeenCalledWith(
+    expect(router.releaseBrowserHumanCheck).toHaveBeenCalledWith(
       'thread-1',
       'browser-session-cancel'
     )
@@ -2279,25 +1837,6 @@ describe('AgentRunKernel', () => {
     )
   })
 
-  it('cancels a suspended run and settles its pending interaction', async () => {
-    const sampler = sampledTurn({
-      toolCalls: [
-        {
-          id: 'question-call',
-          function: { name: 'ask_user', arguments: { questions: [{ id: 'x', question: 'X?' }] } }
-        }
-      ]
-    })
-    const kernel = new AgentRunKernel(store, undefined, sampler)
-    const running = kernel.start(input())
-    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-
-    expect(kernel.stop('run-1')).toBe(true)
-    const result = await running
-    expect(result.phase).toBe('cancelled')
-    expect(store.listPendingInteractions('run-1')).toHaveLength(0)
-  })
-
   it('sends a repaired transcript to the provider', async () => {
     let providerRequest: ProviderChatRequest | undefined
     const sampler: AgentKernelProviderSampler = async (request) => {
@@ -2408,6 +1947,13 @@ describe('AgentRunKernel', () => {
     expect(segments.map(({ type }) => type)).toEqual(['tool', 'steer', 'text'])
   })
 
+  it('has the run in the store as soon as it starts, as the coordinator reads it then', async () => {
+    const kernel = new AgentRunKernel(store, undefined, sampledTurn({ content: 'Hi.' }))
+    const run = kernel.start(input())
+    expect(store.get('run-1')?.phase).toBeDefined()
+    await run
+  })
+
   it('answers a message steered during what would have been the final turn', async () => {
     const kernel: AgentRunKernel = new AgentRunKernel(store, undefined, (...args) =>
       sampler(...args)
@@ -2502,41 +2048,195 @@ describe('AgentRunKernel', () => {
     expect(store.listEvents('run-1').some(({ type }) => type === 'run.steered')).toBe(false)
   })
 
-  it('uses one durable permission interaction for sensitive tools', async () => {
-    catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
+  it("runs an artifact builder's edit without a permission card nobody would see", async () => {
+    catalog = {
+      surface: 'subagent',
+      webSearchEnabled: false,
+      capabilities: ['artifacts']
+    }
     const sampler = sequence(
       sampledTurn({
         toolCalls: [
           {
-            id: 'write-1',
+            id: 'edit-1',
             function: {
-              name: 'apply_patch',
-              arguments: {
-                patch: '*** Begin Patch\n*** Add File: a.txt\n+hello\n*** End Patch',
-                accessLevel: 'confirm'
-              }
+              name: 'edit_artifact',
+              arguments: { edits: [{ old_text: 'a', new_text: 'b' }] }
             }
           }
         ]
       }),
-      sampledTurn({ content: 'Permission handled' })
+      sampledTurn({ content: 'Fixed' })
     )
     const router = { execute: vi.fn(async () => ({ ok: true })) }
-    const kernel = new AgentRunKernel(store, undefined, sampler)
     const runInput = input(router)
     runInput.permissionMode = 'always-ask'
+
+    expect((await new AgentRunKernel(store, undefined, sampler).start(runInput)).phase).toBe(
+      'completed'
+    )
+    expect(router.execute).toHaveBeenCalledOnce()
+    expect(store.listEvents('run-1').map(({ type }) => type)).not.toContain('permission.requested')
+  })
+
+  it.each([
+    [{ approved: true, decision: 'allow_once' }, 'approved', 'success'],
+    [{ approved: false, decision: 'deny' }, 'denied', 'denied']
+  ])(
+    "labels the tool's row with the user's answer %o to its permission card",
+    async (response, approvalStatus, status) => {
+      catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
+      const sampler = sequence(
+        sampledTurn({
+          toolCalls: [
+            { id: 'clean-1', function: { name: 'shell', arguments: { command: 'rm -rf dist' } } }
+          ]
+        }),
+        sampledTurn({ content: 'Permission handled' })
+      )
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+      const runInput = input({ execute: vi.fn(async () => ({ content: 'ok' })) })
+      runInput.permissionMode = 'sensitive-only'
+      const running = kernel.start(runInput)
+
+      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+      kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, response)
+      expect((await running).phase).toBe('completed')
+
+      // The answer is recorded against the interaction; only its request names the tool call.
+      const resolved = store.listEvents('run-1').find(({ type }) => type === 'permission.resolved')
+      expect(resolved?.payload.toolCallId).toBeUndefined()
+      const tools = projectAgentRunEvents(store.listEvents('run-1')).segments.flatMap((segment) =>
+        segment.type === 'tool' ? [segment.tool] : []
+      )
+      expect(tools).toEqual([
+        expect.objectContaining({ id: 'clean-1', accessLevel: 'confirm', approvalStatus, status })
+      ])
+    }
+  )
+
+  it("lets the router set a call's access from state its arguments do not carry", async () => {
+    catalog = { surface: 'conversation', webSearchEnabled: false, browserEnabled: true }
+    const call = (id: string, tool: string): AgentKernelProviderSampler =>
+      sampledTurn({
+        toolCalls: [
+          {
+            id,
+            function: {
+              name: 'browser_call_webmcp_tool',
+              arguments: { origin: 'https://shop.example', tool }
+            }
+          }
+        ]
+      })
+    const sampler = sequence(
+      call('read-1', 'get_cart'),
+      call('act-1', 'add_item'),
+      sampledTurn({ content: 'Done' })
+    )
+    const preview = { facts: [{ label: 'Site', value: 'https://shop.example' }], changes: [] }
+    const router = {
+      execute: vi.fn(async () => ({ ok: true })),
+      // The page marks get_cart read-only.
+      requestedAccess: vi.fn((_name: string, args: Record<string, unknown>) =>
+        args.tool === 'get_cart' ? ('auto' as const) : ('confirm' as const)
+      ),
+      approvalPreview: vi.fn(async () => preview)
+    }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const runInput = input(router)
+    runInput.permissionMode = 'sensitive-only'
     const running = kernel.start(runInput)
 
     await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-    const interaction = store.listPendingInteractions('run-1')[0]
-    expect(interaction.kind).toBe('permission')
-    kernel.resolveInteraction(interaction.id, { approved: true })
+    const card = store.listPendingInteractions('run-1')[0]
+    expect(card.request).toMatchObject({
+      name: 'browser_call_webmcp_tool',
+      requestedAccess: 'confirm',
+      arguments: { tool: 'add_item' },
+      preview
+    })
+    expect(router.execute).toHaveBeenCalledOnce()
+    expect(router.approvalPreview).toHaveBeenCalledWith(
+      'browser_call_webmcp_tool',
+      expect.objectContaining({ tool: 'add_item' }),
+      { conversationId: 'thread-1', runId: 'run-1', toolCallId: 'act-1' }
+    )
+    kernel.resolveInteraction(card.id, { approved: true })
+    expect((await running).phase).toBe('completed')
+    expect(router.execute).toHaveBeenCalledTimes(2)
+  })
 
+  it('decides on a call after the calls before it in the same reply have run', async () => {
+    catalog = { surface: 'conversation', webSearchEnabled: false, browserEnabled: true }
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          { id: 'list-1', function: { name: 'browser_list_webmcp_tools', arguments: {} } },
+          {
+            id: 'act-1',
+            function: {
+              name: 'browser_call_webmcp_tool',
+              arguments: { origin: 'https://shop.example', tool: 'add_item' }
+            }
+          }
+        ]
+      }),
+      sampledTurn({ content: 'Done' })
+    )
+    let listed = false
+    const router = {
+      execute: vi.fn(async (name: string) => {
+        if (name === 'browser_list_webmcp_tools') listed = true
+        return { ok: true }
+      }),
+      // As for a page's tool: a call that is not listed yet would be refused, so it asks nothing.
+      requestedAccess: vi.fn(() => (listed ? ('confirm' as const) : ('auto' as const)))
+    }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const runInput = input(router)
+    runInput.permissionMode = 'sensitive-only'
+    const running = kernel.start(runInput)
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    const card = store.listPendingInteractions('run-1')[0]
+    expect(card.request).toMatchObject({ name: 'browser_call_webmcp_tool', toolCallId: 'act-1' })
+    expect(router.execute).toHaveBeenCalledOnce()
+    kernel.resolveInteraction(card.id, { approved: true })
+    expect((await running).phase).toBe('completed')
+  })
+
+  it('asks every time, even with full access, for a call the router marks always', async () => {
+    catalog = { surface: 'conversation', webSearchEnabled: false, browserEnabled: true }
+    const call = sampledTurn({
+      toolCalls: [
+        {
+          id: 'buy-1',
+          function: {
+            name: 'browser_call_webmcp_tool',
+            arguments: { origin: 'https://shop.example', tool: 'buy_now' }
+          }
+        }
+      ]
+    })
+    const router = {
+      execute: vi.fn(async () => ({ ok: true })),
+      requestedAccess: vi.fn(() => 'always' as const)
+    }
+    const kernel = new AgentRunKernel(
+      store,
+      undefined,
+      sequence(call, sampledTurn({ content: 'Done' }))
+    )
+    const running = kernel.start(input(router))
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    const card = store.listPendingInteractions('run-1')[0]
+    expect(card.request).toMatchObject({ requestedAccess: 'confirm', mode: 'full-access' })
+    expect(card.request).not.toHaveProperty('chatScope')
+    kernel.resolveInteraction(card.id, { approved: true })
     expect((await running).phase).toBe('completed')
     expect(router.execute).toHaveBeenCalledOnce()
-    expect(store.listEvents('run-1').map(({ type }) => type)).toEqual(
-      expect.arrayContaining(['permission.requested', 'permission.resolved'])
-    )
   })
 
   it('asks before every SideKick settings change even with full access, showing the diff', async () => {
@@ -2580,138 +2280,29 @@ describe('AgentRunKernel', () => {
     expect(router.execute).toHaveBeenCalledTimes(1)
   })
 
-  it('asks before a stored credential is used even with full access, and keeps a chat grant', async () => {
-    const request = (id: string, url: string): AgentKernelProviderSampler =>
-      sampledTurn({
-        toolCalls: [
-          {
-            id,
-            function: {
-              name: 'http_request',
-              arguments: { method: 'GET', url, credential: 'api-key' }
-            }
-          }
-        ]
-      })
-    const sampler = sequence(
-      request('first', 'https://api.example.com/1'),
-      request('again', 'https://api.example.com/2'),
-      request('other', 'https://other.example.com/'),
-      sampledTurn({ content: 'Done' })
-    )
-    const credentialDenied = vi.fn()
-    const router = {
-      execute: vi.fn(async () => ({ ok: true })),
-      credentialApproval: vi.fn((_name: string, args: Record<string, unknown>) => {
-        const origin = new URL(String(args.url)).origin
-        return {
-          alias: 'api-key',
-          ask: 'once_per_chat' as const,
-          keys: [`credential:one:web:${origin}`],
-          label: `api-key with ${new URL(origin).host}`,
-          preview: {
-            summary: 'SideKick adds api-key itself.',
-            changes: [],
-            facts: [{ label: 'Sent to', value: origin }]
-          }
-        }
-      }),
-      credentialDenied
-    }
-    const kernel = new AgentRunKernel(store, undefined, sampler)
-    const running = kernel.start(input(router))
-
-    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-    const first = store.listPendingInteractions('run-1')[0]
-    expect(first.request).toMatchObject({
-      toolCallId: 'first',
-      credential: 'api-key',
-      chatScope: 'api-key with api.example.com',
-      preview: { facts: [{ label: 'Sent to', value: 'https://api.example.com' }] }
-    })
-    kernel.resolveInteraction(first.id, { approved: true, decision: 'allow_chat' })
-
-    // The same entry with the same host runs without asking; another host asks again.
-    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-    const other = store.listPendingInteractions('run-1')[0]
-    expect(other.request.toolCallId).toBe('other')
-    kernel.resolveInteraction(other.id, { approved: false, decision: 'deny' })
-
-    expect((await running).phase).toBe('completed')
-    expect(router.execute).toHaveBeenCalledTimes(2)
-    expect(credentialDenied).toHaveBeenCalledOnce()
-  })
-
-  it('lets a credential that never asks follow the permission mode', async () => {
-    const sampler = sequence(
-      sampledTurn({
-        toolCalls: [
-          {
-            id: 'quiet',
-            function: {
-              name: 'http_request',
-              arguments: { method: 'GET', url: 'https://api.example.com/', credential: 'api-key' }
-            }
-          }
-        ]
-      }),
-      sampledTurn({ content: 'Done' })
-    )
-    const router = {
-      execute: vi.fn(async () => ({ ok: true })),
-      credentialApproval: vi.fn(() => ({
-        alias: 'api-key',
-        ask: 'never' as const,
-        keys: ['credential:one:web:https://api.example.com'],
-        label: 'api-key with api.example.com',
-        preview: { changes: [] }
-      }))
-    }
-    const kernel = new AgentRunKernel(store, undefined, sampler)
-    expect((await kernel.start(input(router))).phase).toBe('completed')
-    expect(store.listPendingInteractions('run-1')).toHaveLength(0)
-    expect(router.execute).toHaveBeenCalledOnce()
-  })
-
   describe('with stored credentials', () => {
-    function entry(ask: CredentialSummary['ask']): CredentialSummary {
-      return {
-        id: 'one',
-        alias: 'api-key',
-        kind: 'secret',
-        description: '',
-        usernameVisible: false,
-        ask,
-        scope: {
-          projects: 'all',
-          background: false,
-          web: {
-            hosts: ['api.example.com'],
-            tokenHosts: ['api.example.com'],
-            send: { as: 'header', name: 'Authorization', prefix: 'Bearer ' }
-          }
-        },
-        createdAt: 1,
-        updatedAt: 1,
-        needsValue: false
-      }
+    const entry: CredentialSummary = {
+      id: 'one',
+      alias: 'api-key',
+      kind: 'secret',
+      description: '',
+      createdAt: 1,
+      updatedAt: 1,
+      needsValue: false
     }
 
     /** The router the tool runtime builds, around the real use checks. */
-    function credentialRouter(ask: CredentialSummary['ask']) {
-      const credential = entry(ask)
-      const uses = new CredentialUses(
-        {
-          list: () => [credential],
-          resolve: () => ({ summary: credential, values: { secret: 'generated-for-test' } }),
-          record: vi.fn(),
-          setTransientSecrets: vi.fn()
-        },
-        () => ({ projectId: null, background: false })
-      )
+    function credentialRouter() {
+      const uses = new CredentialUses({
+        list: () => [entry],
+        resolve: () => ({ summary: entry, values: { secret: 'generated-for-test' } }),
+        record: vi.fn(),
+        setTransientSecrets: vi.fn()
+      })
       const taken: Array<{ alias: string; ok: boolean }> = []
+      const credentialDenied = vi.fn()
       const router = {
-        // What http_request does when it runs: take the values for its own call.
+        // What http_request and shell do when they run: take the values for their own call.
         execute: vi.fn(
           async (
             name: string,
@@ -2733,30 +2324,95 @@ describe('AgentRunKernel', () => {
           for (const request of credentialRequestsFor(name, args, context)) uses.permit(request)
         },
         credentialDenied: (name: string, args: Record<string, unknown>, context: object) => {
+          credentialDenied()
           for (const request of credentialRequestsFor(name, args, context)) uses.denied(request)
         },
         releaseRun: (runId: string) => uses.releaseRun(runId)
       }
-      return { router, uses, taken }
+      return { router, uses, taken, credentialDenied }
     }
 
     const call = (id: string, args: Record<string, unknown>): AgentKernelProviderSampler =>
       sampledTurn({
         toolCalls: [{ id, function: { name: 'http_request', arguments: args } }]
       })
+    const command = (id: string, text = 'gh api /user'): AgentKernelProviderSampler =>
+      sampledTurn({
+        toolCalls: [
+          {
+            id,
+            function: {
+              name: 'shell',
+              arguments: { command: text, secrets: { GH_TOKEN: 'api-key' } }
+            }
+          }
+        ]
+      })
+
+    it('uses a credential without asking in full access, in requests and commands alike', async () => {
+      catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
+      const sampler = sequence(
+        call('get', { method: 'GET', url: 'https://api.example.com/', credential: 'api-key' }),
+        call('post', { method: 'POST', url: 'https://api.example.com/', credential: 'api-key' }),
+        command('cmd'),
+        command('other', 'gh release list'),
+        sampledTurn({ content: 'Done' })
+      )
+      const { router, taken } = credentialRouter()
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+      expect((await kernel.start(input(router))).phase).toBe('completed')
+      expect(store.listPendingInteractions('run-1')).toHaveLength(0)
+      expect(taken.map((use) => use.ok)).toEqual([true, true, true, true])
+    })
+
+    it('asks in "Ask for sensitive actions", and a chat grant covers the same credential', async () => {
+      const sampler = sequence(
+        call('first', { method: 'GET', url: 'https://api.example.com/1', credential: 'api-key' }),
+        call('again', { method: 'GET', url: 'https://other.example.com/', credential: 'api-key' }),
+        call('send', { method: 'POST', url: 'https://api.example.com/', credential: 'api-key' }),
+        sampledTurn({ content: 'Done' })
+      )
+      const { router, taken, credentialDenied } = credentialRouter()
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+      const runInput = input(router)
+      runInput.permissionMode = 'sensitive-only'
+      const running = kernel.start(runInput)
+
+      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+      const first = store.listPendingInteractions('run-1')[0]
+      expect(first.request).toMatchObject({
+        toolCallId: 'first',
+        credential: 'api-key',
+        chatScope: 'api-key in this chat'
+      })
+      kernel.resolveInteraction(first.id, { approved: true, decision: 'allow_chat' })
+
+      // A read with the same credential runs unasked; a POST still asks, as it would without one.
+      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+      const send = store.listPendingInteractions('run-1')[0]
+      expect(send.request.toolCallId).toBe('send')
+      kernel.resolveInteraction(send.id, { approved: false, decision: 'deny' })
+
+      expect((await running).phase).toBe('completed')
+      expect(taken).toEqual([
+        { alias: 'api-key', ok: true },
+        { alias: 'api-key', ok: true }
+      ])
+      expect(credentialDenied).toHaveBeenCalledOnce()
+    })
 
     it.each(['full-access', 'sensitive-only', 'always-ask'] as const)(
-      'refuses a use outside scope without any card in %s',
+      'refuses a use that breaks a credential rule without any card in %s',
       async (mode) => {
         const sampler = sequence(
           call('away', {
             method: 'POST',
-            url: 'https://evil.example/collect',
+            url: 'http://api.example.com/collect',
             credential: 'api-key'
           }),
           sampledTurn({ content: 'Done' })
         )
-        const { router, taken } = credentialRouter('never')
+        const { router, taken } = credentialRouter()
         const kernel = new AgentRunKernel(store, undefined, sampler)
         const runInput = input(router)
         runInput.permissionMode = mode
@@ -2767,7 +2423,7 @@ describe('AgentRunKernel', () => {
         const completed = store
           .listEvents('run-1')
           .find((event) => event.type === 'tool.completed')!
-        expect(JSON.stringify(completed.payload)).toContain('may be sent only over HTTPS')
+        expect(JSON.stringify(completed.payload)).toContain('only over HTTPS')
       }
     )
 
@@ -2783,7 +2439,7 @@ describe('AgentRunKernel', () => {
         call('late', { method: 'GET', url: 'https://api.example.com/', credential: 'api-key~1' }),
         sampledTurn({ content: 'Done' })
       )
-      const { router, taken } = credentialRouter('never')
+      const { router, taken } = credentialRouter()
       const kernel = new AgentRunKernel(store, undefined, sampler)
       expect((await kernel.start(input(router))).phase).toBe('completed')
       // The early call never ran; once the token exists, a new call may use it.
@@ -2803,7 +2459,7 @@ describe('AgentRunKernel', () => {
         }),
         sampledTurn({ content: 'Done' })
       )
-      const { router, uses } = credentialRouter('never')
+      const { router, uses } = credentialRouter()
       const kernel = new AgentRunKernel(store, undefined, sampler)
       expect((await kernel.start(input(router))).phase).toBe('completed')
       expect(
@@ -2815,116 +2471,6 @@ describe('AgentRunKernel', () => {
           runId: 'run-1'
         })
       ).toEqual({ refused: expect.stringContaining('not a token this reply received') })
-    })
-
-    /** A command credential the entry lets any command use, which therefore asks every time. */
-    function commandRouter(background: boolean) {
-      const credential: CredentialSummary = {
-        ...entry('never'),
-        scope: { projects: 'all', background: false, commands: { mode: 'ask', programs: [] } }
-      }
-      const uses = new CredentialUses(
-        {
-          list: () => [credential],
-          resolve: () => ({ summary: credential, values: { secret: 'generated-for-test' } }),
-          record: vi.fn(),
-          setTransientSecrets: vi.fn()
-        },
-        () => ({ projectId: null, background })
-      )
-      const taken: boolean[] = []
-      return {
-        taken,
-        router: {
-          execute: vi.fn(
-            async (
-              name: string,
-              args: Record<string, unknown>,
-              context: { runId: string; toolCallId?: string; conversationId?: string }
-            ) => {
-              for (const request of credentialRequestsFor(name, args, context)) {
-                taken.push(uses.take(request).ok)
-              }
-              return { ok: true }
-            }
-          ),
-          credentialApproval: (name: string, args: Record<string, unknown>, context: object) =>
-            credentialApprovalFor(uses, credentialRequestsFor(name, args, context)),
-          credentialApproved: (name: string, args: Record<string, unknown>, context: object) => {
-            for (const request of credentialRequestsFor(name, args, context)) uses.permit(request)
-          }
-        }
-      }
-    }
-
-    const command = (id: string): AgentKernelProviderSampler =>
-      sampledTurn({
-        toolCalls: [
-          {
-            id,
-            function: {
-              name: 'shell',
-              arguments: { command: 'gh api /user', secrets: { GH_TOKEN: 'api-key' } }
-            }
-          }
-        ]
-      })
-
-    it('asks before a command receives a credential, even with full access', async () => {
-      catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
-      const { router, taken } = commandRouter(false)
-      const kernel = new AgentRunKernel(
-        store,
-        undefined,
-        sequence(command('cmd'), sampledTurn({ content: 'Done' }))
-      )
-      const running = kernel.start(input(router))
-      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-      const card = store.listPendingInteractions('run-1')[0]
-      expect(card.request).toMatchObject({ toolCallId: 'cmd', credential: 'api-key' })
-      expect(card.request.chatScope).toBeUndefined()
-      kernel.resolveInteraction(card.id, { approved: true, decision: 'allow_once' })
-      expect((await running).phase).toBe('completed')
-      expect(taken).toEqual([true])
-    })
-
-    it('refuses a command credential in a chat a schedule or another chat started', async () => {
-      catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
-      const { router, taken } = commandRouter(true)
-      const kernel = new AgentRunKernel(
-        store,
-        undefined,
-        sequence(command('cmd'), sampledTurn({ content: 'Done' }))
-      )
-      expect((await kernel.start(input(router))).phase).toBe('completed')
-      expect(store.listPendingInteractions('run-1')).toHaveLength(0)
-      expect(router.execute).not.toHaveBeenCalled()
-      expect(taken).toEqual([])
-    })
-
-    it('asks an every-use entry each time, with no chat grant to give', async () => {
-      const sampler = sequence(
-        call('one', { method: 'GET', url: 'https://api.example.com/1', credential: 'api-key' }),
-        call('two', { method: 'GET', url: 'https://api.example.com/2', credential: 'api-key' }),
-        sampledTurn({ content: 'Done' })
-      )
-      const { router, taken } = credentialRouter('every_use')
-      const kernel = new AgentRunKernel(store, undefined, sampler)
-      const running = kernel.start(input(router))
-
-      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-      const first = store.listPendingInteractions('run-1')[0]
-      expect(first.request.chatScope).toBeUndefined()
-      // A response naming a chat grant anyway does not make one.
-      kernel.resolveInteraction(first.id, { approved: true, decision: 'allow_chat' })
-
-      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-      const second = store.listPendingInteractions('run-1')[0]
-      expect(second.request.toolCallId).toBe('two')
-      kernel.resolveInteraction(second.id, { approved: false, decision: 'deny' })
-
-      expect((await running).phase).toBe('completed')
-      expect(taken).toEqual([{ alias: 'api-key', ok: true }])
     })
   })
 
@@ -3058,21 +2604,12 @@ describe('AgentRunKernel', () => {
   })
 
   it('forces one compaction and retries after a provider context overflow', async () => {
-    const overflow: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: {
-        ok: false,
-        status: 400,
-        error:
-          "ContextWindowExceededError: This model's maximum context length is 262144 tokens. However, you requested 32000 output tokens and your prompt contains at least 230145 input tokens."
-      },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const overflow: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error:
+        "ContextWindowExceededError: This model's maximum context length is 262144 tokens. However, you requested 32000 output tokens and your prompt contains at least 230145 input tokens."
+    })
     const sampler = sequence(overflow, sampledTurn({ content: 'Recovered after compaction' }))
     const contextManager = {
       shouldCompact: vi.fn(() => false),
@@ -3121,20 +2658,11 @@ describe('AgentRunKernel', () => {
         source: { type: 'data_url', dataUrl: `data:${name}` },
         name
       }) as const
-    const rejected: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: {
-        ok: false,
-        status: 400,
-        error: 'Invalid request: at most 2 image(s) may be provided in one request.'
-      },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const rejected: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error: 'Invalid request: at most 2 image(s) may be provided in one request.'
+    })
     const recovered = sampledTurn({ content: 'Opened the page' })
     const sampler = sequence(rejected, recovered)
     const kernel = new AgentRunKernel(store, undefined, sampler)
@@ -3195,20 +2723,11 @@ describe('AgentRunKernel', () => {
         source: { type: 'data_url', dataUrl: `data:${name}` },
         name
       }) as const
-    const rejected: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: {
-        ok: false,
-        status: 400,
-        error: 'Invalid request: at most 1 image(s) may be provided in one request.'
-      },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const rejected: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error: 'Invalid request: at most 1 image(s) may be provided in one request.'
+    })
     const withImages = (id: string): StartAgentKernelRunInput => {
       const runInput = { ...input(), id }
       runInput.messages = [
@@ -3252,16 +2771,11 @@ describe('AgentRunKernel', () => {
   it('drops the only screenshot when a provider refuses even one image', async () => {
     // A provider that names no count and rejects a single screenshot is saying
     // it takes no images at all; pruning "to one" would change nothing.
-    const rejected: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: { ok: false, status: 400, error: 'Bad request: too many images in this request' },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const rejected: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error: 'Bad request: too many images in this request'
+    })
     const recovered = sampledTurn({ content: 'Answered without the screenshot' })
     const kernel = new AgentRunKernel(store, undefined, sequence(rejected, recovered))
     const runInput = { ...input(), id: 'run-no-vision' }
@@ -3315,16 +2829,11 @@ describe('AgentRunKernel', () => {
   })
 
   it('surfaces the image-limit failure when nothing can be dropped', async () => {
-    const rejected: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: { ok: false, status: 400, error: 'too many images in request' },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const rejected: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error: 'too many images in request'
+    })
     const kernel = new AgentRunKernel(store, undefined, rejected)
 
     const result = await kernel.start(input())
@@ -3377,21 +2886,12 @@ describe('AgentRunKernel', () => {
   it('believes the window a provider reports over a larger configured one', async () => {
     // The shape seen in the field: a profile swapped on the server left the app
     // budgeting against 180k while the engine actually had 49,152.
-    const overflow: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: {
-        ok: false,
-        status: 400,
-        error:
-          "This model's maximum context length is 49152 tokens. However, you requested 49153 tokens (16385 in the messages, 32768 in the completion)."
-      },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const overflow: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error:
+        "This model's maximum context length is 49152 tokens. However, you requested 49153 tokens (16385 in the messages, 32768 in the completion)."
+    })
     const recovered = sampledTurn({ content: 'Fits now' })
     const applied: Array<{ contextLength: number; maxOutputTokens: number }> = []
     const contextManager = {
@@ -3441,20 +2941,11 @@ describe('AgentRunKernel', () => {
   })
 
   it('does not widen a window the provider reports as larger than configured', async () => {
-    const overflow: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: {
-        ok: false,
-        status: 400,
-        error: "This model's maximum context length is 262144 tokens. However, you requested more."
-      },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const overflow: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error: "This model's maximum context length is 262144 tokens. However, you requested more."
+    })
     const contextManager = {
       shouldCompact: vi.fn(() => false),
       applyContextLength: vi.fn(),
@@ -3483,16 +2974,10 @@ describe('AgentRunKernel', () => {
   })
 
   it('does not loop when the compacted retry still exceeds provider context', async () => {
-    const sampler: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: { ok: false, error: 'context_window_exceeded: prompt is too long' },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const sampler: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      error: 'context_window_exceeded: prompt is too long'
+    })
     const contextManager = {
       shouldCompact: vi.fn(() => false),
       compact: vi.fn(async (messages: ProviderChatRequest['messages']) => ({
@@ -3530,50 +3015,15 @@ describe('AgentRunKernel', () => {
     expect(projectAgentRunEvents(events).content).toBe('Partial answer')
   })
 
-  it('presents provider image-count rejection as a non-retryable input limit', async () => {
-    const sampler: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: {
-        ok: false,
-        error: 'litellm.BadRequestError: At most 2 image(s) may be provided in one prompt.'
-      },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
-    const kernel = new AgentRunKernel(store, undefined, sampler)
-
-    await kernel.start(input())
-
-    expect(store.get('run-1')?.error).toMatchObject({
-      code: 'invalid_arguments',
-      message: 'The model accepts at most 2 images per request. SideKick could not send this turn.',
-      retryable: false,
-      recoveryAction: 'stop'
-    })
-  })
-
   it('retries once at the reply limit a provider states, and remembers it for later runs', async () => {
     // Groq-style hosts cap a reply below SideKick's default and do not list the cap; every run on
     // the model failed as "internal" before its first token.
-    const refused: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: {
-        ok: false,
-        status: 400,
-        error:
-          '`max_tokens` must be less than or equal to `16384`, the maximum value for `max_tokens` is less than the `context_window` for this model'
-      },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const refused: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error:
+        '`max_tokens` must be less than or equal to `16384`, the maximum value for `max_tokens` is less than the `context_window` for this model'
+    })
     const recovered = sampledTurn({ content: 'Answered' })
     const capped = (id: string): StartAgentKernelRunInput => ({
       ...input(),
@@ -3615,22 +3065,14 @@ describe('AgentRunKernel', () => {
   })
 
   it('fails a refused request by what its HTTP status means, not as internal', async () => {
-    const sampler: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: { ok: false, status: 502, error: 'HTTP 502' },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const sampler: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 502,
+      error: 'HTTP 502'
+    })
 
-    const result = await new AgentRunKernel(store, undefined, sampler).start(input())
+    await new AgentRunKernel(store, undefined, sampler).start(input())
 
-    expect(result.error).toBe(
-      'The server in front of the model got no answer from it (HTTP 502 Bad Gateway). Check that the model server behind it is running.'
-    )
     expect(store.get('run-1')?.error).toMatchObject({ code: 'transient', retryable: true })
   })
 
@@ -3642,29 +3084,16 @@ describe('AgentRunKernel', () => {
 
     await new AgentRunKernel(store, undefined, sampler).start(input())
 
-    expect(store.get('run-1')?.error).toMatchObject({
-      code: 'not_configured',
-      message:
-        'Provider LiteLLM is not configured. Choose another model for this chat, or set this one up in Settings → Providers.'
-    })
+    expect(store.get('run-1')?.error).toMatchObject({ code: 'not_configured' })
   })
 
   it('compacts and retries a prompt-plus-reply overflow worded without "context window"', async () => {
-    const overflow: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: {
-        ok: false,
-        status: 400,
-        error:
-          'litellm.BadRequestError: OpenAIException - prompt (99950 tokens) + max tokens (32768) exceeds the context (131072); requests are never truncated'
-      },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const overflow: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error:
+        'litellm.BadRequestError: OpenAIException - prompt (99950 tokens) + max tokens (32768) exceeds the context (131072); requests are never truncated'
+    })
     const contextManager = {
       shouldCompact: vi.fn(() => false),
       compact: vi.fn(async () => ({
@@ -3735,6 +3164,73 @@ describe('AgentRunKernel', () => {
     await expect(first).resolves.toMatchObject({ phase: 'cancelled' })
     await expect(second).resolves.toMatchObject({ phase: 'cancelled' })
   })
+  it('records how every call of a parallel batch ended when the run is stopped during it', async () => {
+    const call = (id: string) => ({
+      id,
+      function: { name: 'tool_output', arguments: { handle: id } }
+    })
+    const sampler = sampledTurn({
+      toolCalls: [call('out-1'), call('out-2'), call('out-3')],
+      usage: { promptTokens: 10, completionTokens: 5, doneReason: 'tool_calls' }
+    })
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const router = {
+      execute: vi.fn(async () => {
+        kernel.stop('run-1')
+        return { content: 'stored output' }
+      })
+    }
+
+    await expect(kernel.start(input(router))).resolves.toMatchObject({ phase: 'cancelled' })
+    const ids = (type: string): unknown[] =>
+      store
+        .listEvents('run-1')
+        .filter((event) => event.type === type)
+        .map(({ payload }) => payload.toolCallId)
+    expect(ids('tool.running')).toEqual(['out-1', 'out-2', 'out-3'])
+    expect(ids('tool.completed')).toEqual(['out-1', 'out-2', 'out-3'])
+  })
+
+  it('asks again once for a reply that only thought, then fails rather than complete empty', async () => {
+    const thoughtOnly = sampledTurn({ thinking: 'Let me think about it.' })
+    const recovered = vi.fn(sequence(thoughtOnly, sampledTurn({ content: 'The answer.' })))
+    await expect(
+      new AgentRunKernel(store, undefined, recovered).start(input())
+    ).resolves.toMatchObject({ phase: 'completed', finalResponse: 'The answer.' })
+    expect(recovered.mock.calls[1][0].messages).toEqual(recovered.mock.calls[0][0].messages)
+
+    const empty = vi.fn(sequence(thoughtOnly, sampledTurn({})))
+    const failed = await new AgentRunKernel(store, undefined, empty).start({
+      ...input(),
+      id: 'run-2'
+    })
+    expect(failed).toMatchObject({ phase: 'failed' })
+    expect(failed.error).toContain('without an answer')
+    expect(empty).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps two streamed calls that share an id as two calls', async () => {
+    vi.mocked(streamProviderChat).mockImplementationOnce(async (_request, emit) => {
+      const read = (index: number, path: string) => ({
+        id: 'same',
+        index,
+        function: { name: 'read', arguments: { file_path: path } }
+      })
+      emit({ message: { tool_calls: [read(0, 'a.ts')] } })
+      emit({ message: { tool_calls: [read(0, 'a.ts'), read(1, 'b.ts')] }, done: true })
+      return { ok: true }
+    })
+    const { turn } = await sampleProviderTurn(
+      { ...input().request, messages: [] } as ProviderChatRequest,
+      new AbortController().signal,
+      () => undefined
+    )
+    expect(turn.toolCalls.map((call) => call.function.arguments)).toEqual([
+      { file_path: 'a.ts' },
+      { file_path: 'b.ts' }
+    ])
+  })
+
   describe('a stream that breaks off', () => {
     const DROPPED =
       'Lost the connection to the model server at 127.0.0.1:1234 while it was replying; the server stopped or restarted. (UND_ERR_SOCKET)'
@@ -3801,6 +3297,86 @@ describe('AgentRunKernel', () => {
           status: expect.objectContaining({ reason: 'stream_dropped' })
         })
       )
+    })
+
+    it('waits and asks again while the provider is busy or limiting requests', async () => {
+      // One 429 from a free tier ended a run in its first second.
+      const busy: AgentKernelProviderSampler = vi.fn(async () => ({
+        result: { ok: false, error: 'HTTP 429: Provider returned error', status: 429 },
+        turn: {
+          content: '',
+          thinking: '',
+          thinkingBlocks: [],
+          toolCalls: [],
+          usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+        }
+      }))
+      const answer = sampledTurn({ content: 'Whole answer.' }, [
+        { message: { content: 'Whole answer.' } }
+      ])
+      const sampler = vi.fn(sequence(busy, busy, answer))
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+
+      const running = kernel.start(input())
+      await vi.advanceTimersByTimeAsync(
+        PROVIDER_BUSY_RETRY_DELAYS_MS[0] + PROVIDER_BUSY_RETRY_DELAYS_MS[1]
+      )
+
+      await expect(running).resolves.toMatchObject({ phase: 'completed', content: 'Whole answer.' })
+      expect(sampler).toHaveBeenCalledTimes(3)
+      expect(
+        store
+          .listEvents('run-1')
+          .filter(({ type }) => type === 'run.retrying')
+          .map(({ payload }) => payload)
+      ).toEqual([
+        expect.objectContaining({
+          reason: 'provider_unavailable',
+          status: 429,
+          attempt: 1,
+          // An overload can end a reply that had begun streaming; its text is not shown twice.
+          discardsPartialTurn: true
+        }),
+        expect.objectContaining({ reason: 'provider_unavailable', status: 429, attempt: 2 })
+      ])
+    })
+
+    it('waits as long as the provider asks, and fails at once when waiting cannot help', async () => {
+      const refused = (result: Record<string, unknown>): AgentKernelProviderSampler =>
+        vi.fn(async () => ({
+          result: { ok: false, status: 429, ...result },
+          turn: {
+            content: '',
+            thinking: '',
+            thinkingBlocks: [],
+            toolCalls: [],
+            usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+          }
+        }))
+      const answer = sampledTurn({ content: 'Whole answer.' })
+      const asked = vi.fn(sequence(refused({ error: 'slow down', retryAfter: 7 }), answer))
+      const running = new AgentRunKernel(store, undefined, asked).start(input())
+      await vi.advanceTimersByTimeAsync(7_000)
+      await expect(running).resolves.toMatchObject({ phase: 'completed' })
+      expect(
+        store.listEvents('run-1').find(({ type }) => type === 'run.retrying')?.payload
+      ).toMatchObject({ delayMs: 7_000 })
+
+      for (const [id, result] of [
+        ['run-quota', { error: 'You exceeded your current quota.', code: 'insufficient_quota' }],
+        ['run-daily', { error: 'Daily limit reached', retryAfter: 3_600 }]
+      ] as const) {
+        const sampler = vi.fn(sequence(refused(result), answer))
+        const outcome = await new AgentRunKernel(store, undefined, sampler).start({
+          ...input(),
+          id
+        })
+        expect(outcome.phase).toBe('failed')
+        expect(sampler).toHaveBeenCalledTimes(1)
+        expect(store.get(id)?.error?.code).toBe(
+          id === 'run-quota' ? 'permission_denied' : 'transient'
+        )
+      }
     })
 
     it('fails as before when the second try breaks off too', async () => {

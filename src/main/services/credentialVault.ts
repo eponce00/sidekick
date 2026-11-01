@@ -1,18 +1,15 @@
 /**
- * The credentials the user stores for SideKick's agent. Each entry, its values and its scope
+ * The credentials the user stores for SideKick's agent. Each entry, its values and its description
  * together, is one record sealed with the operating system's protected storage, so editing the
- * store file cannot widen where a value may go or swap the value without the OS key. Values leave
+ * store file cannot swap a value or rename an entry without the OS key. Values leave
  * this service only through `resolve`, for main-process code that is about to use one, and to the
  * redactor; summaries for the renderer and the agent never carry them.
  */
 import { randomUUID } from 'crypto'
 import {
-  credentialWidening,
-  defaultCredentialScope,
   type CredentialEvent,
   type CredentialEventKind,
   type CredentialSaveInput,
-  type CredentialScope,
   type CredentialStatus,
   type CredentialSummary,
   type CredentialValues
@@ -55,7 +52,10 @@ export interface CredentialPersistence {
   writeEvents(events: CredentialEvent[]): void
 }
 
-/** The sealed part of an entry. */
+/**
+ * The sealed part of an entry. Records from before credentials followed the permission mode also
+ * hold the scope and approval settings they had; nothing reads those, and saving drops them.
+ */
 interface SealedRecord {
   /** The record's layout, so a later version can migrate it when a default changes. */
   schema?: 1
@@ -63,9 +63,7 @@ interface SealedRecord {
   alias: string
   kind: CredentialSummary['kind']
   description: string
-  usernameVisible: boolean
-  ask: CredentialSummary['ask']
-  scope: CredentialScope
+  sites?: string[]
   values: CredentialValues
   createdAt: number
   updatedAt: number
@@ -125,13 +123,11 @@ function readFile(value: unknown): ReadVault {
   return { entries, unknown, locked: false }
 }
 
-/** The values the redactor hides: every value except a username the user lets the agent read. */
+/** The values the redactor hides: every value but a username, which the agent may read. */
 function hiddenValues(record: SealedRecord): Array<[keyof CredentialValues, string]> {
   return (Object.entries(record.values) as Array<[keyof CredentialValues, unknown]>).filter(
     (entry): entry is [keyof CredentialValues, string] =>
-      typeof entry[1] === 'string' &&
-      Boolean(entry[1]) &&
-      !(entry[0] === 'username' && record.usernameVisible)
+      typeof entry[1] === 'string' && Boolean(entry[1]) && entry[0] !== 'username'
   )
 }
 
@@ -209,9 +205,6 @@ export class CredentialVault {
                 alias: stored.alias,
                 kind: stored.kind,
                 description: stored.description,
-                usernameVisible: false,
-                ask: 'every_use',
-                scope: defaultCredentialScope(),
                 values: {},
                 createdAt: 0,
                 updatedAt: 0
@@ -268,12 +261,8 @@ export class CredentialVault {
       alias: record.alias,
       kind: record.kind,
       description: record.description,
-      usernameVisible: record.usernameVisible,
-      ...(record.usernameVisible && record.values.username
-        ? { username: record.values.username }
-        : {}),
-      ask: record.ask,
-      scope: record.scope,
+      ...(record.values.username ? { username: record.values.username } : {}),
+      ...(record.sites?.length ? { sites: [...record.sites] } : {}),
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
       ...(lastUsedAt ? { lastUsedAt } : {}),
@@ -293,14 +282,6 @@ export class CredentialVault {
     this.ensureLoaded()
     const entry = this.entries.get(id)
     return entry ? this.summarize(entry, this.lastUses().get(id)) : undefined
-  }
-
-  /** How saving `input` would let the agent use an existing entry more than it can now. */
-  widening(input: CredentialSaveInput): string[] {
-    this.ensureLoaded()
-    const existing = input.id ? this.entries.get(input.id) : undefined
-    if (!existing || existing.needsValue) return []
-    return credentialWidening(existing.record, input)
   }
 
   /** Creates or updates an entry from validated input. */
@@ -334,9 +315,7 @@ export class CredentialVault {
       alias: input.alias,
       kind: input.kind,
       description: input.description,
-      usernameVisible: input.kind === 'sign_in' && input.usernameVisible,
-      ask: input.ask,
-      scope: input.scope,
+      ...(input.sites?.length ? { sites: [...input.sites] } : {}),
       values,
       createdAt: existing && !existing.needsValue ? existing.record.createdAt : now,
       updatedAt: now
@@ -361,7 +340,8 @@ export class CredentialVault {
     if (!existing) this.record('created', record)
     else {
       const replacedAny = Object.entries(oldValues).some(
-        ([field, value]) => value && values[field as keyof CredentialValues] !== value
+        ([field, value]) =>
+          field !== 'username' && value && values[field as keyof CredentialValues] !== value
       )
       if (replacedAny || existing.needsValue) this.record('value_replaced', record)
       const changes = this.describeChanges(existing.record, record)
@@ -375,9 +355,8 @@ export class CredentialVault {
     if (previous.alias !== next.alias) changes.push(`alias was ${previous.alias}`)
     if (previous.kind !== next.kind) changes.push('kind')
     if (previous.description !== next.description) changes.push('description')
-    if (previous.usernameVisible !== next.usernameVisible) changes.push('username visibility')
-    if (previous.ask !== next.ask) changes.push('when to ask')
-    if (JSON.stringify(previous.scope) !== JSON.stringify(next.scope)) changes.push('scope')
+    if (previous.values.username !== next.values.username) changes.push('username')
+    if ((previous.sites ?? []).join() !== (next.sites ?? []).join()) changes.push('websites')
     return changes.length ? `Changed ${changes.join(', ')}.` : undefined
   }
 
@@ -399,7 +378,7 @@ export class CredentialVault {
 
   /**
    * An entry's values, for main-process code about to use them. The caller has already checked
-   * scope and approval; nothing it returns may reach the renderer or the model.
+   * approval; nothing it returns may reach the renderer or the model.
    */
   resolve(alias: string): ResolvedCredential | undefined {
     this.ensureLoaded()

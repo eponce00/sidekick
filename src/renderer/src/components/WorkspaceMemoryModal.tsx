@@ -1,5 +1,5 @@
 import { useId, useState } from 'react'
-import { Info, NotebookPen, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { useModalDialog } from '../hooks/useModalDialog'
 import './WorkspaceMemoryModal.css'
@@ -87,9 +87,6 @@ function WorkspaceMemoryForm({
         tabIndex={-1}
       >
         <div className="workspace-memory-header">
-          <span className="workspace-memory-heading-icon" aria-hidden="true">
-            <NotebookPen size={18} />
-          </span>
           <div className="workspace-memory-heading-copy">
             <h2 id={titleId}>Project notes</h2>
             <p id={descriptionId}>
@@ -109,13 +106,10 @@ function WorkspaceMemoryForm({
         </div>
 
         <div className="workspace-memory-body">
-          <div className="workspace-memory-explainer">
-            <Info size={15} aria-hidden="true" />
-            <p>
-              Use this for stable facts, decisions, and preferences. These notes are context—not
-              rules. Put agent workflow rules in <code>AGENTS.md</code> instead.
-            </p>
-          </div>
+          <p className="workspace-memory-explainer">
+            Stable facts, decisions, and preferences: context, not rules. Agent workflow rules
+            belong in <code>AGENTS.md</code>.
+          </p>
           <label htmlFor={fieldId}>Notes shared with the model</label>
           <textarea
             id={fieldId}

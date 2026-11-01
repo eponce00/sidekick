@@ -11,6 +11,7 @@ import { cancelProviderStreamReader, releaseProviderStreamReader } from './provi
 import { nearestEffort, requestReasoningLevel, type ReasoningLevel } from '../../shared/reasoning'
 import { providerConnectionFailureMessage } from '../../shared/providerErrors'
 import { applyProviderModelOverrides, hasReportedMetadata, positiveInteger } from './modelCatalog'
+import { ollamaReasoning } from './reasoningCapabilities'
 
 type FetchImplementation = typeof fetch
 type Emit = (chunk: ProviderStreamChunk) => void
@@ -22,17 +23,17 @@ function headers(instance: ProviderInstance): Record<string, string> {
   }
 }
 
-/** Ollama's `think`: on or off, or a level for gpt-oss, which cannot stop reasoning. */
-function thinkValue(model: string, level: ReasoningLevel | undefined): ThinkValue | undefined {
-  if (level === 'auto') return undefined
-  if (model.toLowerCase().includes('gpt-oss')) {
-    if (level === 'off') return 'low'
-    return nearestEffort(level ?? 'medium', ['low', 'medium', 'high'] as const)
-  }
-  return level !== 'off'
+/**
+ * Ollama's `think`: true or false, or a level for a model that takes levels, which are the only
+ * values discovery offers for it. No level leaves the model's default.
+ */
+function thinkValue(level: ReasoningLevel | undefined): ThinkValue | undefined {
+  if (!level) return undefined
+  if (level === 'on' || level === 'off') return level === 'on'
+  return nearestEffort(level, ['low', 'medium', 'high', 'max'] as const)
 }
 
-type ThinkValue = boolean | 'low' | 'medium' | 'high'
+type ThinkValue = boolean | 'low' | 'medium' | 'high' | 'max'
 
 function ollamaImagePayload(dataUrl: string): string {
   const match = dataUrl.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/s)
@@ -106,7 +107,7 @@ function body(request: ProviderChatRequest, stream: boolean): Record<string, unk
     tools: request.tools?.length ? request.tools : undefined,
     stream,
     keep_alive: '30m',
-    think: thinkValue(request.target.model, requestReasoningLevel(request) ?? 'on'),
+    think: thinkValue(requestReasoningLevel(request)),
     options: {
       ...(request.target.contextLength ? { num_ctx: request.target.contextLength } : {}),
       ...(request.maxOutputTokens ? { num_predict: request.maxOutputTokens } : {}),
@@ -260,6 +261,8 @@ export async function completeOllamaChat(
 interface OllamaShowResponse {
   capabilities?: string[]
   model_info?: Record<string, unknown>
+  /** The values `think` takes for this model, and the one it uses by default. */
+  thinking?: unknown
 }
 
 async function showOllamaModel(
@@ -303,7 +306,8 @@ export function normalizeOllamaModel(
     contextLength: contextFromModelInfo(show?.model_info),
     supportsTools: capabilities ? capabilities.includes('tools') : undefined,
     supportsVision: capabilities ? capabilities.includes('vision') : undefined,
-    supportsReasoning: capabilities ? capabilities.includes('thinking') : undefined
+    supportsReasoning: capabilities ? capabilities.includes('thinking') : undefined,
+    ...ollamaReasoning(show?.thinking)
   }
   return { ...normalized, metadataSource: hasReportedMetadata(normalized) ? 'provider' : 'unknown' }
 }

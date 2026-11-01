@@ -5,7 +5,7 @@ vi.mock('electron', () => ({}))
 vi.mock('../services/trustedDialog', () => ({ showTrustedDialog }))
 
 import type { BrowserWindow } from 'electron'
-import { confirmQuitWithActiveRuns, QuitGuard, quitConfirmationMessage } from './quitConfirmation'
+import { confirmQuitWithActiveRuns, QuitGuard } from './quitConfirmation'
 
 function deferred(): { promise: Promise<boolean>; resolve: (value: boolean) => void } {
   let resolve!: (value: boolean) => void
@@ -19,36 +19,18 @@ async function settle(): Promise<void> {
   for (let index = 0; index < 5; index += 1) await Promise.resolve()
 }
 
-describe('quitConfirmationMessage', () => {
-  it('names how many conversations are working', () => {
-    expect(quitConfirmationMessage(1)).toBe('1 conversation is still working. Quit anyway?')
-    expect(quitConfirmationMessage(3)).toBe('3 conversations are still working. Quit anyway?')
-  })
-})
-
 describe('confirmQuitWithActiveRuns', () => {
   function window(visible: boolean): BrowserWindow {
     return { isDestroyed: () => false, isVisible: () => visible } as unknown as BrowserWindow
   }
 
-  it('asks over the app window', async () => {
-    showTrustedDialog.mockResolvedValueOnce({ response: 0 })
-    const parent = window(true)
-    await expect(confirmQuitWithActiveRuns(1, parent)).resolves.toBe(true)
-    expect(showTrustedDialog).toHaveBeenLastCalledWith(parent, expect.any(Object), {
-      reveal: true
-    })
-  })
-
   it('brings the window back from the tray to ask, since the user just chose to quit', async () => {
     showTrustedDialog.mockResolvedValueOnce({ response: 1 })
     const parent = window(false)
     await expect(confirmQuitWithActiveRuns(2, parent)).resolves.toBe(false)
-    expect(showTrustedDialog).toHaveBeenLastCalledWith(
-      parent,
-      expect.objectContaining({ message: quitConfirmationMessage(2) }),
-      { reveal: true }
-    )
+    expect(showTrustedDialog).toHaveBeenLastCalledWith(parent, expect.any(Object), {
+      reveal: true
+    })
   })
 })
 

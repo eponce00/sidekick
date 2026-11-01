@@ -51,8 +51,7 @@ it.each([
   [[], false],
   [[4], false],
   [[32], true],
-  [[256], true],
-  [[32, 256], true]
+  [[256], true]
 ] as const)('enforces document permissions %j with editing=%s', async (values, allowed) => {
   const f = fixture(async () => (values === null ? null : new Set(values)))
   await f.api.checkFormPermissions()

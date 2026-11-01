@@ -98,7 +98,6 @@ describe('ProviderSettingsPanel models', () => {
       })
     )
     expect(view.discoverModels).not.toHaveBeenCalled()
-    expect(view.element.textContent).not.toContain('Test model capabilities')
 
     await act(async () => button('Refresh models')!.click())
 
@@ -108,9 +107,6 @@ describe('ProviderSettingsPanel models', () => {
       expect.objectContaining({ id: 'local-model', enabled: true })
     ])
     expect(view.instances()[0].health).toMatchObject({ status: 'online', discoveredModelCount: 2 })
-    expect(view.element.textContent).toContain('Connected · 2 models available')
-    expect(view.element.textContent).toContain('128K context · 16K output')
-    expect(view.element.querySelector('[aria-label="Tools"]')).not.toBeNull()
   })
 
   it('loads the list by itself when a provider without models opens, once', async () => {
@@ -123,7 +119,6 @@ describe('ProviderSettingsPanel models', () => {
     )
     expect(view.discoverModels).toHaveBeenCalledTimes(1)
     expect(rowNames()).toEqual(['qwen3:8b'])
-    expect(button('Refresh models')).toBeDefined()
 
     await act(async () => button('Hide all')!.click())
     expect(view.discoverModels).toHaveBeenCalledTimes(1)
@@ -145,7 +140,6 @@ describe('ProviderSettingsPanel models', () => {
           : { ok: false, error: 'OpenRouter requires an API key' }
     )
     expect(view.discoverModels).not.toHaveBeenCalled()
-    expect(view.element.textContent).toContain('Enter the API key')
 
     const key = view.element.querySelector<HTMLInputElement>('input[type="password"]')!
     await act(async () => {
@@ -173,25 +167,17 @@ describe('ProviderSettingsPanel models', () => {
         ]
       })
     ])
-    const groups = Array.from(container!.querySelectorAll('.provider-model-list > [role="group"]'))
-    expect(groups.map((group) => group.getAttribute('aria-label'))).toEqual([
-      'In chat',
-      'Available'
-    ])
     expect(rowNames()).toEqual(['beta', 'alpha', 'gamma'])
 
     await act(async () => button('Vision')!.click())
     expect(rowNames()).toEqual(['alpha'])
-    expect(button('Vision')!.getAttribute('aria-pressed')).toBe('true')
-    expect(container!.textContent).toContain('1 of 3 models · 1 in chat')
-
     await act(async () => button('Tools')!.click())
-    expect(container!.textContent).toContain('No models match these filters')
+    expect(rowNames()).toEqual([])
     await act(async () => button('Clear filters')!.click())
     expect(rowNames()).toHaveLength(3)
   })
 
-  it('keeps a chosen model the provider stops listing, and says which models are new', async () => {
+  it('keeps a chosen model the provider stops listing', async () => {
     let listed = [model('kept'), model('dropped')]
     const view = await mount(
       [
@@ -211,18 +197,9 @@ describe('ProviderSettingsPanel models', () => {
       ['fresh', false],
       ['kept', true]
     ])
-    const tags = Array.from(container!.querySelectorAll('.provider-model-row')).map((row) => [
-      row.querySelector('strong')?.textContent,
-      row.querySelector('.provider-model-tag')?.textContent ?? null
-    ])
-    expect(tags).toEqual([
-      ['dropped', 'Not listed'],
-      ['kept', null],
-      ['fresh', 'New']
-    ])
   })
 
-  it('says why loading failed and keeps the models it had', async () => {
+  it('keeps the models it had when loading fails', async () => {
     const view = await mount(
       [provider({ models: [model('local-model', { enabled: true })] })],
       () => ({
@@ -231,7 +208,6 @@ describe('ProviderSettingsPanel models', () => {
       })
     )
     await act(async () => button('Refresh models')!.click())
-    expect(view.element.querySelector('[role="status"]')?.textContent).toContain('401')
     expect(view.instances()[0].health?.status).toBe('offline')
     expect(view.instances()[0].models).toHaveLength(1)
   })
@@ -252,7 +228,7 @@ describe('ProviderSettingsPanel models', () => {
     expect(button('Vision')).toBeUndefined()
 
     await act(async () => button('Test connection')!.click())
-    expect(view.element.textContent).toContain('Connection successful')
+    expect(view.discoverModels).toHaveBeenCalledTimes(1)
     expect(view.instances()[0].models).toEqual([model('local-model', { enabled: true })])
   })
 

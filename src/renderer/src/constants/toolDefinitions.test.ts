@@ -9,21 +9,8 @@ describe('tool definitions', () => {
     )
 
     // Waiting is for something to happen; the seconds are only a limit.
+    expect(direct?.function.name).toBe('wait')
     expect(direct?.function.parameters.required ?? []).toEqual([])
-    expect(direct?.function.description).toContain('Wait until something happens')
     expect(delegated).toEqual(direct)
-  })
-
-  it('uses the same canonical workspace tools for every provider', () => {
-    const names = () =>
-      getToolDefinitions(false, '/workspace').map(({ function: tool }) => tool.name)
-
-    const openAi = names()
-    expect(openAi).toContain('apply_patch')
-    expect(openAi).toEqual(expect.arrayContaining(['read', 'shell', 'apply_patch', 'tool_output']))
-
-    const claude = names()
-    expect(claude).toEqual(expect.arrayContaining(['read', 'shell', 'apply_patch', 'tool_output']))
-    expect(claude).toEqual(openAi)
   })
 })

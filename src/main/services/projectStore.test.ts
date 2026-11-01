@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { applyDatabaseSchema } from '../bootstrap/database'
+import { resolve } from 'path'
 import { ProjectStore } from './projectStore'
 
 describe('ProjectStore', () => {
@@ -14,6 +15,13 @@ describe('ProjectStore', () => {
   })
 
   afterEach(() => db.close())
+
+  const insertProjectChat = (projectId: string): string => {
+    const id = `chat-${Math.random().toString(36).slice(2)}`
+    insertConversation(id)
+    store.moveConversation({ conversationId: id, projectId })
+    return id
+  }
 
   const insertConversation = (id: string, updatedAt: number = 1): void => {
     db.prepare(
@@ -126,6 +134,74 @@ describe('ProjectStore', () => {
     expect(() =>
       store.moveConversation({ conversationId: 'conversation-1', projectId: project.id })
     ).toThrow('Stop the active run')
+  })
+
+  it('adds side-by-side folders with unique names and refuses one inside another', () => {
+    const root = resolve('/work/app')
+    const project = store.create(root, 'App')
+    const updated = store.updateFolders({
+      projectId: project.id,
+      add: [
+        { path: resolve('/work/api') },
+        { path: resolve('/other/api') },
+        // A name that is a top-level entry of the primary folder would hide that entry.
+        { path: resolve('/more/src'), reservedNames: ['src'] }
+      ]
+    })
+    expect(updated.folders).toEqual([
+      { name: 'api', path: resolve('/work/api') },
+      { name: 'api-2', path: resolve('/other/api') },
+      { name: 'src-2', path: resolve('/more/src') }
+    ])
+    for (const path of ['/work/app/lib', '/work', '/work/api/inner']) {
+      expect(() =>
+        store.updateFolders({ projectId: project.id, add: [{ path: resolve(path) }] })
+      ).toThrow('inside one of the project')
+    }
+    expect(store.foldersForRoot(root)).toEqual(updated.folders)
+    expect(store.getConversationContext(insertProjectChat(project.id)).folders).toEqual(
+      updated.folders
+    )
+  })
+
+  it('swaps the primary folder, keeping the project’s chats, memory and folder list', () => {
+    const project = store.create(resolve('/work/app'), 'App')
+    store.updateFolders({ projectId: project.id, add: [{ path: resolve('/work/api') }] })
+    const chat = insertProjectChat(project.id)
+    db.prepare(
+      'INSERT INTO workspace_memory (workspace_path, content, updated_at) VALUES (?, ?, 1)'
+    ).run(resolve('/work/app'), 'Remember this')
+
+    const swapped = store.updateFolders({ projectId: project.id, makePrimary: 'api' })
+
+    expect(swapped.folder_path).toBe(resolve('/work/api'))
+    expect(swapped.folders).toEqual([{ name: 'app', path: resolve('/work/app') }])
+    expect(store.getConversationContext(chat)).toMatchObject({
+      workspaceRoot: resolve('/work/api'),
+      homeWorkspaceRoot: resolve('/work/api'),
+      folders: [{ name: 'app', path: resolve('/work/app') }]
+    })
+    expect(db.prepare('SELECT workspace_path FROM workspace_memory').get()).toEqual({
+      workspace_path: resolve('/work/api')
+    })
+  })
+
+  it('gives a worktree chat the worktree’s copy of a folder in its repository and others as they are', () => {
+    const project = store.create(resolve('/repo/app'), 'App')
+    store.updateFolders({
+      projectId: project.id,
+      add: [{ path: resolve('/repo/lib') }, { path: resolve('/elsewhere/docs') }]
+    })
+    db.prepare(
+      `INSERT INTO managed_worktrees
+       (id, source_project_id, repository_root, worktree_root, folder_path, branch, created_at, last_used_at)
+       VALUES ('wt', ?, ?, ?, ?, 'sidekick/x', 1, 1)`
+    ).run(project.id, resolve('/repo'), resolve('/wt/x'), resolve('/wt/x/app'))
+
+    expect(store.foldersForRoot(resolve('/wt/x/app'))).toEqual([
+      { name: 'lib', path: resolve('/wt/x/lib') },
+      { name: 'docs', path: resolve('/elsewhere/docs') }
+    ])
   })
 
   it('keeps conversations when a project is removed', () => {

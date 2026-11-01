@@ -6,7 +6,6 @@ import {
   executeWorkspaceMutation,
   type WorkspaceMutationExecutionOptions
 } from './workspaceMutationService'
-import { WorkspaceReadService } from './workspaceReadService'
 
 // Failure modes from a real run that edited a canvas game: an ambiguous short old_string, a
 // retry retyped with different indentation, and a ~150-line block copied with drift.
@@ -213,27 +212,6 @@ describe('edit matching for drifted model copies', () => {
   })
 
   describe('stale text', () => {
-    it('tells the model to re-read when the file changed after its read', async () => {
-      const root = await workspace({ 'game.html': GAME })
-      const reads = new WorkspaceReadService()
-      const receipt = await reads.readFile(root, 'game.html')
-      await writeFile(join(root, 'game.html'), GAME.replace('drawBike', 'drawCycle'), 'utf8')
-
-      const result = await edit(
-        root,
-        'game.html',
-        'function drawBike(x, y) {',
-        'function drawBicycle(x, y) {',
-        false,
-        { requireReadReceipt: true, expectedVersions: { 'game.html': receipt.version } }
-      )
-
-      expect(result.failure?.code).toBe('stale_read')
-      expect(result.error).toContain('changed after it was last read')
-      expect(result.error).toContain('Re-read the file')
-      expect(await read(root, 'game.html')).toBe(GAME.replace('drawBike', 'drawCycle'))
-    })
-
     it('points at the current text when old_string predates the model’s own earlier edit', async () => {
       const root = await workspace({ 'game.html': GAME })
       expect(

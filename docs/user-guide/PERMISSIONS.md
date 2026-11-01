@@ -14,24 +14,36 @@ interaction. User-initiated destructive UI actions use an exact main-process bro
 
 Full access is the default. It removes approval prompts for in-scope work but does not erase the
 host's original safety classification: audit records retain both requested and effective access.
-The stricter modes are available per conversation from the composer and in Settings.
+
+The mode is one setting for every chat and every kind of action: commands, files, connectors, the
+browser, API calls and [stored credentials](CREDENTIALS.md). Change it from the shield beside the
+model in the composer, or in **Settings → Agent → Permissions**. A change applies from the next
+reply. Switching to Full access from a stricter mode asks you to confirm in SideKick's own dialog.
 
 ## Operation matrix
 
-| Operation                         | Default request          | Trusted enforcement                                                                 |
-| --------------------------------- | ------------------------ | ----------------------------------------------------------------------------------- |
-| Agent shell command               | Agent-selected           | Kernel policy before canonical command service                                      |
-| Agent workspace mutation          | Agent-selected           | Kernel policy plus same-run file receipt before transactional mutation              |
-| Agent MCP tool call               | Confirm                  | Kernel policy before internal MCP dispatch                                          |
-| Agent API call (`http_request`)   | Auto for GET and HEAD    | Kernel policy before the guarded request                                            |
-| Agent use of a stored credential  | The entry's own setting  | Kernel approval before the permission mode, then scope checked again when used      |
-| Agent change to SideKick settings | Always confirm           | Kernel approval in every mode, no chat-wide grant, before the shared settings write |
-| MCP connector start               | Approved content         | Fingerprint check before any connector process or connection starts                 |
-| Agent and child-agent tools       | Shared catalog policy    | Same kernel suspension and result envelope                                          |
-| Agent starting other chats        | Mode-dependent           | Start card unless Full access; a new project always asks; see below                 |
-| Checkpoint restore/rewind/reset   | Confirm                  | Exact broker grant consumed before private-History mutation                         |
-| User file deletion                | Auto after in-app intent | Exact broker grant consumed before system Trash / Recycle Bin                       |
-| External browser navigation       | Auto                     | Main-window policy before opening                                                   |
+| Operation                         | Default request            | Trusted enforcement                                                                 |
+| --------------------------------- | -------------------------- | ----------------------------------------------------------------------------------- |
+| Agent shell command               | Auto only if it only reads | Kernel policy before canonical command service                                      |
+| Agent workspace mutation          | Agent-selected             | Kernel policy plus same-run file receipt before transactional mutation              |
+| Agent MCP tool call               | Confirm                    | Kernel policy before internal MCP dispatch                                          |
+| Agent API call (`http_request`)   | Auto for GET and HEAD      | Kernel policy before the guarded request                                            |
+| Agent call to a website's tool    | Auto if marked read-only   | Kernel policy; consequential always asks; site, tab and tool rechecked at the call  |
+| Agent use of a stored credential  | Confirm                    | Kernel policy; credential rules refuse before any card and are checked again at use |
+| Agent change to SideKick settings | Always confirm             | Kernel approval in every mode, no chat-wide grant, before the shared settings write |
+| Agent change to a schedule        | Always confirm             | Kernel approval in every mode, no chat-wide grant; rechecked before the scheduler   |
+| MCP connector start               | Approved content           | Fingerprint check before any connector process or connection starts                 |
+| Agent and child-agent tools       | Shared catalog policy      | Same kernel suspension and result envelope                                          |
+| Agent starting other chats        | Mode-dependent             | Start card unless Full access; a new project always asks; see below                 |
+| Checkpoint restore/rewind/reset   | Confirm                    | Exact broker grant consumed before private-History mutation                         |
+| User file or folder deletion      | Auto after in-app intent   | Exact broker grant consumed before system Trash / Recycle Bin                       |
+| External browser navigation       | Auto                       | Main-window policy before opening                                                   |
+
+A shell command counts as only reading when every command in it is one of a short list of
+inspection programs (`Get-Content`, `rg`, `ls` and the like), or `git status`, `diff`, `log`,
+`show`, `grep`, `rev-parse`, or `git branch` listing branches. It must also have no expansion,
+subexpression or script block, no redirection except discarding output, and no option that writes
+a file or runs another program. Anything else asks in **Ask for sensitive actions**.
 
 ## Answering an approval
 
@@ -51,12 +63,11 @@ and announced by a notification when SideKick is not in front.
 
 ## Stored credentials
 
-A call that uses a [stored credential](CREDENTIALS.md) asks as that credential says, every use or
-the first use in each chat, in every permission mode including Full access. Its card names the
-credential, where it is sent and how; approving it approves the whole call. **Allow for this chat**
-is offered only for credentials set to ask once per chat, and covers the same credential with the
-same host, the same site for a sign-in, or the same exact command. A credential that any command may use asks
-before every command. A use outside the credential's scope is refused without asking.
+A call that uses a [stored credential](CREDENTIALS.md) is a sensitive action: Full access runs it,
+and the other modes ask. Its card names the credential, where it is sent and how; approving it
+approves the whole call. **Allow for this chat** covers later uses of the same credential, together
+with what the call does on its own when that would ask anyway, such as the exact command. A use
+that breaks a credential rule, such as sending a value over plain HTTP, is refused without asking.
 
 ## Changes to SideKick itself
 
@@ -65,6 +76,12 @@ and proposed value and asks every time, even in Full access, and **Allow for thi
 offered. Changes that weaken security, such as switching to Full access, also show SideKick's own
 dialog. The agent cannot read or set API keys; it opens a provider's key field in Settings for you
 to type into.
+
+When the agent asks to create, change, pause, resume, or delete a
+[schedule](SCHEDULES.md#asking-the-agent), the card shows exactly what will be saved, including the
+whole prompt as the agent wrote it, and asks every time, even in Full access, with no **Allow for
+this chat**. Nothing is saved until you allow it. A schedule the agent saves may never do more
+without asking than the chat that asked for it.
 
 MCP connectors are approved by what they run, not by name. A connector you add, or one whose
 command, arguments, folder, environment, URL, or read auto-approval changes by any means, shows
@@ -92,8 +109,8 @@ mismatched operations are rejected.
 
 Settings → Agent → Permissions → **Where commands run** offers **In a Docker container**, a
 Linux container with no network. This is opt-in; the default remains **On this computer**.
-Switching back to this computer requires a trusted confirmation. Isolation applies to shell commands, including project
-start hooks, not to browser, language-server, MCP, or other host processes.
+Switching back to this computer requires a trusted confirmation. Isolation applies to shell commands, not to browser,
+language-server, MCP, or other host processes.
 
 Install Docker with a local Linux-container daemon and explicitly pull the pinned image:
 
@@ -116,7 +133,5 @@ remains pending. This is command isolation, not a claim that the entire harness 
 ## Audit records
 
 Kernel decisions live in `agent_run_events`; broker authorization/consumption records live in the
-settings store. Settings projects the latest 500 entries from both authoritative sources into one
-chronological audit. Each row includes operation kind/title, requested/effective access, active
-mode, a safe operation fingerprint, outcome, timestamp, and failure reason when applicable. The
-latest records are under Settings → Agent → Permissions → **Recent approvals**.
+settings store. Each record includes operation kind/title, requested/effective access, active mode,
+a safe operation fingerprint, outcome, timestamp, and failure reason when applicable.

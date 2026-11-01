@@ -2,23 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   completeOpenAICompatibleChat,
   fetchOpenAICompatibleModels,
-  normalizeOpenAICompatibleEndpoint,
   openAICompatibleHeaders
 } from './openAICompatibleClient'
 import { readIncompleteToolInputError } from '../../shared/toolCalls'
 
 describe('OpenAI-compatible client', () => {
-  it('normalizes endpoints and adds optional bearer authentication', () => {
-    expect(normalizeOpenAICompatibleEndpoint(' https://provider.test/v1/// ')).toBe(
-      'https://provider.test/v1'
-    )
-    expect(openAICompatibleHeaders()).toEqual({ 'Content-Type': 'application/json' })
-    expect(openAICompatibleHeaders(' secret ')).toEqual({
-      'Content-Type': 'application/json',
-      Authorization: 'Bearer secret'
-    })
-  })
-
   it('validates model catalogs returned by the provider', async () => {
     const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ data: [{ id: 'model-a' }] })))
     const result = await fetchOpenAICompatibleModels(
@@ -172,16 +160,14 @@ describe('OpenAI-compatible client', () => {
     const fetchImpl = vi.fn(async () => {
       throw new TypeError('fetch failed', { cause })
     })
-    await expect(
-      fetchOpenAICompatibleModels(
-        'https://provider.test/v1',
-        openAICompatibleHeaders('secret'),
-        fetchImpl as typeof fetch
-      )
-    ).resolves.toEqual({
-      ok: false,
-      error:
-        'Lost the connection to the model server at provider.test while it was replying; the server stopped or restarted. (ECONNRESET)'
-    })
+    const result = await fetchOpenAICompatibleModels(
+      'https://provider.test/v1',
+      openAICompatibleHeaders('secret'),
+      fetchImpl as typeof fetch
+    )
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('provider.test')
+    expect(result.error).toContain('(ECONNRESET)')
+    expect(result.error).not.toContain('secret')
   })
 })

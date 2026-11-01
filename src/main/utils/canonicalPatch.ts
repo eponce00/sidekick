@@ -5,6 +5,20 @@ import {
   stripReadLineNumbers
 } from './tolerantMatch'
 
+/**
+ * A well-formed hunk that does not fit the current file: its lines are missing or match more
+ * than one place. The model corrects its input; the file has not necessarily changed.
+ */
+export class PatchApplicationError extends Error {
+  constructor(
+    message: string,
+    readonly code: 'text_not_found' | 'multiple_matches'
+  ) {
+    super(message)
+    this.name = 'PatchApplicationError'
+  }
+}
+
 export interface CanonicalPatchChunk {
   marker?: string
   endOfFile?: boolean
@@ -348,21 +362,23 @@ function locateHunk(
       const matches = matchesFrom(lines, oldLines, start, same)
       if (matches.length === 1) return { index: matches[0], tolerant }
       if (matches.length > 1) {
-        throw new Error(
+        throw new PatchApplicationError(
           `Patch could not be applied to ${path}: hunk context is ambiguous (${matches.length} matches, starting at lines ${matches
             .slice(0, 8)
             .map((match) => match + 1)
-            .join(', ')}). Add surrounding lines so the hunk matches one place.`
+            .join(', ')}). Add surrounding lines so the hunk matches one place.`,
+          'multiple_matches'
         )
       }
     }
   }
   const region = closestRegion(lines.join('\n'), oldLines.join('\n'))
-  throw new Error(
+  throw new PatchApplicationError(
     `Patch could not be applied to ${path}: hunk context is stale or missing. ${PATCH_WHITESPACE_HELP}` +
       (region
         ? `\nClosest current lines (line numbers are for reference only; do not include them in the patch):\n${region}`
-        : ' Re-read the file and copy the current lines exactly.')
+        : ' Re-read the file and copy the current lines exactly.'),
+    'text_not_found'
   )
 }
 
@@ -440,13 +456,15 @@ export function applyCanonicalUpdate(
         found = markerMatches((line) => normalizeLine(line).includes(wanted))
       }
       if (!found.length) {
-        throw new Error(
-          `Patch could not be applied to ${operation.path}: @@ marker not found: ${marker}`
+        throw new PatchApplicationError(
+          `Patch could not be applied to ${operation.path}: @@ marker not found: ${marker}`,
+          'text_not_found'
         )
       }
       if (found.length > 1) {
-        throw new Error(
-          `Patch could not be applied to ${operation.path}: @@ marker is ambiguous (${found.length} matches): ${marker}`
+        throw new PatchApplicationError(
+          `Patch could not be applied to ${operation.path}: @@ marker is ambiguous (${found.length} matches): ${marker}`,
+          'multiple_matches'
         )
       }
       searchStart = found[0]
@@ -498,15 +516,17 @@ export function applyCanonicalUpdate(
           elsewhere.length === 1
             ? ` These lines are at line ${elsewhere[0] + 1}, not at the end of the file: remove the *** End of File line (it anchors a hunk to the last lines of the file; it does not end the patch).`
             : ''
-        throw new Error(
-          `Patch could not be applied to ${operation.path}: End of File context does not match the file end.${misplaced} ${PATCH_WHITESPACE_HELP}${spacingHint}`
+        throw new PatchApplicationError(
+          `Patch could not be applied to ${operation.path}: End of File context does not match the file end.${misplaced} ${PATCH_WHITESPACE_HELP}${spacingHint}`,
+          'text_not_found'
         )
       }
       location = { index, tolerant: !exact }
     } else if (!oldLines.length) {
       if (lines.length && !chunk.marker) {
-        throw new Error(
-          `Patch could not be applied to ${operation.path}: insertion-only hunks require an @@ marker or at least one unchanged context line to locate them`
+        throw new PatchApplicationError(
+          `Patch could not be applied to ${operation.path}: insertion-only hunks require an @@ marker or at least one unchanged context line to locate them`,
+          'text_not_found'
         )
       }
       location = { index: chunk.marker ? searchStart + 1 : 0, tolerant: false }
@@ -516,8 +536,14 @@ export function applyCanonicalUpdate(
       } catch (error) {
         // Text copied from the read tool may still carry its `N: ` line prefixes.
         const unnumbered = withoutReadLineNumbers(chunk.lines)
-        if (!unnumbered || !(error instanceof Error) || !/stale or missing/.test(error.message)) {
-          if (spacingHint && error instanceof Error) throw new Error(error.message + spacingHint)
+        if (
+          !unnumbered ||
+          !(error instanceof PatchApplicationError) ||
+          error.code !== 'text_not_found'
+        ) {
+          if (spacingHint && error instanceof PatchApplicationError) {
+            throw new PatchApplicationError(error.message + spacingHint, error.code)
+          }
           throw error
         }
         chunk = { ...chunk, lines: unnumbered }

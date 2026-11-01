@@ -1,6 +1,8 @@
 export interface WelcomeSuggestion {
   label: string
   prompt: string
+  /** The label with its title in full, for a tooltip, where the label shortens it. */
+  fullLabel?: string
 }
 
 interface WelcomeSuggestionContext {
@@ -44,6 +46,7 @@ export function createWelcomeSuggestions({
   if (normalizedProjectName) {
     suggestions.push({
       label: `Explore ${compactTopic(normalizedProjectName)}`,
+      fullLabel: `Explore ${normalizedProjectName}`,
       prompt: `Review the ${normalizedProjectName} project and suggest the most useful concrete next step.`
     })
   }
@@ -52,6 +55,7 @@ export function createWelcomeSuggestions({
     const action = suggestions.length === 0 ? 'Continue' : 'Revisit'
     suggestions.push({
       label: `${action} “${compactTopic(title)}”`,
+      fullLabel: `${action} “${title}”`,
       prompt: `${action} the work from “${title}”. Start by identifying the best concrete next step.`
     })
     if (suggestions.length === 2) break

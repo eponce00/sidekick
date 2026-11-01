@@ -18,15 +18,15 @@
 }
 
 .session-dot-waiting {
-  background: var(--color-warning);
+  background: var(--color-warning-mark);
 }
 
 .session-dot-done {
-  background: var(--accent);
+  background: var(--text-muted);
 }
 
 .session-dot-failed {
-  background: var(--color-error);
+  background: var(--color-error-mark);
 }
 
 .session-dot-idle,
@@ -52,6 +52,7 @@
 }
 
 /* ---- Chip ---- */
+/* The shared chip (UI.md): grey, with colour only on the state's dot and word. */
 .session-chip {
   display: inline-flex;
   align-items: center;
@@ -60,26 +61,31 @@
   max-width: 100%;
   min-height: 24px;
   padding: 2px 9px;
-  border: 1px solid var(--border-color);
+  border: 0;
   border-radius: var(--radius-full);
-  color: var(--text-primary);
-  background: var(--surface-1);
+  color: var(--text-secondary);
+  background: var(--surface-2);
   font: inherit;
   font-size: var(--text-sm);
   line-height: 16px;
   box-sizing: border-box;
 }
 
+.session-chip > .session-dot {
+  width: 6px;
+  height: 6px;
+}
+
 button.session-chip {
   cursor: pointer;
   transition:
-    border-color var(--duration-fast),
+    color var(--duration-fast),
     background var(--duration-fast);
 }
 
 button.session-chip:hover {
-  border-color: var(--border-strong);
-  background: var(--surface-2);
+  color: var(--text-primary);
+  background: var(--surface-3);
 }
 
 .session-chip-name {
@@ -88,9 +94,14 @@ button.session-chip:hover {
   white-space: nowrap;
 }
 
+/* In a chip only the dot carries the state's colour; the word stays grey, as in the summary bar. */
 .session-chip-state {
   flex: none;
   color: var(--text-muted);
+}
+
+.session-chip > .session-chip-state {
+  color: var(--text-secondary);
 }
 
 .session-chip-state::before {
@@ -106,9 +117,13 @@ button.session-chip:hover {
   color: var(--color-error);
 }
 
-.session-chip-state-done,
 .session-chip-state-working {
   color: var(--accent);
+}
+
+/* Finished is neither live nor a success claim, so it stays grey. */
+.session-chip-state-done {
+  color: var(--text-secondary);
 }
 
 .session-chip-project {
@@ -118,6 +133,20 @@ button.session-chip:hover {
   color: var(--text-muted);
   background: var(--surface-3);
   font-size: var(--text-xs);
+}
+
+/* Inside a chip it is the chip's third segment, not a pill in a pill: "api-contract · Working ·
+   sidekick-api", one fill around all of it. */
+.session-chip > .session-chip-project {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  font-size: inherit;
+}
+
+.session-chip > .session-chip-project::before {
+  margin-right: 6px;
+  content: '·';
 }
 
 .family-visually-hidden {
@@ -165,14 +194,15 @@ button.session-chip:hover {
 .family-initials > span {
   display: grid;
   place-items: center;
-  width: 16px;
-  height: 16px;
+  /* The 10px numeral floor, inside a circle of 21px or less (UI.md). */
+  width: 18px;
+  height: 18px;
   border-radius: var(--radius-full);
   color: var(--text-secondary);
   background: var(--surface-3);
   box-shadow: 0 0 0 1.5px var(--app-bg);
-  font-size: 9px;
-  font-weight: 600;
+  font-size: var(--text-2xs);
+  font-weight: 500;
 }
 
 .family-initials > span + span {
@@ -180,14 +210,13 @@ button.session-chip:hover {
 }
 
 /* ---- Rows in the transcript ---- */
-/* They line up with the agent's text, which sits inside its bubble's padding. */
+/* They sit on the conversation column's edges, as the agent's prose and cards do. */
 .family-timeline {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  width: min(100%, 880px);
+  width: min(100%, var(--chat-content-max));
   margin-inline: auto;
-  padding-inline: var(--space-6);
   box-sizing: border-box;
 }
 
@@ -227,7 +256,6 @@ button.session-chip:hover {
 }
 
 /* Collapsed, the received row is one quiet line, like a folded answer. */
-.family-received-toggle,
 .family-message-toggle,
 .family-brief-toggle {
   display: flex;
@@ -247,20 +275,46 @@ button.session-chip:hover {
   cursor: pointer;
 }
 
+/* Drawn as a work step: same height, size, icon column and inline chevron after the label. */
+.family-received-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--work-row-height);
+  padding: 1px 2px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-md);
+  text-align: left;
+  cursor: pointer;
+}
+
+.family-received-icon {
+  display: inline-flex;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+
 .family-received-toggle:hover,
 .family-message-toggle:hover {
   color: var(--text-primary);
   background: var(--surface-2);
 }
 
+/* Opened, the row heads a card whose content keeps the card's 12px padding. */
 .family-received.is-expanded .family-received-toggle {
   padding: 8px 12px;
   border-bottom: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-}
-
-.family-received.is-expanded .family-chevron {
-  margin-left: auto;
 }
 
 .family-received-list {
@@ -314,6 +368,8 @@ button.session-chip:hover {
 /* ---- Task list ---- */
 .family-todos {
   padding: 6px 0 0;
+  /* The step rows lay out by the card's own width, not the window's. */
+  container: family-todos / inline-size;
 }
 
 .family-todos ol {
@@ -323,16 +379,19 @@ button.session-chip:hover {
   list-style: none;
 }
 
+/* One line per step: status glyph, title, then its worker's chip trailing on the same line. */
 .family-todo {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
   gap: 10px;
-  padding: 7px 0;
+  min-height: 32px;
+  padding: 4px 0;
 }
 
 .family-todo-icon {
   display: inline-flex;
-  padding-top: 1px;
+  justify-content: center;
   color: var(--text-muted);
 }
 
@@ -340,18 +399,53 @@ button.session-chip:hover {
   color: var(--accent);
 }
 
+.family-todo.is-failed .family-todo-icon {
+  color: var(--color-error);
+}
+
+/* The step's chat is waiting on the user: warning means "needs you". */
+.family-todo.is-waiting .family-todo-icon {
+  color: var(--color-warning);
+}
+
 .family-todo-copy {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 5px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
   min-width: 0;
 }
 
 .family-todo-title {
+  overflow: hidden;
   color: var(--text-primary);
   font-size: var(--content-text);
   line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A narrow card has no room for both on one line: the chip drops under the title, on its edge,
+   and the title wraps rather than ellipsizing. */
+@container family-todos (max-width: 479px) {
+  .family-todo-copy {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+  }
+
+  .family-todo-title {
+    white-space: normal;
+  }
+
+  .family-todo:has(.session-chip) {
+    align-items: start;
+  }
+
+  .family-todo:has(.session-chip) .family-todo-icon {
+    padding-top: 1px;
+  }
 }
 
 .family-todo.is-completed .family-todo-title {
@@ -359,9 +453,8 @@ button.session-chip:hover {
 }
 
 .family-todo .session-chip {
-  min-height: 20px;
+  min-height: 22px;
   padding: 0 8px;
-  font-size: var(--text-xs);
 }
 
 .family-todos footer {
@@ -379,7 +472,7 @@ button.session-chip:hover {
   align-items: center;
   justify-content: space-between;
   gap: 6px 12px;
-  width: min(calc(100% - 2 * clamp(18px, 4vw, 56px)), 880px);
+  width: min(calc(100% - 2 * var(--chat-gutter)), var(--chat-content-max));
   margin: 0 auto var(--space-2);
   padding: 5px 6px 5px 12px;
   border: 1px solid var(--border-color);
@@ -410,7 +503,7 @@ button.session-chip:hover {
   color: var(--text-secondary);
 }
 
-.family-strip button {
+.family-strip button:not(.settings-ghost-action) {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -424,16 +517,19 @@ button.session-chip:hover {
   cursor: pointer;
 }
 
-.family-strip button:hover {
+.family-strip button:not(.settings-ghost-action):hover {
   color: var(--text-primary);
   background: var(--surface-2);
 }
 
-.family-strip .family-strip-stop {
-  color: var(--color-error);
+/* Its ghost buttons read at the bar's size, as the command status row's do. */
+.family-strip .settings-ghost-action.is-small {
+  font-size: inherit;
 }
 
-.family-strip .family-strip-stop:hover {
+/* Stop is the quiet stop control at rest, so the bar's only red is a failed worker's dot; the
+   danger colour arrives on hover and focus, where the action is about to happen. */
+.family-strip .family-strip-stop:is(:hover, :focus-visible):not(:disabled) {
   color: var(--color-error);
   background: var(--color-error-subtle);
 }
@@ -686,25 +782,25 @@ button.session-chip:hover {
   margin-top: 18px;
 }
 
+/* The chats started here: one group, a row each, split by hairlines. */
 .chats-panel-list {
-  display: grid;
-  gap: 8px;
   margin: 0;
   padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
   list-style: none;
 }
 
 .chats-panel-card {
   display: grid;
   gap: 4px;
-  padding: 10px 11px 8px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--surface-1);
+  padding: 10px 12px 8px;
 }
 
-.chats-panel-card.is-waiting {
-  border-color: color-mix(in srgb, var(--color-warning) 45%, var(--border-color));
+.chats-panel-card + .chats-panel-card {
+  border-top: 1px solid var(--border-subtle);
 }
 
 .chats-panel-card-top {
@@ -763,10 +859,6 @@ button.session-chip:hover {
   white-space: nowrap;
 }
 
-.chats-panel-ahead {
-  color: var(--accent);
-}
-
 .chats-panel-actions {
   display: flex;
   flex-wrap: wrap;
@@ -817,7 +909,7 @@ button.session-chip:hover {
 .chats-panel-meter > span {
   display: block;
   height: 100%;
-  background: var(--accent);
+  background: var(--text-muted);
 }
 
 .chats-panel-tree,
@@ -895,11 +987,7 @@ button.session-chip:hover {
   line-height: 1.5;
 }
 
-.chats-panel-detach .chats-panel-actions {
-  margin: 0;
-}
-
-.chats-panel-detach .chats-panel-actions button {
-  border: 1px solid var(--border-color);
-  padding: 3px 10px;
+.chats-panel-detach-actions {
+  display: flex;
+  gap: var(--space-2);
 }

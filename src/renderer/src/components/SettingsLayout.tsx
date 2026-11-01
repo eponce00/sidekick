@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import type { LucideIcon } from 'lucide-react'
+import { Check, type LucideIcon } from 'lucide-react'
 
 /**
  * Building blocks every Settings page shares, so a new section or row looks like the rest:
@@ -49,7 +49,7 @@ export function SettingsSection({
       <div className="settings-card-heading">
         {Icon && (
           <span className="settings-card-icon" aria-hidden="true">
-            <Icon size={15} />
+            <Icon size={16} />
           </span>
         )}
         <div className="settings-card-title">
@@ -180,23 +180,64 @@ export function SettingsSwitch({
   )
 }
 
+/**
+ * The app's one checkbox: a 16px box drawn over a visually hidden native input, which keeps the
+ * keyboard, form and `<label>` behaviour, and reaches 4px past the box so the hit target is 24px
+ * without taking more room in a row.
+ */
+export function Checkbox({
+  checked,
+  disabled,
+  id,
+  label,
+  className,
+  onChange
+}: {
+  checked: boolean
+  disabled?: boolean
+  id?: string
+  /** The accessible name, when no `<label>` names the box. */
+  label?: string
+  className?: string
+  onChange: (checked: boolean) => void
+}): React.JSX.Element {
+  return (
+    <span className={className ? `ui-checkbox ${className}` : 'ui-checkbox'}>
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        aria-label={label}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span className="ui-checkbox-box" aria-hidden="true">
+        <Check size={12} strokeWidth={2.5} />
+      </span>
+    </span>
+  )
+}
+
 export function SettingsEmptyState({
   icon: Icon,
   title,
   description,
   action,
-  compact
+  compact,
+  centered
 }: {
   icon: LucideIcon
   title: string
   description?: ReactNode
   action?: ReactNode
   compact?: boolean
+  /** Stacked and centred with its description showing, for an empty panel rather than a row. */
+  centered?: boolean
 }): React.JSX.Element {
   return (
-    <div className={`settings-empty${compact ? ' compact' : ''}`}>
+    <div className={`settings-empty${compact ? ' compact' : ''}${centered ? ' centered' : ''}`}>
       <span className="settings-empty-icon" aria-hidden="true">
-        <Icon size={compact ? 16 : 20} />
+        <Icon size={centered ? 18 : compact ? 16 : 20} />
       </span>
       <strong>{title}</strong>
       {description && <p>{description}</p>}

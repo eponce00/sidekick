@@ -75,3 +75,125 @@ describe('settings at startup', () => {
     expect(save).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('chat models', () => {
+  const QWEN = 'ollama:ollama-local/qwen3:8b'
+  const SONNET = 'openrouter:openrouter/anthropic/claude-sonnet-4'
+  let setModel: ReturnType<typeof vi.fn>
+  let saveSettings: ReturnType<typeof vi.fn>
+  let startConversation: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe = (): void => undefined
+        unobserve = (): void => undefined
+        disconnect = (): void => undefined
+      }
+    )
+    if (!globalThis.CSS?.escape) {
+      vi.stubGlobal('CSS', { escape: (value: string) => value.replace(/["\\]/g, '\\$&') })
+    }
+    // Recorded rather than kept, so each test starts from the preview chats as they are.
+    setModel = vi.fn(async () => ({ success: true }))
+    saveSettings = vi.fn(async () => ({ success: true }))
+    const startPreviewRun = window.api.agentRuns.startConversation
+    startConversation = vi.fn(startPreviewRun)
+    Object.assign(window.api.conversations, { setModel })
+    Object.assign(window.api.settings, { save: saveSettings })
+    Object.assign(window.api.agentRuns, { startConversation })
+  })
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  const settle = (): Promise<void> => act(async () => new Promise((done) => setTimeout(done, 0)))
+  const visiblePanel = (): HTMLElement =>
+    container.querySelector<HTMLElement>('.conversation-panel-slot:not([hidden])')!
+  const pickerLabel = (): string =>
+    visiblePanel().querySelector('.model-selector-inline-label')?.textContent ?? ''
+
+  async function click(element: Element | null | undefined): Promise<void> {
+    expect(element).toBeTruthy()
+    await act(async () => (element as HTMLElement).click())
+    await settle()
+  }
+
+  async function openChat(title: string): Promise<void> {
+    await click(container.querySelector(`button.conversation-select-button[title^="${title}"]`))
+  }
+
+  async function chooseModel(name: string): Promise<void> {
+    await click(visiblePanel().querySelector('.model-selector-inline'))
+    // A model with reasoning opens on its effort; the list is behind its name.
+    const toList = visiblePanel().querySelector('.effort-card-model')
+    if (toList) await click(toList)
+    await click(
+      [...visiblePanel().querySelectorAll('.model-menu-option')].find((option) =>
+        option.textContent?.includes(name)
+      )
+    )
+  }
+
+  async function send(text: string): Promise<void> {
+    const input = visiblePanel().querySelector('textarea')!
+    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+    await act(async () => {
+      setValue.call(input, text)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await click(visiblePanel().querySelector('.send-button'))
+  }
+
+  it('keeps each chat on its own model and starts a new chat on the last one chosen', async () => {
+    await act(async () => root.render(<App />))
+    await settle()
+
+    await openChat('Research local model options')
+    expect(pickerLabel()).toContain('Qwen')
+    await chooseModel('Sonnet')
+    expect(setModel).toHaveBeenLastCalledWith('preview-2', SONNET)
+    expect(saveSettings).toHaveBeenLastCalledWith({ selectedModel: SONNET })
+
+    await openChat('Refine the desktop experience')
+    expect(pickerLabel()).toContain('Sonnet')
+    await chooseModel('Qwen')
+    expect(setModel).toHaveBeenLastCalledWith('preview-1', QWEN)
+    expect(saveSettings).toHaveBeenLastCalledWith({ selectedModel: QWEN })
+
+    // Choosing Qwen in the other chat left this one on the model chosen in it, and it runs on it.
+    await openChat('Research local model options')
+    expect(pickerLabel()).toContain('Sonnet')
+    await send('Which local model should I try first?')
+    expect(startConversation).toHaveBeenCalledTimes(1)
+    expect(startConversation.mock.calls[0][0]).toMatchObject({
+      conversationId: 'preview-2',
+      model: { id: SONNET }
+    })
+
+    const create = vi.spyOn(window.api.conversations, 'create')
+    await click(container.querySelector('button[aria-label="New standalone chat"]'))
+    expect(create).toHaveBeenCalledWith('New Conversation', null, 'placeholder', QWEN)
+    expect(pickerLabel()).toContain('Qwen')
+  })
+
+  it('asks for another model when the chat’s own is no longer set up', async () => {
+    await act(async () => root.render(<App />))
+    await settle()
+
+    await openChat('Build release checklist')
+    expect(visiblePanel().querySelector('.composer-model-missing-bar')).toBeTruthy()
+
+    await send('Draft the release checklist')
+    expect(startConversation).not.toHaveBeenCalled()
+    expect(visiblePanel().querySelector('.model-menu')).toBeTruthy()
+
+    await click(
+      [...visiblePanel().querySelectorAll('.model-menu-option')].find((option) =>
+        option.textContent?.includes('Qwen')
+      )
+    )
+    expect(setModel).toHaveBeenLastCalledWith('preview-3', QWEN)
+    expect(visiblePanel().querySelector('.composer-model-missing-bar')).toBeNull()
+  })
+})

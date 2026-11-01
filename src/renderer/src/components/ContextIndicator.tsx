@@ -1,10 +1,13 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useId } from 'react'
 import { CircleHelp } from 'lucide-react'
 import type { PinnedModel } from '../../../shared/models'
 import { providerKindForTransport } from '../../../shared/providerRegistry'
 import { calculateContextCapacity, resolveMaxOutputTokens } from '../../../shared/contextBudget'
 import { resolveContextDisplay } from '../utils/contextDisplay'
 import './ContextIndicator.css'
+
+const RING_STROKE = 2.25
+const RING_RADIUS = 8 - RING_STROKE / 2 - 0.25
 
 interface ContextIndicatorProps {
   currentTokens: number
@@ -39,7 +42,10 @@ function ContextIndicator({
     maxTokens
   )
   const modelContextWindow = contextDisplay.contextWindow
-  const [isHovering, setIsHovering] = useState(false)
+  const [hovering, setHovering] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const tooltipOpen = hovering || focused
+  const tooltipId = useId()
 
   // Fetch model's actual context window size
   useEffect(() => {
@@ -70,8 +76,12 @@ function ContextIndicator({
   const percentage = contextDisplay.reliable
     ? Math.min((currentTokens / modelContextWindow) * 100, 100)
     : 0
-  const circumference = 2 * Math.PI * 16 // radius = 16
+  // A 16px ring, the size of the composer's icons: radius 7.25 plus half its 1.5px stroke.
+  const circumference = 2 * Math.PI * RING_RADIUS
   const strokeDashoffset = circumference - (percentage / 100) * circumference
+  // Under 1% the meter is only its track: a "0" reads as a stray digit, and a sliver of arc as a
+  // rendering fault. The accessible name and the tooltip still give the exact value.
+  const roundedPercentage = Math.round(percentage)
 
   const capacity = calculateContextCapacity({
     contextLength: modelContextWindow,
@@ -102,68 +112,90 @@ function ContextIndicator({
         ? 'warning'
         : 'healthy'
 
-  // Match the indicator to the real compaction boundary when auto-compaction is enabled.
+  // Match the indicator to the real compaction boundary when auto-compaction is enabled. The arc
+  // and the bar carry no text, so they take the mark tokens, as the state dots do.
   const getColor = (): string => {
     if (autoCompactEnabled) {
-      if (currentTokens >= thresholdTokens) return 'var(--color-error)'
-      if (currentTokens >= thresholdTokens * 0.85) return 'var(--color-warning, #f5a524)'
+      if (currentTokens >= thresholdTokens) return 'var(--color-error-mark)'
+      if (currentTokens >= thresholdTokens * 0.85) return 'var(--color-warning-mark)'
       return 'var(--accent)'
     }
     if (percentage < 80) return 'var(--accent)'
-    if (percentage < 95) return 'var(--color-warning, #f5a524)'
-    return 'var(--color-error)'
+    if (percentage < 95) return 'var(--color-warning-mark)'
+    return 'var(--color-error-mark)'
   }
+
+  // The meter has no action, but it takes focus so the keyboard can open its tooltip too. The
+  // focusable mark carries the role, so the tooltip beside it is not swallowed as part of an image.
+  const meterProps = {
+    role: 'img',
+    tabIndex: 0,
+    'aria-label': contextDisplay.reliable
+      ? `${currentTokens.toLocaleString()} / ${modelContextWindow.toLocaleString()} tokens (${percentage.toFixed(1)}%)`
+      : `${currentTokens.toLocaleString()} tokens used · model context limit unknown`,
+    'aria-describedby': tooltipOpen ? tooltipId : undefined,
+    onFocus: () => setFocused(true),
+    onBlur: () => setFocused(false),
+    onKeyDown: (event: React.KeyboardEvent) => {
+      if (event.key === 'Escape' && tooltipOpen) {
+        event.stopPropagation()
+        setFocused(false)
+        setHovering(false)
+      }
+    }
+  } as const
 
   return (
     <div
       className="context-indicator"
-      onMouseEnter={() => setIsHovering(true)}
-      onMouseLeave={() => setIsHovering(false)}
-      aria-label={
-        contextDisplay.reliable
-          ? `${currentTokens.toLocaleString()} / ${modelContextWindow.toLocaleString()} tokens (${percentage.toFixed(1)}%)`
-          : `${currentTokens.toLocaleString()} tokens used · model context limit unknown`
-      }
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => setHovering(false)}
     >
       {contextDisplay.reliable ? (
-        <svg width="28" height="28" viewBox="0 0 36 36">
-          <circle cx="18" cy="18" r="16" fill="none" stroke="var(--panel-border)" strokeWidth="3" />
-          <circle
-            cx="18"
-            cy="18"
-            r="16"
-            fill="none"
-            stroke={getColor()}
-            strokeWidth="3"
-            strokeDasharray={circumference}
-            strokeDashoffset={strokeDashoffset}
-            strokeLinecap="round"
-            transform="rotate(-90 18 18)"
-            style={{
-              transition: 'stroke-dashoffset 0.3s ease, stroke 0.3s ease'
-            }}
-          />
-          <text
-            x="18"
-            y="18"
-            textAnchor="middle"
-            dominantBaseline="central"
-            fontSize="10"
-            fontWeight="600"
-            fill="var(--text-secondary)"
-          >
-            {percentage >= 100 ? '99+' : Math.round(percentage)}
-          </text>
-        </svg>
+        <span className="context-ring" {...meterProps}>
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <circle
+              cx="8"
+              cy="8"
+              r={RING_RADIUS}
+              fill="none"
+              // With no arc the track is all there is, so it stays a step quieter; it firms up
+              // once an accent arc needs something to read against.
+              stroke={roundedPercentage > 0 ? 'var(--border-color)' : 'var(--border-subtle)'}
+              strokeWidth={RING_STROKE}
+            />
+            {roundedPercentage > 0 && (
+              <circle
+                cx="8"
+                cy="8"
+                r={RING_RADIUS}
+                fill="none"
+                stroke={getColor()}
+                strokeWidth={RING_STROKE}
+                strokeDasharray={circumference}
+                strokeDashoffset={strokeDashoffset}
+                strokeLinecap="round"
+                transform="rotate(-90 8 8)"
+                style={{
+                  transition: 'stroke-dashoffset 0.3s ease, stroke 0.3s ease'
+                }}
+              />
+            )}
+          </svg>
+        </span>
       ) : (
-        <span className="context-unknown-mark" aria-label="Context limit unknown">
-          <CircleHelp size={16} strokeWidth={1.8} />
+        <span className="context-unknown-mark" {...meterProps}>
+          <CircleHelp size={16} strokeWidth={1.75} aria-hidden="true" />
         </span>
       )}
 
       {/* Tooltip */}
-      {isHovering && (
-        <div className={`context-tooltip ${contextDisplay.reliable ? '' : 'unknown'}`}>
+      {tooltipOpen && (
+        <div
+          id={tooltipId}
+          role="tooltip"
+          className={`context-tooltip ${contextDisplay.reliable ? '' : 'unknown'}`}
+        >
           {!contextDisplay.reliable && (
             <div className="context-tooltip-unknown-copy">
               <strong>Context limit unavailable</strong>

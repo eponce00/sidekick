@@ -30,6 +30,10 @@ interface ScheduleRow {
   run_count: number
   permission_ceiling: string | null
   chat_mode: string | null
+  created_by_kind: string | null
+  created_by_conversation_id: string | null
+  /** Joined from the chat the agent created the schedule in, while it exists. */
+  created_by_title?: string | null
   created_at: number
   updated_at: number
 }
@@ -68,6 +72,15 @@ function toSchedule(row: ScheduleRow): Schedule {
     runCount: row.run_count,
     permissionCeiling: isPermissionMode(row.permission_ceiling) ? row.permission_ceiling : null,
     chatMode: row.chat_mode === 'continue' ? 'continue' : 'new',
+    ...(row.created_by_kind === 'agent'
+      ? {
+          createdBy: {
+            kind: 'agent' as const,
+            conversationId: row.created_by_conversation_id,
+            ...(row.created_by_title ? { conversationTitle: row.created_by_title } : {})
+          }
+        }
+      : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -111,6 +124,9 @@ const LATEST_RUN_ID = (conversationColumn: string): string =>
   `(SELECT id FROM agent_runs WHERE thread_id = ${conversationColumn}
     ORDER BY started_at DESC, rowid DESC LIMIT 1)`
 
+const SCHEDULE_SELECT = `SELECT s.*, c.title AS created_by_title FROM schedules s
+  LEFT JOIN conversations c ON c.id = s.created_by_conversation_id`
+
 const RUN_SELECT = `SELECT r.*, a.phase AS agent_phase FROM schedule_runs r
   LEFT JOIN agent_runs a ON a.id = COALESCE(${LATEST_RUN_ID('r.conversation_id')}, r.agent_run_id)`
 
@@ -137,13 +153,13 @@ export class ScheduleStore {
   list(): Schedule[] {
     return (
       this.db
-        .prepare('SELECT * FROM schedules ORDER BY created_at ASC, id ASC')
+        .prepare(`${SCHEDULE_SELECT} ORDER BY s.created_at ASC, s.id ASC`)
         .all() as ScheduleRow[]
     ).map((row) => this.withActiveRun(toSchedule(row)))
   }
 
   get(id: string): Schedule | undefined {
-    const row = this.db.prepare('SELECT * FROM schedules WHERE id = ?').get(id) as
+    const row = this.db.prepare(`${SCHEDULE_SELECT} WHERE s.id = ?`).get(id) as
       | ScheduleRow
       | undefined
     return row ? this.withActiveRun(toSchedule(row)) : undefined
@@ -164,14 +180,21 @@ export class ScheduleStore {
       : schedule
   }
 
-  create(input: ScheduleInput, nextRunAt: number, now: number): Schedule {
+  /** `createdIn` is the chat the agent created the schedule in; omitted, the user made it. */
+  create(
+    input: ScheduleInput,
+    nextRunAt: number,
+    now: number,
+    createdIn?: { conversationId: string }
+  ): Schedule {
     const id = randomUUID()
     this.db
       .prepare(
         `INSERT INTO schedules
          (id, name, prompt, project_id, model_id, cadence, hour, minute, weekday, catch_up,
-          enabled, next_run_at, run_count, permission_ceiling, chat_mode, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?, ?, ?, ?)`
+          enabled, next_run_at, run_count, permission_ceiling, chat_mode, created_by_kind,
+          created_by_conversation_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -187,10 +210,23 @@ export class ScheduleStore {
         nextRunAt,
         input.permissionCeiling ?? null,
         input.chatMode ?? 'new',
+        createdIn ? 'agent' : 'user',
+        createdIn?.conversationId ?? null,
         now,
         now
       )
     return this.get(id)!
+  }
+
+  /** Enabled schedules the agent created, which its limit counts. */
+  activeAgentCreatedCount(): number {
+    return (
+      this.db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM schedules WHERE enabled = 1 AND created_by_kind = 'agent'"
+        )
+        .get() as { count: number }
+    ).count
   }
 
   /** `nextRunAt` is null when the schedule stays paused. */

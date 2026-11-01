@@ -159,7 +159,7 @@ export function McpServerSettings({
                 {status?.status === 'needs_approval' && server.enabled && (
                   <button
                     type="button"
-                    className="settings-primary-action is-small"
+                    className="settings-secondary-action is-small"
                     disabled={actingOn === server.id}
                     onClick={() => void runAuthAction(server.id, 'approve')}
                     title="Review exactly what this connector runs, then allow it"
@@ -170,7 +170,7 @@ export function McpServerSettings({
                 {oauth && status?.status === 'needs_auth' && server.enabled && (
                   <button
                     type="button"
-                    className="settings-primary-action is-small"
+                    className="settings-secondary-action is-small"
                     disabled={actingOn === server.id}
                     onClick={() => void runAuthAction(server.id, 'connect')}
                   >

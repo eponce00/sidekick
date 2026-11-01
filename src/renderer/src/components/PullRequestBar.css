@@ -2,8 +2,9 @@
 .pull-request-bar {
   container: pull-request-bar / inline-size;
   min-width: 0;
-  margin: var(--space-2) var(--space-4) 0;
-  font-size: var(--text-xs);
+  /* Inset by the composer's bleed, so it starts on the conversation column's edge. */
+  margin: var(--space-2) var(--composer-bleed) 0;
+  font-size: var(--text-sm);
   color: var(--text-muted);
 }
 
@@ -12,36 +13,54 @@
   align-items: center;
   min-width: 0;
   min-height: 24px;
-  gap: var(--space-3);
+  /* Between groups; inside one they sit 6px apart. */
+  gap: var(--space-4);
 }
 
+.pull-request-bar-group {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The glyph only says "pull request"; the state's dot carries the colour, once. */
 .pull-request-bar-icon {
   flex: none;
+  color: var(--text-secondary);
 }
 
-.pull-request-bar-icon.is-success,
-.pull-request-bar-merge.is-success {
-  color: var(--success);
+.pull-request-bar-merge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 
-.pull-request-bar-icon.is-warning,
-.pull-request-bar-merge.is-warning {
-  color: var(--warning);
+.pull-request-bar-merge-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: var(--radius-full);
+  background: var(--text-muted);
 }
 
-.pull-request-bar-icon.is-failure,
-.pull-request-bar-merge.is-failure {
-  color: var(--error);
+.pull-request-bar-merge.is-success .pull-request-bar-merge-dot {
+  background: var(--color-success);
 }
 
-.pull-request-bar-icon.is-merged,
-.pull-request-bar-merge.is-merged {
-  color: var(--color-merged);
+.pull-request-bar-merge.is-warning .pull-request-bar-merge-dot {
+  background: var(--color-warning-mark);
 }
 
-.pull-request-bar-icon.is-neutral,
-.pull-request-bar-merge.is-neutral {
-  color: var(--text-muted);
+.pull-request-bar-merge.is-failure .pull-request-bar-merge-dot {
+  background: var(--color-error-mark);
+}
+
+.pull-request-bar-merge.is-merged .pull-request-bar-merge-dot {
+  background: var(--color-merged);
 }
 
 .pull-request-bar a {
@@ -60,31 +79,17 @@
   border-radius: var(--radius-xs);
 }
 
-.pull-request-bar-number {
+.pull-request-bar a.pull-request-bar-number {
   flex: none;
-  font-weight: 600;
-}
-
-.pull-request-bar-merge {
-  flex: none;
-  white-space: nowrap;
+  color: var(--text-secondary);
+  font-weight: 500;
 }
 
 .pull-request-bar-lines {
   flex: none;
   display: inline-flex;
   gap: var(--space-1);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  font-variant-numeric: tabular-nums;
-}
-
-.pull-request-bar-lines .is-added {
-  color: var(--success);
-}
-
-.pull-request-bar-lines .is-removed {
-  color: var(--error);
+  font-size: var(--text-sm);
 }
 
 .pull-request-bar a.pull-request-bar-create {
@@ -97,6 +102,8 @@
 }
 
 .pull-request-bar-branch {
+  /* The only group that shrinks: it ellipsizes first, with its full name in the tooltip. */
+  flex: 0 1 auto;
   display: inline-flex;
   align-items: center;
   min-width: 0;
@@ -114,16 +121,16 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
+  /* In the bar's own sans type, so the bar reads as one family; code paths stay mono. */
+  font-size: var(--text-sm);
 }
 
 .pull-request-bar-refresh {
   flex: none;
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -147,7 +154,7 @@
   align-items: center;
   gap: var(--space-2);
   margin-top: var(--space-1);
-  color: var(--warning);
+  color: var(--color-warning);
 }
 
 .pull-request-bar-error span {
@@ -158,11 +165,11 @@
 .pull-request-bar-error button {
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -179,44 +186,64 @@
   flex: none;
 }
 
+/* A ghost dropdown, like the composer's permission and model controls: only its dot is coloured. */
 .pull-request-checks-trigger {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  height: 22px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--text-secondary);
   font: inherit;
+  font-size: var(--text-sm);
   cursor: pointer;
-  transition: background-color var(--duration-fast);
+  transition:
+    background-color var(--duration-fast),
+    color var(--duration-fast);
+}
+
+.pull-request-checks-trigger > svg {
+  flex: none;
+  color: var(--text-muted);
 }
 
 .pull-request-checks-trigger:hover,
+.pull-request-bar .pull-request-checks-trigger:focus-visible {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+
+.pull-request-bar .pull-request-checks-trigger:focus-visible {
+  border-radius: var(--radius-sm);
+}
+
 .pull-request-checks-trigger[aria-expanded='true'] {
   background: var(--surface-3);
+  color: var(--text-primary);
 }
 
 .pull-request-checks-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: var(--radius-full);
   background: var(--text-muted);
 }
 
 .pull-request-checks-trigger.is-success .pull-request-checks-dot {
-  background: var(--success);
+  background: var(--color-success);
 }
 
+/* Running checks are in progress, which the accent marks; warning means a PR needs you. */
 .pull-request-checks-trigger.is-pending .pull-request-checks-dot {
-  background: var(--warning);
+  background: var(--accent);
   animation: pull-request-checks-pulse 1.6s ease-in-out infinite;
 }
 
 .pull-request-checks-trigger.is-failure .pull-request-checks-dot {
-  background: var(--error);
+  background: var(--color-error-mark);
 }
 
 @keyframes pull-request-checks-pulse {
@@ -238,12 +265,14 @@
   left: 0;
   width: 340px;
   max-width: calc(100vw - 32px);
-  padding: var(--space-3);
-  border: 1px solid var(--border-color);
+  padding: var(--space-4);
+  border: 1px solid var(--panel-border);
   border-radius: var(--radius-md);
-  background: var(--panel-bg);
-  box-shadow: var(--shadow-md);
+  background: color-mix(in srgb, var(--surface-1) 97%, transparent);
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(18px);
   color: var(--text-secondary);
+  animation: motion-menu-in var(--duration-normal) var(--ease-out);
 }
 
 .pull-request-checks-heading {
@@ -283,15 +312,15 @@
 }
 
 .pull-request-checks-list li.is-success > svg {
-  color: var(--success);
+  color: var(--color-success);
 }
 
 .pull-request-checks-list li.is-failure > svg {
-  color: var(--error);
+  color: var(--color-error);
 }
 
 .pull-request-checks-list li.is-pending > svg {
-  color: var(--warning);
+  color: var(--accent);
 }
 
 .pull-request-checks-list li.is-skipped > svg {

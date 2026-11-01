@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { Loader2, Square, Volume2 } from 'lucide-react'
+import { Loader2, Volume2 } from 'lucide-react'
 import { voiceModelProgress } from '../../../shared/voice'
 import { useSpeechPlayback, useVoiceState } from '../hooks/useVoice'
 import { speechPlayer } from '../services/voice/speechPlayer'
+import { StopGlyph } from './StopGlyph'
 
 /** Reads a reply aloud on this device; a second click stops it. */
 export function ReadAloudButton({
@@ -47,7 +48,7 @@ export function ReadAloudButton({
       {loading ? (
         <Loader2 size={13} className="read-aloud-spinner" />
       ) : active ? (
-        <Square size={10} fill="currentColor" />
+        <StopGlyph />
       ) : (
         <Volume2 size={13} />
       )}

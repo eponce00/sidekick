@@ -23,6 +23,7 @@ import type {
   ProviderStreamResult
 } from '../../shared/providerRuntime'
 import type { ProviderInstance, ProviderInstanceModel } from '../../shared/settings'
+import { providerImageProfile } from '../../shared/imagePreparation'
 import { offlineProviderHealth, onlineProviderHealth } from '../../shared/providerHealth'
 import { PRODUCT_IDENTITY, PRODUCT_REPOSITORY_URL } from '../../shared/productIdentity'
 import { abortablePromise } from '../services/abortablePromise'
@@ -55,12 +56,14 @@ import {
   discoverAnthropicModels,
   streamAnthropicChat
 } from './anthropicClient'
+import { prepareMessageImages } from './providerImages'
 import {
   requireProviderApiKey,
   resolveProviderDraft,
   resolveProviderInstance,
   resolveProviderInstanceById
 } from './providerResolver'
+import { llamaCppReasoning, type ReasoningCapabilities } from './reasoningCapabilities'
 
 type Emit = (chunk: ProviderStreamChunk) => void
 type ProviderHealthPublisher = (change: ProviderHealthChangedEvent) => void
@@ -106,14 +109,14 @@ type MaterializedToolMedia = ToolResultMediaAttachment & {
 }
 
 /**
- * Local vision gateways commonly cap a request at two images. The budget is
- * global: composer attachments and tool/browser media are serialized into the
- * same provider prompt and must not be bounded independently.
+ * The provider's image count is one budget: composer attachments and tool/browser media are
+ * serialized into the same provider prompt and must not be bounded independently.
  */
-export const MAX_PROVIDER_IMAGE_ATTACHMENTS = 2
-
-function withProviderImageBudget(messages: ProviderChatMessage[]): ProviderChatMessage[] {
-  let remaining = MAX_PROVIDER_IMAGE_ATTACHMENTS
+function withProviderImageBudget(
+  messages: ProviderChatMessage[],
+  maxImages: number
+): ProviderChatMessage[] {
+  let remaining = maxImages
   let changed = false
   const selected = [...messages]
   const keptImageIndexes = new Set<number>()
@@ -151,7 +154,21 @@ function withProviderImageBudget(messages: ProviderChatMessage[]): ProviderChatM
     remaining -= kept.length
     if (kept.length !== media.length) {
       changed = true
-      selected[index] = { ...message, media: kept.length ? kept : undefined }
+      // A browser capture is replaced by the next one. Anything else the model asked to see, and
+      // its result still says it attached, so it is told, or it goes looking for what went missing.
+      const gone = media
+        .slice(0, media.length - kept.length)
+        .filter((attachment) => !attachment.keepDimensions)
+        .map((attachment) => attachment.name ?? 'an image')
+      selected[index] = {
+        ...message,
+        media: kept.length ? kept : undefined,
+        ...(gone.length
+          ? {
+              content: `${message.content || ''}${message.content ? '\n' : ''}[No longer attached, as this model takes ${maxImages} images per request and newer ones took their place: ${gone.join(', ')}. Look again only if you still need it.]`
+            }
+          : {})
+      }
     }
   }
 
@@ -263,33 +280,42 @@ export async function materializeProviderRequestMedia(
     : prepared
 }
 
-async function materializeMedia(request: ProviderChatRequest): Promise<ProviderChatRequest> {
-  const selectedMessages = withProviderImageBudget(request.messages)
-  let changed = selectedMessages !== request.messages
-  const messages = await Promise.all(
-    selectedMessages.map(async (message) => {
-      if (!message.media?.length) return message
-      const media = normalizeToolResultMedia(message.media) || []
-      const resolved = await Promise.all(media.map(materializeAttachment))
-      const materialized = resolved.filter(
-        (attachment): attachment is MaterializedToolMedia => attachment !== null
-      )
-      const unavailable = resolved.length - materialized.length
-      changed ||= materialized.some(
-        (attachment, index) => attachment.source !== media[index]?.source
-      )
-      changed ||= unavailable > 0
-      return {
-        ...message,
-        ...(materialized.length ? { media: materialized } : { media: undefined }),
-        ...(unavailable
-          ? {
-              content: `${message.content || ''}${message.content ? '\n' : ''}[${unavailable} historical visual artifact${unavailable === 1 ? '' : 's'} no longer available.]`
-            }
-          : {})
-      }
-    })
+async function resolveMessageMedia(message: ProviderChatMessage): Promise<ProviderChatMessage> {
+  if (!message.media?.length) return message
+  const media = normalizeToolResultMedia(message.media) || []
+  const resolved = await Promise.all(media.map(materializeAttachment))
+  const materialized = resolved.filter(
+    (attachment): attachment is MaterializedToolMedia => attachment !== null
   )
+  const unavailable = resolved.length - materialized.length
+  if (
+    !unavailable &&
+    materialized.every((attachment, index) => attachment.source === media[index]?.source)
+  ) {
+    return message
+  }
+  return {
+    ...message,
+    ...(materialized.length ? { media: materialized } : { media: undefined }),
+    ...(unavailable
+      ? {
+          content: `${message.content || ''}${message.content ? '\n' : ''}[${unavailable} historical visual artifact${unavailable === 1 ? '' : 's'} no longer available.]`
+        }
+      : {})
+  }
+}
+
+async function materializeMedia(request: ProviderChatRequest): Promise<ProviderChatRequest> {
+  const profile = providerImageProfile(request.target.providerKind)
+  const selectedMessages = withProviderImageBudget(request.messages, profile.maxImages)
+  let changed = selectedMessages !== request.messages
+  const messages: ProviderChatMessage[] = []
+  // One message at a time: decoding a large image briefly holds four bytes per pixel.
+  for (const message of selectedMessages) {
+    const prepared = await prepareMessageImages(await resolveMessageMedia(message), profile)
+    changed ||= prepared !== message
+    messages.push(prepared)
+  }
   return changed ? { ...request, messages } : request
 }
 
@@ -378,32 +404,34 @@ const REASONING_FIELDS = ['reasoning', 'reasoning_effort', 'chat_template_kwargs
 /** Each OpenAI-compatible server's own way of carrying a reasoning level. */
 function openAIReasoningFields(request: ProviderChatRequest): Record<string, unknown> {
   const level = requestReasoningLevel(request)
-  if (!level || level === 'auto') return {}
+  if (!level) return {}
   const kind = request.target.providerKind
   if (kind === 'openrouter') {
-    if (request.reasoningTokens && level !== 'off')
-      return { reasoning: { max_tokens: request.reasoningTokens } }
+    if (level === 'off') return { reasoning: { effort: 'none' } }
+    if (level === 'on') return { reasoning: { enabled: true } }
+    if (request.reasoningTokens) return { reasoning: { max_tokens: request.reasoningTokens } }
     return {
       reasoning: {
-        effort:
-          level === 'off'
-            ? 'none'
-            : nearestEffort(level, ['minimal', 'low', 'medium', 'high', 'xhigh'] as const)
+        effort: nearestEffort(level, ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const)
       }
     }
   }
-  // llama.cpp and vLLM switch thinking through the model's chat template.
+  // llama.cpp passes `reasoning_effort` to templates that read it; others switch on
+  // `enable_thinking`. vLLM templates read `enable_thinking` (Qwen3, Gemma 4) or `thinking`
+  // (Granite, DeepSeek-V3.1); a template ignores the one it does not use.
+  const thinking = level !== 'off'
   const template =
-    kind === 'llamacpp' || kind === 'openai-compatible'
-      ? { chat_template_kwargs: { enable_thinking: level !== 'off' } }
-      : {}
-  if (kind === 'llamacpp') return template
+    kind === 'llamacpp'
+      ? { chat_template_kwargs: { enable_thinking: thinking } }
+      : kind === 'openai-compatible'
+        ? { chat_template_kwargs: { enable_thinking: thinking, thinking } }
+        : {}
   if (level === 'off') return { reasoning_effort: 'none', ...template }
-  if (level === 'on') return template
+  if (level === 'on') return kind === 'lmstudio' ? { reasoning_effort: 'medium' } : template
   return {
     reasoning_effort:
       kind === 'litellm'
-        ? nearestEffort(level, ['minimal', 'low', 'medium', 'high', 'xhigh'] as const)
+        ? nearestEffort(level, ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const)
         : nearestEffort(level, ['low', 'medium', 'high'] as const),
     ...template
   }
@@ -453,10 +481,13 @@ export async function withReasoningRetry<T extends { ok: boolean; error?: string
 ): Promise<T> {
   const result = await run(request)
   const level = requestReasoningLevel(request)
-  if (!level || level === 'auto' || !reasoningWasRejected(result)) return result
-  // Anthropic rejecting an effort level can still think adaptively.
-  const fallback: ReasoningLevel =
-    request.target.providerKind === 'anthropic' && level !== 'off' && level !== 'on' ? 'on' : 'auto'
+  if (!level || !reasoningWasRejected(result)) return result
+  // Anthropic rejecting an effort level can still think adaptively; anything else falls back to
+  // the model's own default.
+  const fallback: ReasoningLevel | undefined =
+    request.target.providerKind === 'anthropic' && level !== 'off' && level !== 'on'
+      ? 'on'
+      : undefined
   return run({ ...request, reasoningLevel: fallback, thinkingEnabled: undefined })
 }
 
@@ -544,17 +575,47 @@ async function discoverOpenAIModels(instance: ProviderInstance): Promise<Provide
     providerDefinitionForInstance(instance).capabilities.context === 'lmstudio-native'
       ? await fetchLMStudioModelDetails(instance.baseUrl, headers)
       : undefined
-  const models = result.data.data
+  const listed = result.data.data
     .filter((model) => isChatModelMode(model.mode ?? model.model_info?.mode))
     .filter((model) => !lmStudio || lmStudioModelChats(lmStudio.get(model.id)))
-    .map((model) =>
+  const templates =
+    kind === 'llamacpp'
+      ? await Promise.all(
+          listed.map((model) => llamaCppTemplateReasoning(instance, model.id, listed.length > 1))
+        )
+      : undefined
+  const models = listed
+    .map((model, index) =>
       applyProviderModelOverrides(
-        withLMStudioDetails(normalizeOpenAIModelMetadata(model), lmStudio?.get(model.id)),
+        {
+          ...withLMStudioDetails(normalizeOpenAIModelMetadata(model), lmStudio?.get(model.id)),
+          ...templates?.[index]
+        },
         configured(model.id)
       )
     )
     .sort((left, right) => left.id.localeCompare(right.id))
   return { ok: true, models }
+}
+
+/**
+ * What llama.cpp's `/props` says the loaded chat template does with reasoning. A server routing
+ * several models answers for one named in the query.
+ */
+async function llamaCppTemplateReasoning(
+  instance: ProviderInstance,
+  model: string,
+  named: boolean
+): Promise<ReasoningCapabilities> {
+  try {
+    const query = named ? `?model=${encodeURIComponent(model)}` : ''
+    const response = await fetch(`${instance.baseUrl.replace(/\/v1$/, '')}/props${query}`, {
+      headers: openAIHeaders(instance)
+    })
+    return response.ok ? llamaCppReasoning(await response.json()) : {}
+  } catch {
+    return {}
+  }
 }
 
 function discoveryInstance(request: ProviderDiscoveryRequest): ProviderInstance {

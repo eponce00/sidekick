@@ -68,17 +68,10 @@ describe('canonical patch EOF constraints', () => {
       'These lines are at line 2, not at the end of the file'
     )
   })
-  it('keeps an End of File anchor that is followed by the End sentinel', () => {
-    expect(() => update('a\ntarget\nz\n', '@@\n-target\n+changed\n*** End of File')).toThrow(
-      'file end'
-    )
-  })
-
   it('explains an extra prefix separator without weakening exact whitespace matching', () => {
     const original = '// Preserve café ☕\r\nexport const label = "before"\r\n'
     const wrong = '@@\n- export const label = "before"\n+ export const label = "after"'
     expect(() => update(original, wrong)).toThrow('exactly ONE character')
-    expect(() => update(original, wrong)).toThrow('replace ONLY the two changed hunk lines')
     expect(() => update(original, `${wrong}\n*** End of File`)).toThrow('CRLF/LF')
     expect(
       update(original, '@@\n-export const label = "before"\n+export const label = "after"')

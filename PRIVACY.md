@@ -1,6 +1,6 @@
 # Privacy
 
-Last updated: October 15, 2026
+Last updated: October 24, 2026
 
 SideKick is a local-first desktop application. It does not require a SideKick account and does not
 send application data through a SideKick-operated backend. The app does not include analytics,
@@ -14,13 +14,16 @@ informed choice before connecting a provider or granting an agent broader permis
 
 SideKick keeps the following data in the operating system's application-data directory:
 
-- conversations, messages, projects, messages between chats, plans, goals, run state, permission records, and
-  workspace memory in a local SQLite database;
+- conversations, messages, projects, messages between chats, plans, goals, run state, permission records,
+  workspace memory, and imported bookmarks and history in a local SQLite database;
 - application preferences and provider or connector configuration;
 - SideKick History snapshots for changes made through SideKick;
 - command output retained for durable runs, plus local operational and update logs; and
 - encrypted provider and connector credentials, and credentials you store for the agent, with a
-  record of when each was added, changed and used.
+  record of when each was added, changed and used; and
+- bookmarks and history you import from another browser on this computer, for the Browser panel.
+  The agent cannot read them, and **Settings › Agent › Imported browser data** removes them. Cookies
+  and passwords are never imported.
 
 Provider and connector secrets, and credentials you store for the agent, are encrypted with
 Electron `safeStorage` when the operating system's credential service is available. Decrypted
@@ -76,6 +79,16 @@ processes under your operating-system account and receive their input locally.
 OAuth access and refresh tokens are kept in protected main-process storage. SideKick cannot reduce
 the permissions granted by the connected service, so review the service's authorization screen and
 disconnect connectors you no longer use.
+
+### Your phone
+
+With **Phone access** on, SideKick listens on your local network so a phone you allowed can show
+and drive your chats. It sends that phone your chat titles, messages, reduced copies of their
+images, and the agent's live progress and speech, encrypted, directly over the network, never
+through a service. Photos, text files and dictation you send from the phone come to this computer
+the same way; dictation is transcribed on this computer as you speak and not kept. It never sends credentials,
+settings or files. The phones you allowed are stored on this computer; removing one, or turning
+phone access off, ends its access. See [Use SideKick from your phone](docs/user-guide/PHONE.md).
 
 ### Updates and operating-system services
 

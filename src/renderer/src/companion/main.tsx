@@ -1,0 +1,76 @@
+import { createRoot } from 'react-dom/client'
+// Inter at the four weights the app uses, bundled as on the desktop: the phone page loads
+// nothing from elsewhere.
+import '@fontsource/inter/400.css'
+import '@fontsource/inter/500.css'
+import '@fontsource/inter/600.css'
+import '@fontsource/inter/700.css'
+// The desktop's design tokens and chat styles, so the phone matches it in both themes.
+import '../styles/App.css'
+import '../styles/codeTheme.css'
+import 'katex/dist/katex.min.css'
+import '../components/ChatPanel.css'
+// The chat list is the desktop's sidebar at phone size, with the same marks and search field.
+import '../components/Sidebar.css'
+import './companion.css'
+import CompanionApp, { type CompanionBoot } from './CompanionApp'
+import { storedDevice, takePairingSecret } from './companionClient'
+import { installPhoneApi } from './phoneApi'
+
+// Browsers keep `crypto.randomUUID` to secure pages, and this one is plain HTTP; the desktop's
+// read-aloud player names each reading with one. The random source itself is available.
+if (typeof crypto.randomUUID !== 'function') {
+  crypto.randomUUID = () => {
+    const bytes = crypto.getRandomValues(new Uint8Array(16))
+    bytes[6] = (bytes[6] & 0x0f) | 0x40
+    bytes[8] = (bytes[8] & 0x3f) | 0x80
+    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}` as ReturnType<
+      Crypto['randomUUID']
+    >
+  }
+}
+installPhoneApi()
+
+// The tokens are dark unless the body says light; the phone follows its own system setting.
+const light = window.matchMedia('(prefers-color-scheme: light)')
+const applyTheme = (): void => {
+  if (light.matches) document.body.dataset.theme = 'light'
+  else delete document.body.dataset.theme
+}
+applyTheme()
+light.addEventListener('change', applyTheme)
+
+async function boot(): Promise<CompanionBoot> {
+  const params = new URLSearchParams(window.location.search)
+  if (params.has('preview')) {
+    // Loaded only for the preview, so a paired phone never downloads the canned data.
+    const { CompanionPreview, PREVIEW_DEVICE, previewState } = await import('./companionPreview')
+    const state = previewState(params.get('state'))
+    return {
+      secret: null,
+      device: null,
+      preview: {
+        device: PREVIEW_DEVICE,
+        connection: new CompanionPreview(Date.now(), {
+          empty: state === 'empty',
+          drops: state === 'reconnecting'
+        }),
+        screen: state === 'start' || state === 'pairing' || state === 'denied' ? state : undefined,
+        drawer: params.get('drawer') === '1'
+      }
+    }
+  }
+  // Read once: taking the secret also removes it from the address bar.
+  return { secret: takePairingSecret(), device: storedDevice() }
+}
+
+void boot().then((value) => {
+  createRoot(document.getElementById('root')!).render(<CompanionApp boot={value} />)
+})
+
+// A new code opened in a tab already showing this page changes only the address's fragment, which
+// does not load the page again; start over so the new code is read.
+window.addEventListener('hashchange', () => {
+  if (/(?:^#|&)p=/.test(window.location.hash)) window.location.reload()
+})

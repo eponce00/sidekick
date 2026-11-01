@@ -48,6 +48,8 @@ export interface AgentScenarioConfig {
   editingDialect?: EditingDialect
   /** Sampling temperature; null leaves it to the server, as production conversation runs do. */
   temperature?: number | null
+  /** Run commands in a terminal, as the app does, instead of over pipes. */
+  terminal?: boolean
 }
 
 export interface AgentKernelScenarioInput {
@@ -55,6 +57,7 @@ export interface AgentKernelScenarioInput {
   capabilities?: readonly AgentCapability[]
   workspaceRoot: string
   messages: ProviderChatMessage[]
+  webSearchEnabled?: boolean
   surface?: Extract<AgentRunSurface, 'conversation'>
   runId?: string
   threadId?: string
@@ -85,7 +88,8 @@ export interface AgentKernelScenarioResult {
   toolNames: string[]
 }
 
-function liveSampler(config: AgentScenarioConfig): AgentKernelProviderSampler {
+/** Samples the configured model as a conversation run does: streaming, with the server's defaults. */
+export function liveSampler(config: AgentScenarioConfig): AgentKernelProviderSampler {
   return async (request, signal, onChunk) => {
     const startedAt = performance.now()
     let firstTokenMs: number | undefined
@@ -220,7 +224,8 @@ export class AgentScenarioHarness {
         join(runtimeRoot, 'command-outputs'),
         undefined,
         config.skillAssetsPath,
-        () => config.shellIsolation === true
+        () => config.shellIsolation === true,
+        { terminalEnabled: () => config.terminal === true }
       ),
       new ToolOutputStore(join(runtimeRoot, 'tool-outputs')),
       this.mcp,
@@ -256,11 +261,13 @@ export class AgentScenarioHarness {
       : null
     const session = await this.tools.createSession({
       runId,
+      // Runs given one thread are replies in one chat, as in the app.
+      ...(input.threadId ? { conversationId: input.threadId } : {}),
       surface,
       workspaceRoot: input.workspaceRoot,
       capabilities: input.capabilities,
       browserEnabled: Boolean(this.config.browser),
-      webSearchEnabled: false,
+      webSearchEnabled: input.webSearchEnabled === true,
       editingDialect,
       plan: planService
         ? {

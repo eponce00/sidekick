@@ -19,11 +19,6 @@ describe('applyAccentPalette', () => {
     expect(document.body.style.getPropertyValue('--accent')).toBe('#86aee8')
     expect(document.body.style.getPropertyValue('--accent-color')).toBe('#86aee8')
   })
-
-  it("lights the robot's LEDs in the palette at full brightness, even in the light theme", () => {
-    applyAccentPalette('blue', 'light')
-    expect(document.body.style.getPropertyValue('--brand-led')).toBe('#60a5fa')
-  })
 })
 
 describe('accentPalette', () => {

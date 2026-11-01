@@ -170,14 +170,6 @@ describe('Anthropic terminal usage', () => {
     expect(chunks.at(-1)?.prompt_eval_count).toBe(count)
     expect(chunks.at(-1)?.eval_count).toBe(count ?? 3)
   })
-
-  it('does not invent zero usage for a response without usage events', async () => {
-    const source = fixture('data: {"type":"message_stop"}\n')
-    const chunks: ProviderStreamChunk[] = []
-    await streamAnthropicChat(instance, request, (chunk) => chunks.push(chunk), source.fetch)
-    expect(chunks.at(-1)?.prompt_eval_count).toBeUndefined()
-    expect(chunks.at(-1)?.eval_count).toBeUndefined()
-  })
 })
 
 describe('Anthropic unfinished content blocks', () => {

@@ -31,7 +31,9 @@ credential or the resolved endpoint for a normal model request.
 Provider-instance credentials are encrypted with Electron `safeStorage`. Settings exposed to the
 renderer contain only `apiKeyConfigured`; a newly typed replacement key crosses the settings bridge
 once and is removed from renderer state after the save completes. The main runtime resolves and
-decrypts the matching secret immediately before a provider request.
+decrypts the matching secret immediately before a provider request. A saved key is only sent to the
+base URL it was saved with: after changing a provider's base URL in Settings, enter its key again
+to test or save it there.
 
 Saving a new or replacement credential requires an available OS-protected
 keychain/password manager. SideKick refuses to save it if that service is locked
@@ -56,7 +58,8 @@ and redacted thinking blocks unchanged through tool-result continuations.
 ## Settings and model selection
 
 Settings manages connections and model inventory. Chat only selects from enabled models projected
-from enabled instances.
+from enabled instances, and each conversation keeps its own choice; see
+[The message box](CHAT.md#the-message-box).
 
 For a provider that lists its models, **Connect** checks the connection and loads the list in one
 step. It runs by itself when a provider opens with no models yet and needs no key, or when a key is

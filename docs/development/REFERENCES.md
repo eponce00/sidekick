@@ -17,6 +17,7 @@ research inputs, not runtime dependencies or vendored source.
 | Claude Code  | [anthropics/claude-code](https://github.com/anthropics/claude-code)             | command UX, hooks, permissions, project configuration      |
 | Grok Build   | [xai-org/grok-build](https://github.com/xai-org/grok-build)                     | planning transitions and review interaction                |
 | T3 Code      | [pingdotgg/t3code](https://github.com/pingdotgg/t3code)                         | multi-agent control surface, Electron desktop, remote UX   |
+| Pomerado     | [Pomerado/pomerado](https://github.com/Pomerado/pomerado)                       | browser pickers, date fields, settling after actions       |
 
 The catalog must contain only public sources with licenses compatible with the intended use. A
 useful idea does not by itself authorize copying its implementation.
@@ -45,6 +46,10 @@ When a reference materially influences a design:
 4. Add a concise reference to the canonical SideKick guide only when it helps future maintainers
    understand a non-obvious decision.
 5. Revalidate claims against the current upstream commit before presenting them as current behavior.
+
+Adapted code from Pomerado (MIT, commit `1bebf64`) is the browser picker, date filling and
+settle logic in `src/main/services/browserPicker.ts`, `browserDates.ts` and `browserSettle.ts`;
+its license notice is kept in `browserPicker.ts`.
 
 Do not publish local checkout paths, raw browsing logs, conversation transcripts, proprietary
 sources, private repository contents, or speculative claims about another product. Link to upstream

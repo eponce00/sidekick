@@ -29,6 +29,8 @@ const LINK_WALK_ENTRY_LIMIT = 200_000
 /** Random bytes in a worktree folder name, shown as six hex characters as Claude Code does. */
 const NAME_SUFFIX_BYTES = 3
 const NAME_ATTEMPTS = 5
+/** Each new worktree's branch is this plus its folder name, as Codex uses `codex/` and Cline `cline/`. */
+export const WORKTREE_BRANCH_PREFIX = 'sidekick/'
 /** Holds a set-aside worktree's snapshot, so Git keeps its commits and changes. */
 const SNAPSHOT_REF_PREFIX = 'refs/sidekick/worktrees/'
 const SNAPSHOT_IDENTITY = {
@@ -45,7 +47,7 @@ interface ManagedWorktreeRow {
   worktree_root: string
   /** Where its chats work: the root, or the subfolder the source project uses. */
   folder_path: string | null
-  /** The branch SideKick created for it; null when it started detached at its base. */
+  /** The branch SideKick created for it; null for worktrees made while they started detached. */
   branch: string | null
   base_ref: string | null
   created_at: number
@@ -597,11 +599,11 @@ export class ManagedWorktreeService {
   }
 
   /**
-   * Creates a SideKick worktree of a project, detached at its base as Codex and OpenCode do: the
-   * base branch stays checked out where it already is, and the agent creates a branch when its
-   * work needs one. `fromWorktreeId` starts it from another worktree's commit instead, as when a
-   * chat in a worktree forks into a new one. `label`, a worker's handle or a chat's title, names
-   * the folder.
+   * Creates a SideKick worktree of a project on a new branch of its own, started from its base, as
+   * Claude Code, Cline and Conductor do. The base branch itself stays checked out where it already
+   * is, since Git lets a branch be checked out in only one folder. `fromWorktreeId` starts it from
+   * another worktree's commit instead, as when a chat in a worktree forks into a new one. `label`,
+   * a worker's handle or a chat's title, names the folder and the branch.
    */
   async create(
     projectId: string,
@@ -660,11 +662,13 @@ export class ManagedWorktreeService {
     const id = randomUUID()
     const worktreeRoot = await this.reserveWorktreeFolder(repositoryRoot, projectId, label)
     const folderPath = sourceSubdirectory ? join(worktreeRoot, sourceSubdirectory) : worktreeRoot
+    let branch: string | null = null
     let created = false
 
     try {
+      branch = await this.freeBranchName(repositoryRoot, basename(worktreeRoot))
       // Git fills the reserved folder, which is empty.
-      await git(repositoryRoot, ['worktree', 'add', '--detach', worktreeRoot, baseRef])
+      await git(repositoryRoot, ['worktree', 'add', '-b', branch, worktreeRoot, baseRef])
       created = true
       const now = Date.now()
       this.db
@@ -672,9 +676,9 @@ export class ManagedWorktreeService {
           `INSERT INTO managed_worktrees
            (id, source_project_id, repository_root, worktree_root, folder_path, branch, base_ref,
             created_at, last_used_at)
-           VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
-        .run(id, projectId, repositoryRoot, worktreeRoot, folderPath, baseRef, now, now)
+        .run(id, projectId, repositoryRoot, worktreeRoot, folderPath, branch, baseRef, now, now)
       this.scheduleHousekeeping(id)
       return await this.get(id)
     } catch (error) {
@@ -690,8 +694,55 @@ export class ManagedWorktreeService {
         await fs.rmdir(worktreeRoot).catch(() => undefined)
       }
       await removeEmptySibling(repositoryRoot, worktreeRoot)
+      await this.deleteBranchWithoutWork(repositoryRoot, branch, baseRef)
       throw error
     }
+  }
+
+  /**
+   * `sidekick/<folder name>`, unless a branch already has that name. A branch named `sidekick`
+   * would keep Git from making any `sidekick/` branch, so then the prefix is `sidekick-`.
+   */
+  private async freeBranchName(repositoryRoot: string, folderName: string): Promise<string> {
+    const exists = (branch: string): Promise<boolean> =>
+      gitSucceeds(repositoryRoot, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`])
+    const prefix = (await exists(WORKTREE_BRANCH_PREFIX.slice(0, -1)))
+      ? `${WORKTREE_BRANCH_PREFIX.slice(0, -1)}-`
+      : WORKTREE_BRANCH_PREFIX
+    for (let attempt = 0; attempt < NAME_ATTEMPTS; attempt++) {
+      const suffix = attempt ? `-${randomBytes(NAME_SUFFIX_BYTES).toString('hex')}` : ''
+      const branch = `${prefix}${folderName}${suffix}`
+      if (!(await exists(branch))) return branch
+    }
+    throw new Error('No free branch name was found for the worktree')
+  }
+
+  /**
+   * Deletes a branch SideKick made for a worktree once the worktree is gone, only while the branch
+   * holds nothing its base lacks: never committed on, or already merged. A branch with work of its
+   * own stays for the user to merge or open a pull request from, and Git refuses to delete one
+   * that is checked out somewhere.
+   */
+  private async deleteBranchWithoutWork(
+    repositoryRoot: string,
+    branch: string | null,
+    base: string | null
+  ): Promise<void> {
+    if (!branch || !base) return
+    const tip = await git(repositoryRoot, [
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      `refs/heads/${branch}`
+    ]).catch(() => '')
+    if (!tip) return
+    const merged = await gitSucceeds(repositoryRoot, [
+      'merge-base',
+      '--is-ancestor',
+      tip,
+      `${base}^{commit}`
+    ])
+    if (merged) await git(repositoryRoot, ['branch', '-D', branch]).catch(() => undefined)
   }
 
   /**
@@ -829,7 +880,8 @@ export class ManagedWorktreeService {
 
   /**
    * Deletes a worktree's folder with its uncommitted changes. Its chats keep their history as
-   * chats outside any project, and commits on a branch stay in the repository.
+   * chats outside any project, and commits on a branch stay in the repository; the branch SideKick
+   * made for it goes too when it holds nothing its base lacks.
    */
   async remove(id: string): Promise<RemoveManagedWorktreeResult> {
     this.row(id)
@@ -869,6 +921,7 @@ export class ManagedWorktreeService {
     await git(row.repository_root, ['update-ref', '-d', `${SNAPSHOT_REF_PREFIX}${row.id}`]).catch(
       () => undefined
     )
+    await this.deleteBranchWithoutWork(row.repository_root, row.branch, row.base_ref)
     // The folder is gone, so its chats keep their history as chats outside any project instead of
     // silently working in the project folder.
     this.db.transaction(() => {

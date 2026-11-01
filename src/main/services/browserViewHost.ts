@@ -1,5 +1,7 @@
 import type { BrowserWindow, WebContentsView } from 'electron'
 import type { BrowserPanelBounds } from '../../shared/browserWorkspace'
+import { steppedBrowserZoom, type BrowserZoomStep } from '../../shared/browserZoom'
+import { zoomActionForInput } from '../bootstrap/windowZoom'
 
 interface HostedView {
   view: WebContentsView
@@ -9,6 +11,8 @@ interface HostedView {
   agentInput: number
   /** App zoom the embedded page is rendered at; 1 whenever the view is parked. */
   zoom: number
+  /** The user's own zoom for this tab, in percent, as a browser's Ctrl + and Ctrl − set it. */
+  userZoom: number
   /**
    * A fixed viewport. The page lays out at exactly its width, unaffected by app zoom, and is
    * drawn scaled down to fit the panel while shown in the app.
@@ -41,7 +45,12 @@ export interface BrowserViewportFit {
 }
 
 function pageZoom(entry: HostedView): number {
-  return entry.agentViewport ? 1 : entry.zoom
+  return entry.agentViewport ? 1 : (entry.zoom * entry.userZoom) / 100
+}
+
+/** How many window pixels one of the page's CSS pixels takes where it is shown. */
+function cssScale(entry: HostedView): number {
+  return entry.agentViewport ? entry.fit : pageZoom(entry)
 }
 
 /** How a fixed viewport sits in the panel: its scale, laid-out height, and the view's rectangle. */
@@ -114,6 +123,7 @@ export function registerBrowserView(view: WebContentsView, parking: BrowserWindo
     parking,
     agentInput: 0,
     zoom: 1,
+    userZoom: 100,
     fit: 1,
     fitHeight: 0,
     layout: Promise.resolve()
@@ -123,7 +133,14 @@ export function registerBrowserView(view: WebContentsView, parking: BrowserWindo
   // Chromium keeps zoom per origin, so a cross-origin navigation drops the zoom
   // we applied on mount. Re-apply it once the new document is committed.
   view.webContents.on('did-navigate', () => applyViewZoom(entry))
-  view.webContents.on('before-input-event', (event) => {
+  view.webContents.on('before-input-event', (event, input) => {
+    // Ctrl + and Ctrl − on the page zoom the page, as in a browser, not the app.
+    const step = entry.agentInput || !input ? null : zoomActionForInput(input)
+    if (step) {
+      event.preventDefault()
+      stepBrowserViewZoom(id, step)
+      return
+    }
     if (!entry.agentInput && entry.host && entry.allowInput && !entry.allowInput())
       event.preventDefault()
   })
@@ -239,8 +256,8 @@ export function parkBrowserView(id: number): void {
   entry.host = undefined
   entry.panelBounds = undefined
   entry.allowInput = undefined
-  // Parked views back automation and human takeover, which size the page from
-  // the parking window itself, so they belong at natural scale.
+  // Parked views back automation, which sizes the page from the parking window
+  // itself, so they belong at natural scale.
   entry.zoom = 1
   if (!entry.parking.isDestroyed() && !entry.view.webContents.isDestroyed()) {
     entry.parking.contentView.addChildView(entry.view)
@@ -275,6 +292,38 @@ export function isBrowserParkingWindow(window: BrowserWindow): boolean {
 
 export function browserViewHost(id: number): BrowserWindow | undefined {
   return views.get(id)?.host
+}
+
+/**
+ * Where a page is drawn in the app window while shown there, and how many window pixels one of
+ * its CSS pixels takes: the app zoom, or the fit of an agent viewport.
+ */
+export function browserViewPlacement(
+  id: number
+): { host: BrowserWindow; bounds: BrowserPanelBounds; scale: number } | undefined {
+  const entry = views.get(id)
+  const host = entry?.host
+  if (!entry || !host || host.isDestroyed() || entry.view.webContents.isDestroyed())
+    return undefined
+  return {
+    host,
+    bounds: entry.view.getBounds(),
+    scale: cssScale(entry)
+  }
+}
+
+/** A tab's zoom in percent, as the user set it; 100 for a page SideKick does not show. */
+export function browserViewZoom(id: number): number {
+  return views.get(id)?.userZoom ?? 100
+}
+
+/** Zooms a tab in or out a step, or back to 100%, and returns its zoom in percent. */
+export function stepBrowserViewZoom(id: number, step: BrowserZoomStep): number | undefined {
+  const entry = views.get(id)
+  if (!entry || entry.view.webContents.isDestroyed()) return undefined
+  entry.userZoom = steppedBrowserZoom(entry.userZoom, step)
+  void scheduleRelayout(entry).catch(() => undefined)
+  return entry.userZoom
 }
 
 export function browserNavigationState(id: number): { canGoBack: boolean; canGoForward: boolean } {
@@ -365,7 +414,7 @@ export async function showBrowserPointer(id: number, x: number, y: number): Prom
   if (!entry || !host || host.isDestroyed() || !Number.isFinite(x) || !Number.isFinite(y)) return
   const bounds = entry.view.getBounds()
   // CSS pixels reach the panel scaled by the app zoom, or by the fit of an agent viewport.
-  const scale = entry.agentViewport ? entry.fit : entry.zoom
+  const scale = cssScale(entry)
   const left = bounds.x + x * scale
   const top = bounds.y + y * scale
   if (left < bounds.x || top < bounds.y || left > bounds.x + bounds.width) return
@@ -388,7 +437,7 @@ export async function showBrowserPointer(id: number, x: number, y: number): Prom
   overlay.hideTimer = setTimeout(() => hidePointer(host), POINTER_VISIBLE_MS)
 }
 
-/** Marks a main-process tool gesture so its synthetic input is not treated as user takeover. */
+/** Marks a main-process tool gesture so its synthetic input is not taken for the user's. */
 export async function browserAgentInput<T>(
   id: number,
   operation: () => T | Promise<T>

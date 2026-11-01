@@ -44,7 +44,7 @@ window.
 
 `src/shared/settingsSchema.ts` lists every setting either path may change, with its type, bounds,
 default, and whether weakening it is sensitive. Keys outside the schema (credentials, provider
-instances, MCP servers, hooks, interpreter paths) cannot be written through `config`. A typed record
+instances, MCP servers, interpreter paths) cannot be written through `config`. A typed record
 of every `ProviderSettings` key lets `doctor` report stored keys SideKick does not recognize. The
 same schema generates the agent reference (`config reference`, `settings_reference`).
 

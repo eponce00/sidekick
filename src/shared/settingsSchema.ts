@@ -138,13 +138,13 @@ export const EDITABLE_SETTINGS: readonly EditableSettingDescriptor[] = [
     description: 'City the agent uses for local answers; empty sends only your time zone.'
   },
   {
-    key: 'contentFontSize',
+    key: 'textScale',
     section: 'appearance',
     type: 'integer',
-    min: 12,
-    max: 17,
-    default: 13,
-    description: 'Conversation text size in pixels.'
+    min: 80,
+    max: 150,
+    default: 100,
+    description: 'Size of everything in the window, in percent: 80, 90, 100, 110, 120, 135 or 150.'
   },
   {
     key: 'notificationsEnabled',
@@ -174,12 +174,10 @@ export const EDITABLE_SETTINGS: readonly EditableSettingDescriptor[] = [
 // Typed as a complete record so a new setting cannot be added without listing it here.
 const KNOWN_STORED_KEYS: Record<keyof ProviderSettings | keyof PublicProviderSettings, true> = {
   maxConcurrentRuns: true,
+  computerUseEnabled: true,
   shellIsolation: true,
   officeHelperInterpreter: true,
   officeHelperConfigurationId: true,
-  projectStartHooks: true,
-  projectCompletionHooks: true,
-  projectWorktreeHooks: true,
   providerInstances: true,
   openRouterApiKey: true,
   openRouterApiKeyConfigured: true,
@@ -195,7 +193,7 @@ const KNOWN_STORED_KEYS: Record<keyof ProviderSettings | keyof PublicProviderSet
   planningModelId: true,
   accentPalette: true,
   accentPaletteVersion: true,
-  contentFontSize: true,
+  textScale: true,
   focusChainEnabled: true,
   autoCompactEnabled: true,
   autoCompactThreshold: true,

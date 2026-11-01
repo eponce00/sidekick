@@ -1,5 +1,6 @@
 import type { AgentToolDefinition } from '../../shared/agentToolDefinitions'
 import {
+  gatingSkillForTool,
   getAgentToolCatalog,
   getAgentToolEntry,
   type AgentToolCatalogOptions
@@ -75,6 +76,7 @@ export interface AgentToolArgumentIssue {
     | 'pattern'
     | 'minItems'
     | 'maxItems'
+    | 'schema'
   message: string
 }
 
@@ -143,19 +145,45 @@ function childPath(parent: string, child: string): string {
   return parent ? `${parent}.${child}` : child
 }
 
+/**
+ * How a schema is checked. A schema from outside SideKick's own catalog, such as a web page's, is
+ * checked without its patterns, since one regular expression can stall the main process, and only
+ * for a bounded number of steps, since nested alternatives multiply.
+ */
+interface SchemaCheck {
+  patterns: boolean
+  steps: number
+}
+
+class SchemaCheckBudgetSpent extends Error {}
+
 function collectSchemaIssues(
   schema: Record<string, unknown>,
   value: unknown,
   path: string,
-  issues: AgentToolArgumentIssue[]
+  issues: AgentToolArgumentIssue[],
+  check: SchemaCheck = { patterns: true, steps: Infinity }
 ): void {
+  if (--check.steps < 0) throw new SchemaCheckBudgetSpent()
+  // JSON Schema allows `true` (anything) and `false` (nothing) in place of a schema; anything else
+  // that is not an object is a malformed schema, reported rather than read.
+  const given: unknown = schema
+  if (given === true) return
+  if (!given || typeof given !== 'object' || Array.isArray(given)) {
+    issues.push({
+      path,
+      code: 'schema',
+      message: `${path || 'arguments'} ${given === false ? 'is not allowed by' : 'has a malformed'} schema`
+    })
+    return
+  }
   const alternatives = [schema.anyOf, schema.oneOf].find(Array.isArray) as
     | Record<string, unknown>[]
     | undefined
   if (alternatives?.length) {
     const candidates = alternatives.map((candidate) => {
       const candidateIssues: AgentToolArgumentIssue[] = []
-      collectSchemaIssues(candidate, value, path, candidateIssues)
+      collectSchemaIssues(candidate, value, path, candidateIssues, check)
       return candidateIssues
     })
     if (candidates.some((candidate) => candidate.length === 0)) return
@@ -206,7 +234,7 @@ function collectSchemaIssues(
         message: `${path} must contain at most ${schema.maxLength} character(s)`
       })
     }
-    if (typeof schema.pattern === 'string') {
+    if (check.patterns && typeof schema.pattern === 'string') {
       try {
         if (!new RegExp(schema.pattern).test(value)) {
           issues.push({
@@ -243,7 +271,8 @@ function collectSchemaIssues(
           itemSchema as Record<string, unknown>,
           item,
           `${path}[${index}]`,
-          issues
+          issues,
+          check
         )
       )
     }
@@ -275,7 +304,7 @@ function collectSchemaIssues(
     for (const [name, propertyValue] of Object.entries(record)) {
       const property = Object.hasOwn(properties, name) ? properties[name] : undefined
       if (!property || propertyValue === undefined || propertyValue === null) continue
-      collectSchemaIssues(property, propertyValue, childPath(path, name), issues)
+      collectSchemaIssues(property, propertyValue, childPath(path, name), issues, check)
     }
   }
 }
@@ -327,6 +356,51 @@ function parseArrayString(value: unknown): unknown {
   } catch {
     return value
   }
+}
+
+/**
+ * A list item given as text where the schema asks for an object with one required text field
+ * becomes that field, as `ask_user` options written as plain labels: refused, the question was a
+ * round lost. Walks only the schema's own properties and items.
+ */
+function wrapTextItems(schema: unknown, value: unknown, path: string, repairs: string[]): unknown {
+  if (!schema || typeof schema !== 'object') return value
+  const { type, items, properties } = schema as Record<string, unknown>
+  if (type === 'array' && Array.isArray(value)) {
+    const item = items && typeof items === 'object' ? (items as Record<string, unknown>) : {}
+    const required = Array.isArray(item.required) ? item.required : []
+    const itemProperties = (item.properties ?? {}) as Record<string, { type?: unknown }>
+    const field =
+      item.type === 'object' &&
+      required.length === 1 &&
+      itemProperties[String(required[0])]?.type === 'string'
+        ? String(required[0])
+        : undefined
+    let changed = false
+    const next = value.map((entry, index) => {
+      const entryPath = `${path}[${index}]`
+      let wrapped: unknown
+      if (field && typeof entry === 'string') {
+        repairs.push(`${entryPath}: text → ${field}`)
+        wrapped = { [field]: entry }
+      } else {
+        wrapped = wrapTextItems(items, entry, entryPath, repairs)
+      }
+      if (wrapped !== entry) changed = true
+      return wrapped
+    })
+    return changed ? next : value
+  }
+  if (!properties || typeof properties !== 'object') return value
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  let next: Record<string, unknown> | undefined
+  for (const [name, property] of Object.entries(properties)) {
+    const current = (value as Record<string, unknown>)[name]
+    if (current === undefined) continue
+    const wrapped = wrapTextItems(property, current, path ? `${path}.${name}` : name, repairs)
+    if (wrapped !== current) (next ??= { ...(value as Record<string, unknown>) })[name] = wrapped
+  }
+  return next ?? value
 }
 
 /**
@@ -430,7 +504,13 @@ export function normalizeAgentToolArguments(
       repairs.push(`${name}: parsed JSON array`)
     }
   }
-  return { arguments: normalized, repairs }
+  return {
+    arguments: wrapTextItems(tool.function.parameters, normalized, '', repairs) as Record<
+      string,
+      unknown
+    >,
+    repairs
+  }
 }
 
 export function prepareAgentToolCall(
@@ -462,6 +542,25 @@ export function prepareAgentToolCall(
     call: { ...call, name: entry.definition.function.name, arguments: normalized.arguments },
     repairs: [...repairs, ...normalized.repairs]
   }
+}
+
+/**
+ * Issues with input against a schema SideKick does not control, such as a web page's tool; null
+ * when the schema is too intricate to check within budget, which leaves checking to its owner.
+ */
+export function externalSchemaIssues(
+  schema: Record<string, unknown>,
+  value: unknown,
+  steps = 5_000
+): AgentToolArgumentIssue[] | null {
+  const issues: AgentToolArgumentIssue[] = []
+  try {
+    collectSchemaIssues(schema, value, '', issues, { patterns: false, steps })
+  } catch (error) {
+    if (error instanceof SchemaCheckBudgetSpent || error instanceof RangeError) return null
+    throw error
+  }
+  return issues
 }
 
 export function validateAgentToolArguments(
@@ -497,6 +596,18 @@ export function validatePreparedAgentToolCall(
   argumentSnapshotFailed = false
 ): ToolExecutionResult | null {
   const catalogEntry = getAgentToolEntry(catalog, call.name)
+  const gatingSkill = catalogEntry ? undefined : gatingSkillForTool(call.name)
+  if (gatingSkill && !catalog.activeSkillIds?.includes(gatingSkill)) {
+    // A later run sees the tool in history but not in its list until the skill loads again.
+    return toolExecutionFailed({
+      title,
+      code: 'unknown_tool',
+      message: `${call.name} arrives with the ${gatingSkill} skill, which is not loaded in this run.`,
+      recoveryAction: 'change_strategy',
+      recovery: `Call use_skill with skill_id "${gatingSkill}", then call ${call.name} again.`,
+      startedAt
+    })
+  }
   if (!catalogEntry) {
     const equivalent = otherHarnessEquivalent(call.name, toolNames(catalog))
     const required = equivalent

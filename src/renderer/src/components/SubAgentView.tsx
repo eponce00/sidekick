@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, Bot, Loader2, Square } from 'lucide-react'
+import { ArrowLeft, Bot, Loader2 } from 'lucide-react'
 import type { Message } from '../types/chat.types'
 import { useFollowBottom } from '../hooks/useFollowBottom'
 import { useSubAgentRun } from '../hooks/useSubAgentRun'
 import { subAgentActivity, subAgentStats, type SubAgentState } from '../utils/subAgentActivity'
 import { MessageItem } from './MessageItem'
 import { MessageMarkdown } from './MessageMarkdown'
+import { StopGlyph } from './StopGlyph'
 import { SubAgentStateIcon } from './SubAgentCard'
 import type { SubAgentTarget } from './subAgentNavigation'
 
@@ -155,7 +156,7 @@ export function SubAgentView({
             disabled={stopping}
             title="Stop this sub-agent; the chat continues with what it found"
           >
-            <Square size={10} fill="currentColor" aria-hidden="true" /> Stop
+            <StopGlyph /> Stop
           </button>
         )}
       </header>

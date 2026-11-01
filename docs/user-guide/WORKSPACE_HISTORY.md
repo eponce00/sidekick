@@ -21,6 +21,11 @@ History captures a baseline immediately before the first SideKick tool in a resp
 change project files. Commands, file writes/edits/deletes, sub-agents, and MCP calls trigger this lazy
 capture. A second tree is captured when the response completes.
 
+In a project of several folders, each folder has its own private History, and a reply keeps one
+History point in each folder where its tools could change files: the folder of every file it
+edits, and the folder a command starts in. A reply that changed files in two folders therefore has
+two points, kept together.
+
 Only the baseline-to-completion delta belongs to that History point. Files already modified by the
 user before the run remain context, not SideKick-owned changes. If the baseline cannot be captured,
 the response continues but SideKick deliberately skips the History point rather than claiming an
@@ -41,11 +46,17 @@ anything, the trusted main process checks the complete operation:
 - directories, devices, and other unsupported replacements are protected;
 - if any protected path conflicts, nothing is restored and the UI lists the paths and reasons.
 
-“Restore” is a soft move: it changes the applied project state but preserves the newer SideKick
-timeline, so the user can return to latest. “Remove newer” restores the selected point and then drops
-the newer SideKick timeline. If a new agent change is made after a soft restore, it starts a new
-timeline from the restored point and the former redo path is discarded, matching normal undo/redo
+Restores happen from the chat, where the changes were made. **Undo** on a reply returns its files
+to how they were before it, in every folder it changed. **Rewind chat and files** on a message
+returns each of the project's folders to how it was before that message: SideKick takes back the
+earliest change from that message on that is still in History, and everything after it, and drops
+that newer timeline along with the messages it leaves. A change already undone is passed over.
+Retry and Edit, in the window and from the phone, do the same. A new agent change after an undo starts a new timeline from there, matching normal undo/redo
 behavior.
+
+The folders go back together. Every folder's paths are checked before any file changes, so a
+conflict in one folder restores nothing anywhere; and if writing files or moving a folder's
+History fails partway, the folders already restored are put back as they were.
 
 ## Manual and concurrent edits
 
@@ -59,9 +70,10 @@ favors safety on later restores and never force-overwrites a detected mismatch.
 
 ## Lifecycle
 
-History is keyed by canonical project path, so chats attached to the same project share one file
-timeline. Detaching a chat makes that project's History visible but read-only. Reattaching to its
+History is keyed by canonical folder path, so chats attached to the same project share one file
+timeline in each of its folders. A folder removed from a project keeps its History, which the
+project's chats no longer restore. Detaching a chat makes that project's History visible but read-only. Reattaching to its
 original project restores access. Chats cannot move History between different projects.
 
-Private History may be cleaned up after its retention period. Conversation messages and History
-labels are separate SQLite records; removing private file History does not delete chat transcripts.
+Private History may be cleaned up after its retention period. Conversation messages are separate
+SQLite records; removing private file History does not delete chat transcripts.

@@ -2,9 +2,9 @@
 
 A chat can start other chats and hand each one part of a task. The chat that starts them is
 their **manager**; the chats it starts are its **workers**. Each worker is an ordinary chat with
-its own transcript and model, usually working in its own Git worktree. When a worker finishes,
-its last message goes back to the manager as a report. You can open any of them, read along and
-type into it.
+its own transcript and model (the manager's, unless the agent chooses another), usually working in
+its own Git worktree. When a worker finishes, its last message goes back to the manager as a
+report. You can open any of them, read along and type into it.
 
 Use this when work splits into parts that can run at the same time and touch different files,
 or that belong to different projects. For a short side question whose answer the agent needs
@@ -110,9 +110,9 @@ had not been delivered are kept and delivered on the chat's next reply.
 - A worker gets no tool its manager could not have, and a read-only worker loses every tool that
   edits or executes. Every worker follows your permission mode. An **Allow for this chat** answer
   in the manager does not carry over to its workers.
-- Each worker works in exactly one folder: its own worktree, or its project folder. It cannot read
-  the manager's folder or another worker's worktree unless that is its own folder; information
-  moves between them only through messages and attachments.
+- Each worker works in exactly one place: its own worktree, or its project's folders. It cannot
+  read the manager's folder or another worker's worktree unless that is its own folder;
+  information moves between them only through messages and attachments.
 - Messages from other chats reach the model marked as untrusted information. They cannot change a
   chat's instructions or permissions.
 

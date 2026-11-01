@@ -25,6 +25,18 @@ Development Electron launches use a separate `sidekick-dev` user-data directory 
 This prevents an unsigned/dev Electron process from requesting access to the packaged app's macOS
 Safe Storage key or mutating its production settings and database.
 
+## Panel windows
+
+A side panel app dragged out of the main window opens in a panel window
+(`src/main/bootstrap/panelWindows.ts`): the same renderer page and preload, loaded with
+`?panel=<app>&conversation=<id>` so `main.tsx` renders only that app. Both window kinds get the
+guards in `appWindowGuards.ts` (navigation kept on the app's page, links outside only with
+permission, no webviews, the shared text size). Only the main window opens, lists or focuses panel
+windows over IPC; a panel window may only put itself back, which tells the main window to show the
+app in its panel. Panel windows close with the main window. Run events already reach every window;
+the shared browser mounts its page into whichever window asks, and voice stays with the main
+window's page.
+
 ## Platform window chrome
 
 Window controls follow the host platform instead of forcing one convention everywhere.
@@ -86,17 +98,30 @@ punctuation (curly quotes, dashes, non-breaking spaces), invisible marks such as
 selectors, or read-tool `N: ` line prefixes (`src/main/utils/tolerantMatch.ts`). Such a match must
 still be unique, and text the model did not change is written back from the file, so a copy typed
 with ASCII quotes never rewrites the file's typography. Each line keeps its own ending, so a mixed
-CRLF/LF file is not converted, and `write` keeps the line endings of the file it replaces. A miss
-reports the closest current lines with their line numbers. Paths may be project-relative, `./`
-prefixed, or absolute inside the project; all spellings share one read receipt. `AgentToolRuntime` requires
-same-run version receipts for every existing target, the kernel resolves permission policy, and the
+CRLF/LF file is not converted, and `write` keeps the line endings of the file it replaces. The
+read tool and the mutation service decode files the same way (`src/main/utils/workspaceText.ts`):
+UTF-8, or UTF-16LE when a byte order mark says so. A byte order mark and lone-CR line breaks are
+not part of the text and are restored on every write, so `read`, `edit` and `apply_patch` see the
+same lines. A file that is not valid text in its encoding is refused by text edits instead of
+being rewritten with replacement characters; `write` and delete may still replace or remove it. A
+miss or ambiguous hunk is input for the model to correct, not a stale read; the closest current
+lines are reported with their line numbers. Paths may be project-relative, `./` prefixed, contain
+`..`, or be absolute inside the project; all spellings, and on Windows and macOS every letter case,
+share one read receipt, and a rename that changes only letter case renames the file in place.
+`AgentToolRuntime` requires
+a version receipt for every existing target it changes, from a read or write earlier in the same
+chat and project (the latest 50 chats are kept, and a rewind, retry or edit forgets the chat's); a
+delete needs none, since it copies no text and workspace history keeps the file. A file whose
+content changed since its receipt is stale, the kernel resolves permission policy, and the
 transactional mutation service commits only after validating the complete plan. Model results
 contain a bounded truthful diff summary; the UI starts the activity row as soon as tool input
 streams and only shows success after `ok` and `changed` are both true.
 
 The same canonical path resolver protects reads, searches, shell-open actions, direct mutations,
 and attachment imports between chats. It rejects lexical traversal and symlink escapes; mutation paths
-also reject internal symlink aliases so snapshots and rollback always refer to one concrete file.
+also reject internal symlink aliases and files with more than one hard link, so snapshots and
+rollback always refer to one concrete file in the project. Snapshots hold bytes, so a rollback
+restores a file that is not text exactly.
 Recursive search and listing never follow symlink entries.
 
 Each configured model exposes exactly one editing contract. Automatic selection uses the upstream
@@ -126,7 +151,7 @@ formatters, and broad mechanical transformations, not the ordinary code-editing 
 `AgentToolRegistry` normalizes only unambiguous syntax differences, validates the complete recursive
 schema before permission prompts or side effects, and returns every missing or invalid field in one
 model-visible result. MCP schemas pass through the same portable schema normalizer, including local
-reference resolution. Malformed provider JSON becomes an ordinary failed tool result with the
+reference resolution and merging `allOf` branches into one schema. Malformed provider JSON becomes an ordinary failed tool result with the
 original call identity; it never aborts the provider loop by itself.
 
 Models bring names from other agent harnesses. The registry renames an argument another harness
@@ -142,8 +167,7 @@ refusals as faults. A path outside the project, whether written with `..`, as an
 path, or reached through a link, is `workspace_scope` whichever tool named it. Its recovery says
 the folder is not granted to the chat and how the user can grant it: a chat in that folder's
 project, which a manager can start with `start_session` and the user approves on the start card,
-or copying the files in. It never suggests another route to the folder. A chat with no project
-folder refuses file and command tools the same way. A browser page that fails to load is labelled
+or copying the files in. It never suggests another route to the folder. A browser page that fails to load is labelled
 like a failed model request: a refused or dropped connection is `transient` and one that gave up
 is `timeout`, while a host name that does not resolve is `not_found`, because the model chose the
 address. `internal` is left for failures nothing explains. A command that failed on a Unix command
@@ -249,9 +273,15 @@ turn whose stream broke off (the connection closed, or the stream ended before t
 finished the reply) is asked again once per turn, three seconds later, with the same request: tools
 run only after their whole turn has arrived, so the broken turn ran none of its calls. Its
 `run.retrying` event (`stream_dropped`, `discardsPartialTurn`) makes the shared projection drop the
-partial text, thinking and tool previews it streamed.
+partial text, thinking and tool previews it streamed. A provider that is busy or limiting requests
+(429, 503, 529, including Anthropic's overloaded and rate-limit errors inside a stream) is asked
+again up to five times, after 2 to 40 seconds or the `Retry-After` it sent; its event
+(`provider_unavailable`) also discards the partial turn. A `Retry-After` over a minute, or a 429
+that names an exhausted quota or billing (`insufficient_quota`), fails at once. A run that would
+complete without having written any text, its last reply empty or only thinking, asks for that
+reply again once (`empty_reply`); a second such reply fails the run.
 
-The renderer bridge exposes run start, stop, event reads, recovery, and durable interaction resolution. For agent commands it exposes only the user's own terminal controls: list and read a conversation's commands, stop one, move one to the background, and type into one. It does not expose raw provider streaming, model-initiated command execution, workspace mutation, MCP execution, or web search. Shared `projectAgentRunEvents` is the only event-to-message projection for streamed text, thinking, tools, artifacts, permissions, questions, tool limits, compaction, usage, and terminal state.
+The renderer bridge exposes run start, stop, event reads, recovery, and durable interaction resolution. For agent commands it exposes only the user's own terminal controls: list and read a conversation's commands, stop one, move one to the background, and type into one. The user's own shells have a separate `userTerminal` bridge, described under [User terminals](#user-terminals). It does not expose raw provider streaming, model-initiated command execution, workspace mutation, MCP execution, or web search. Shared `projectAgentRunEvents` is the only event-to-message projection for streamed text, thinking, tools, artifacts, permissions, questions, tool limits, compaction, usage, and terminal state.
 
 `useConversationRun` owns optimistic user-message insertion plus mode-aware queue/pivot UI behavior,
 but no provider or tool execution. Research report is a run profile on the same kernel, not a
@@ -281,7 +311,31 @@ limited to loopback servers and local-network origins the user approved in a tru
 closed, popups inherit the same navigation guard, and the ephemeral partition rejects file
 subresources whose real path escapes that session's project grant. Conversation sessions persist
 across follow-up runs, are replaced when a chat changes projects, and evict the least-recently-used
-inactive session at the bounded global limit.
+inactive session at the bounded global limit. Bookmarks and history the user imports from other
+browsers serve only the panel's address suggestions; see
+[Browser data import](BROWSER_IMPORT.md).
+
+Chromium refuses an untrusted certificate unless the main process says otherwise, and SideKick says
+otherwise in one place. `ElectronNativeBrowserSurface` listens to `certificate-error` on each owned
+tab's own `WebContents`, never on `app`, so provider, update, `web_fetch` and other window traffic
+keeps Chromium's refusal, as does a `WebContents` the service attached to rather than created.
+`browserCertificatePolicy.ts` decides each connection: only HTTPS or WSS to an origin whose host is
+written as a private IP address qualifies, for the certificate errors a device's own certificate
+can have, with the fingerprint Chromium reported for this connection. A name never qualifies,
+because what it resolves to can change between a check and the connection, and a request from a
+public page gets no use of an exception. Each refusal of a main-frame load is recorded on the tab
+and `workspaceSnapshot` reports it as a notice; the panel unmounts the page view and explains in
+its place, while a tool call gets `BrowserCertificateError`.
+
+Only `browserCertificateApprovals.approve` adds an approval, after the user answers the trusted
+dialog, and it stores one fingerprint per origin in its own store key, revalidated on every read.
+The dialog is reached from the panel's `certificateContinue` action alone. That action carries no
+data: what it shows and stores is what the main process recorded for the active tab, so a window
+can only ask for the dialog, and an agent navigation asks nobody. Removing an approval closes the
+browser sessions' connections, so none already past the certificate outlives it. Requests through
+`session.fetch`, such as remote PDFs and downloads, have no `WebContents` to raise the event and
+fail closed. User-facing rules are in
+[Devices with their own certificate](../user-guide/BROWSER.md#devices-with-their-own-certificate).
 
 The model-facing loop is semantic-first: `browser_observe` returns a fresh accessibility snapshot,
 screenshot, viewport, tab state, console delta, failed-request delta, screenshot hash, and visual
@@ -302,14 +356,53 @@ event.
 tablet, and mobile criteria can be checked explicitly. `view_image` applies the same native
 multimodal result path to raster files inside the active project.
 
+The `computer` tool operates other apps on Windows through a child process of
+[cua-driver](https://github.com/trycua/cua), which SideKick starts in its `bounded` mode with a
+manifest written per chat (`computerUseDriver.ts`). The manifest lists only the executables the user
+approved, in a trusted dialog, and only the driver tools SideKick uses. Those leave out starting
+apps: once approved, SideKick starts a Start Menu app's executable itself, with no arguments.
+`computerUseService.ts` resolves an app from its real executable path on every call, keeps one chat in
+control at a time, and clears a chat's approvals when the user presses Esc. Input goes in the
+background unless the driver reports that an app can't take it there. The real mouse and keyboard then
+need a pause in the user's own input, and are refused for equipment software. SideKick lists apps and
+windows through its own long-lived helper (`computerUseWindows.ts`) rather than the driver, since this
+happens on every step, and draws the agent's pointer itself with the driver's turned off.
+While Esc is armed, `computerUseHighlight.ts` outlines the app with a click-through window that runs no
+script and stays out of screen captures. The end of a run gives back the driver, Esc and the one-chat
+lock, lets go of a held mouse button, and puts back what the user had copied. The helper keeps that copy
+itself and lets go of anything still held when it exits. A picture of the whole screen is made and blanked
+inside the helper too, so hidden windows' pixels never reach the main process, and it gives no way to act.
+A walkthrough step is the one overlay that takes a click; it never takes focus, and shows the model's
+words only as text.
+The driver's telemetry and update checks are turned off, and its files stay in SideKick's
+folder. The Windows package ships the driver in `resources/computer-driver`, fetched at build time by
+`scripts/fetch-computer-driver.cjs`, with its licence and notices. Only the pinned build starts: both
+executables are checked against fixed SHA-256 hashes when packaging and again before each start.
+
+`read` gives a PDF the treatment the providers' own PDF input does, the same for every provider:
+each page's text from the bundled PDF.js (`pdfReader.ts`), plus page images on that path for the
+pages whose text misses something. A page counts as scanned when it has almost no text and
+pictures or drawings cover it, and as illustrated when images cover a twelfth of it or it draws
+many paths. Images go to scans first, up to the provider's per-request image budget, which the
+run preparer passes to the tool session (zero for a model without vision). Scanned pages are also
+rendered and recognized by the operating system (`systemOcr.ts`), because an image leaves the
+request once newer ones fill that budget, and the provider boundary then says so in the tool result:
+`Windows.Media.Ocr` through Windows PowerShell, Apple's Vision framework through JavaScript for
+Automation, or Tesseract on Linux when it is on the path.
+
 An artifact made with `create_artifact` is observed the same way before its result returns.
 `ArtifactInspector` loads `artifact-inspect.html` from the artifact protocol in an offscreen window
 that is never shown, cannot open windows, and cannot navigate. That page renders the artifact with
 the chat's own components in the user's theme, waits for it to report success and then for its data
-requests to settle, and reports runtime errors. The inspector captures the whole artifact at the
-chat's width, and says when it is taller than the chat's bounded frame, where the user first sees
-its top and scrolls inside the card for the rest. The model receives the render status, errors, and, when it accepts images, the capture as a
-small inline JPEG; it no longer receives its own code back. A failed or unfinished render is a
+requests to settle, and reports runtime errors. The inspector captures the artifact at the chat's
+width as the chat shows it, and says when it is taller than the height an artifact grows to in the
+chat, where the user first sees its top and scrolls inside it or opens it full screen for the rest.
+Because the inspection page shares the artifact origin, it also reads the rendered document for
+layout defects (`artifactLayoutCheck.ts`): content wider than the column, sideways scrolling, text
+cut off by its box or squeezed into a column of letters, SVG chart labels past their chart's edge,
+and visible `NaN`, `undefined` or `Infinity`. The model receives the render status, errors, those
+layout problems with what to change, and, when it accepts images, the capture as a small inline
+JPEG; it no longer receives its own code back. A failed or unfinished render is a
 failed tool call, and when inspection itself is unavailable the result says the artifact is
 unverified. The run ledger keeps tool arguments as a bounded preview, so replayed history restores
 the current version of each artifact whole from its result, marks that result as the current
@@ -321,16 +414,99 @@ guidance unless the previous reply made an artifact and the guidance is already 
 chat shows only the latest version of an artifact within a reply, and a failed one as a single
 line that expands to its error and code.
 
+`edit_artifact` replaces exact snippets of an artifact's current version and renders the result as
+`create_artifact` does. Within a reply, `artifactSlots.ts` shows every version of an artifact in the
+place its first version appeared, keyed by that place, so an edit or a rewrite replaces it there
+(a running edit keeps the current version with an Updating line); a later reply shows its own
+version. It finds the artifact by title among this run's versions and then among
+earlier replies' (`conversationArtifacts`), and replayed history keeps the full current code in
+the call or edit result that made it. In a chat, a builder child run, without extended reasoning,
+reviews the agent's version when it failed, has layout problems, or the model can see images; it
+fixes with `edit_artifact` applied to the version under review, and its last version that
+rendered becomes the call's result. The artifact is not hidden while this happens.
+While the model writes a `create_artifact` call, the provider clients decode its partial `code`
+argument at most every 250 ms (`ToolCallPreviews`); the kernel sends it on the live, unstored
+`agentRuns:artifactDraft` channel and keeps it out of the run ledger, whose tool previews carry only
+small fields. The projection gives a pending or running `create_artifact` call an artifact segment
+in its final place, so the chat holds one slot for the artifact from its first code to its result.
+That slot runs drafts in a frame of their own. The React sandbox cuts the partial code at the last
+complete JSX element or word (`artifactDraft.ts`) and closes what is still open. A Babel plugin
+(`artifactDraftTransform.ts`) registers each top-level component by name, so it stays the same
+React component from draft to draft and React updates only what changed, and declares every name
+the draft uses before defining it, from Babel's scope analysis: a placeholder for a component, an
+empty value that renders as nothing for anything else. Each component runs behind its own error
+boundary that falls back to what it last rendered, or a placeholder, and remounts once when its
+hooks change; the fallback keeps the part's element in place, so nothing is rebuilt. The HTML
+sandbox shows the markup that has arrived without its scripts or inline handlers. A draft frame
+never reports errors, its requests never return, and nothing in it animates: Recharts series and
+Chart.js draw without animation (`stillCharts`). Each complete version then loads in a new,
+transparent frame over the one showing, told to draw its charts still, and replaces it only after
+it reports success and its layout has been quiet for half a second (at least 1.2 s, at most 4 s),
+so failures, versions still animating in, and the moments between versions are never seen; frames
+stay in creation order because moving an iframe reloads it. A frame's new height is applied to
+the element when its message arrives rather than on React's next render, artifact pages turn off
+scroll anchoring, and the chat's follower lands content growth in the same frame
+(`bottomFollow.ts`), so growth above the view does not push the reply down for a moment. React code runs in a function scope inside the sandbox's prelude, so it may
+redeclare names the prelude provides, and Babel strips TypeScript annotations.
+
+Artifacts run on the isolated `sidekick-artifact://app` origin, never in the renderer's own
+document. React artifacts run in `sandbox.html`, which bundles the libraries and Tailwind (its v3 browser build ships in `src/renderer/public/vendor` with its license, so artifacts are styled without a network); HTML
+and SVG artifacts run in `html-sandbox.html`, which writes the artifact as its whole document so
+its inline scripts run under that page's policy and its load events fire. The two pages share one
+Content-Security-Policy, except that the HTML page also allows inline scripts, which an HTML
+artifact is made of; the React page already evaluates the model's code. The renderer embeds either
+page in an iframe sandboxed to scripts and its own origin. The chat and a frame talk only through
+the messages in `src/shared/artifactFrame.ts`, and each side reads the other's through that file's
+readers, which accept exactly those shapes. The chat sends `render`, with the code and theme, once
+the frame says it is ready, addressed to the artifact origin, and `theme` when the app's theme or
+accent changes. The frame sends `ready`, its content's `resize`, `success`, `error`, and `pointer`
+when the pointer enters or leaves it, which the chat cannot see inside a frame from another origin.
+The chat accepts a message only from its own frame's window and the artifact origin; the frame only
+from the window that embeds it. Theme values become CSS only after `readArtifactTheme` has refused
+anything that could end a declaration, rule or element, or fetch a resource.
+
+In the chat an artifact has no card. Its frame's page is transparent, so the conversation shows
+through, and its width is the reply's. The frame measures its content's own height rather than the
+document's scroll height, which never drops below the frame's, so it can shrink as well as grow;
+the chat follows that height with a short transition, up to 1,600 pixels, beyond which the frame
+scrolls. The frame hides its scrollbar while the chat is catching up, so scrolling over an
+artifact that fits reaches the chat. Sideways, it scrolls only content more than a pixel wider than itself, so a fractional display scale does not give it a scrollbar over its last line, and the chat grows the frame by a sideways scrollbar's height. Before an artifact first shows, one quiet line holds its place,
+or the height it last rendered at when it is shown again. Each sandbox loads SideKick's fonts and
+a base stylesheet in a cascade layer, so any style the artifact writes wins; with Tailwind the same
+rules are also given as Tailwind's base layer, after its reset and before its utilities, and no
+selector in them is more specific than one element. The design follows the published guidance for
+inline generated interfaces in conversations, from Claude's inline widgets and MCP Apps' host
+theming to OpenAI's Apps SDK inline cards: a transparent frame on host variables, height that fits
+the content without nested scrolling, and an expand control rather than chrome around the content.
+
 Screenshots are durable, bounded files under the SideKick user-data directory. Tool results keep a
 typed file reference in the append-only run ledger; provider adapters materialize it only at the
 request boundary. OpenAI-compatible and Ollama requests preserve the required contiguous tool
 results before adding a linked multimodal observation, while Anthropic uses image blocks inside the
 native tool result. This avoids base64 in chat/event text and keeps screenshots available across
 continuation turns. The durable ledger retains every bounded screenshot, while inference requests
-carry only the two newest tool images so a long local-model browser loop cannot accumulate an
+carry only the provider's image budget so a long local-model browser loop cannot accumulate an
 unbounded visual prompt. Expired historical artifacts degrade to text instead of breaking a later
-follow-up. A locked-down `sidekick-browser:` protocol exposes only retained image artifacts to the
-renderer. The resizable workspace inspector docks Browser beside Files and Recovery. Its flexible
+follow-up.
+
+Images are fitted to the provider in the same boundary step, `materializeProviderRequestMedia`,
+from the profile `providerImageProfile` gives each provider kind
+(`src/shared/imagePreparation.ts`): Anthropic and OpenRouter take four images of up to 2000 px;
+LiteLLM and other OpenAI-compatible gateways two of up to 2048 px; local servers (LM Studio,
+llama.cpp, Ollama) two of up to 1568 px and about 1.3 megapixels, as PNG or JPEG only, since
+llama.cpp cannot decode WebP. Every profile keeps an image within 5 MB once base64-encoded, the
+smallest per-image limit among Anthropic's platforms. An image that already fits is sent byte for
+byte. Others are decoded with `@napi-rs/canvas` (which applies EXIF rotation), drawn at the
+planned size from mipmaps, and encoded as PNG first unless the source was a JPEG, then as JPEG at
+falling quality, shrinking further only when none fits. The model is told in the message when an
+image was resized; an image that cannot be read or declares more than 100 megapixels is left out
+with a note instead of failing the request. Viewport screenshots carry `keepDimensions`, because
+coordinate actions map the model's pixels back through the captured size, so they are only
+re-encoded. Results are cached by content hash, so a turn that resends the conversation's images
+does not prepare them again. The stored message and the run ledger keep the original; the
+composer accepts up to 100 MB per image and validates the type and declared size in the renderer
+and again at the IPC boundary. A locked-down `sidekick-browser:` protocol exposes only retained image artifacts to the
+renderer. The resizable workspace inspector docks Browser beside Files and Terminal. Its flexible
 preview stage consumes the available height while the page label, latest action, and verification
 state stay anchored at the bottom. Portrait and full-page captures scale inside that stage instead
 of expanding the inspector. Viewport screenshots overlay the last runtime-resolved interaction
@@ -357,8 +533,9 @@ cannot complete one. It reports a completion in the conversation as an app-autho
 `ScheduleService` starts saved prompts on a schedule. Each run is a new conversation started
 through the same engine request as a chat the user sends, so the kernel, permission mode, and
 chat status are unchanged; a run that needs approval waits for the user. Missed runs
-collapse into one late run, and a schedule holds one active run at a time. See
-[Scheduled runs](SCHEDULES.md).
+collapse into one late run, and a schedule holds one active run at a time. The agent can manage
+schedules through the gated tools of the `schedules` skill, each change approved by the user in
+every mode. See [Scheduled runs](SCHEDULES.md).
 
 ### Chat status
 
@@ -400,9 +577,11 @@ outcome. Multiple instances of the same provider type are valid. `src/shared/pro
 owns normalization and projection into chat-selectable models.
 
 `src/shared/providerRegistry.ts` is the provider metadata boundary. It distinguishes provider kind from UI transport and wire protocol, including LM Studio versus a generic OpenAI-compatible instance. `src/shared/reasoning.ts` owns
-which reasoning levels each model offers and resolves the one a request carries; each adapter
+which reasoning levels each model offers and resolves the one a request carries. Discovery records
+the levels and default each server reports per model (`src/main/providers/reasoningCapabilities.ts`),
+and a model with fewer than two levels offers no control; each adapter
 translates that level into its protocol's own field (`reasoning.effort`, `reasoning_effort`,
-`chat_template_kwargs.enable_thinking`, Ollama `think`, or Anthropic adaptive thinking with an
+`chat_template_kwargs.enable_thinking` or `thinking`, Ollama `think`, or Anthropic adaptive thinking with an
 effort or a thinking budget) and retries once with the model's default when a server rejects it. Registry capabilities describe credentials, model discovery, health checks, context metadata, model lifecycle, pricing, generation statistics, thinking controls, and vision payloads. `services/providers/providerDiscovery.ts` is the renderer facade for the trusted discovery runtime.
 
 `src/main/providers/providerRuntime.ts` resolves the selected persisted instance and dispatches to the OpenAI-compatible, Ollama, or native Anthropic adapter. It owns discovery, context lookup, completion, streaming, signal-based cancellation, and OpenRouter generation statistics. Fragmented protocol fixtures exercise each adapter, and the opt-in real-provider fixture exercises catalog, completion, and streaming clients against a configured endpoint; regular CI skips the network case when no smoke endpoint is supplied.
@@ -533,6 +712,25 @@ cancellation targets the command's whole process group; on Windows the tree is e
 `taskkill`, and children orphaned by a shell that died first are found by their parent ID, so no
 child keeps the loop stuck by inheriting output.
 
+## User terminals
+
+The Terminal panel also opens the user's own interactive shells. `UserTerminalService`
+(`src/main/services/userTerminals.ts`) spawns the user's default shell in a node-pty
+pseudo-terminal, sized and resized by the view, with the user's environment, and keeps its raw
+output in memory for a view to replay. It is deliberately not part of the agent runtime: the agent's
+command tools reach only `CommandService` and its `TerminalSessionStore`, so a user terminal's ID
+is unknown to `read_command_output` and `send_command_input`, and nothing the user types passes
+through permissions. The renderer names a chat, never a folder; the service resolves the chat's
+workspace from `ProjectStore` and falls back to the home folder. The `userTerminal:*` handlers
+answer only the top-level document of the main window or a torn-out panel window, and output
+events go only to those windows. Every shell is ended with its process tree on close and at
+shutdown.
+
+This follows the common pattern of other harnesses: the agent has its own command channel, a
+process per command with background tasks it reads and answers by ID (Claude Code, Codex
+`exec_command`/`write_stdin`, OpenCode, Zed), while the user's terminals stay theirs and reach
+the agent only by an explicit user action, if at all.
+
 ## Private workspace History
 
 The checkpoint service uses Git only as a content-addressed storage engine in Electron app data,
@@ -543,17 +741,66 @@ real Git staged set, and refuses the whole operation on a later same-file change
 applied ref supports reversible soft restore without rewriting message or label identity. The full
 contract is in [Private workspace History](../user-guide/WORKSPACE_HISTORY.md).
 
+A reply keeps one History point per project folder it may have changed (`messages.checkpoints`, a
+JSON list of `{ workspaceRoot, hash }`). The coordinator begins a folder's capture the first time a
+tool may change files there (`onWorkspaceWillMutate` names the folders: a mutation's target paths,
+a command's primary and working folders) and finishes every capture when the run ends. Every
+restore, from the window, the phone or Retry and Edit, goes through `workspace:restoreHistory` and
+`restoreWorkspaceHistory`, which takes each folder back to before the earliest of the given points
+still on its timeline (an undone point has nothing left to take back), preflights all folders before
+writing, and rolls applied folders and their refs back if a later one fails.
+`historyRestoreTargets` in `src/shared/workspaceHistory.ts` lists each folder's points from a message
+on for a rewind, the same way in the renderer and the companion.
+
 ## Projects and conversation context
 
 `projects` stores durable folder-backed context boundaries and `conversations.project_id` stores
 membership. A null project id is an intentional standalone chat, not an implicit reference to the
 last opened folder. Selecting or creating a conversation activates its project folder in the trusted
-main process before workspace-dependent capabilities are used.
+main process before workspace-dependent capabilities are used. A chat with no project, never attached or
+detached from one, works in its own folder, `chat-folders/<conversation id>` under the app's data, which the
+conversation context names in place of a project folder, so tools, commands, History and the
+Terminal share one boundary. The trusted resolver accepts that exact folder for that chat only.
+It is made when first used, copied on fork, and removed with the chat; a startup sweep removes
+the folders of chats deleted any other way.
 
 Project conversations share folder tools, command working directory, project memory, checkpoints,
 and a freshly loaded `AGENTS.override.md`/`AGENTS.md` instruction chain. The sidebar renders projects
 with nested conversations and keeps standalone chats in a separate section. See
 [Projects](../user-guide/PROJECTS.md) for persistence, movement, and instruction-discovery behavior.
+
+### Several folders
+
+A project keeps its primary folder in `projects.folder_path` and its other folders in
+`project_folders` (project, name, folder, position). The primary folder is the chat's
+`workspaceRoot` everywhere a single root is meant: the command working directory, Git, the pull
+request line, memory, worktrees and the start of instruction discovery. `ProjectStore.foldersForRoot`
+gives the other folders for a workspace root, from trusted data only; for a chat's worktree, a folder
+inside the copied repository becomes the worktree's copy of it. `getConversationContext` returns
+them as `folders`, and the known-workspace resolver trusts each of them. Adding one requires the
+folder picker, like a new project, and a folder inside or around another of the project's folders
+is refused, so every path belongs to one folder.
+
+Paths stay strings rooted at the primary folder. At startup the main process installs a folder
+lookup (`setWorkspaceFolderLookup`) that `locateWorkspacePath` in `src/main/utils/workspacePaths.ts`
+uses to route a path to its folder: a relative path whose first segment is another folder's name
+belongs to that folder, `./name` stays in the primary, and an absolute path belongs to the folder it
+is inside; `..` is applied before the folder is chosen. `resolveSecureWorkspacePath` then checks the
+path, links included, against that folder alone, and `projectRelativePath` spells it the project
+way (`name/path`), which keys read receipts, change records, verification and attachments. So every
+caller that takes a workspace root and a path, the IPC file handlers, the read and mutation
+services, language servers, browser uploads and downloads and `view_image` among them, works across
+folders without a second resolver. The mutation service locks each folder a request names, in
+real-path order; language servers start per folder; the verification snapshot spans every folder.
+
+Occupancy claims the primary folder when a writing run starts and each other folder the first time
+the run may change files there, so a busy folder refuses that change instead of the run. The shell
+starts in the primary folder; `cwd` may name another, `SIDEKICK_PROJECT_FOLDERS` lists them, and
+Docker isolation mounts each folder at `/workspace/<name>` when there are several
+(`sandboxFolderMounts`). Worktrees
+copy the primary folder's repository only: setting aside, restoring and removing several
+repositories' worktrees as one could not be made atomic, and a chat's branch, base and pull request
+are one repository's.
 
 The composer's pull request line asks `pullRequests:getStatus` with a folder only. The main process
 checks it with the known-workspace resolver, then `src/main/services/pullRequestStatus.ts` runs

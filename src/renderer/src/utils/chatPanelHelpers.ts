@@ -22,7 +22,6 @@ export interface TitleGenerationConfig {
   providerKind?: ProviderKind
   model: string
   contextLength: number
-  purpose?: 'title' | 'checkpoint-title'
   fallbackTitle?: string
   retries?: number
   onUpdateTitle: (conversationId: string, title: string) => Promise<void> | void
@@ -90,7 +89,7 @@ export async function generateConversationTitle(
       maxOutputTokens: 128,
       temperature: 0.2,
       think: false,
-      purpose: config.purpose ?? 'title',
+      purpose: 'title',
       retries: config.retries
     })
     if (!titleResult.ok) {

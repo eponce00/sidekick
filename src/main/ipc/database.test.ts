@@ -9,8 +9,7 @@ const mocks = vi.hoisted(() => ({
   db: null as Database.Database | null,
   createWorktree: vi.fn(),
   discardFresh: vi.fn(),
-  discardWithUnusedChat: vi.fn(),
-  setupCreatedWorktree: vi.fn()
+  discardWithUnusedChat: vi.fn()
 }))
 
 vi.mock('electron', () => ({
@@ -32,7 +31,6 @@ vi.mock('./worktrees', () => ({
     worktreeIdFor: () => null
   })
 }))
-vi.mock('./worktreeSetup', () => ({ setupCreatedWorktree: mocks.setupCreatedWorktree }))
 
 import { registerDatabaseHandlers } from './database'
 
@@ -41,7 +39,6 @@ describe('conversation fork IPC', () => {
     mocks.handlers.clear()
     mocks.createWorktree.mockReset()
     mocks.discardFresh.mockReset()
-    mocks.setupCreatedWorktree.mockReset()
     mocks.db = new Database(':memory:')
     applyDatabaseSchema(mocks.db)
     registerDatabaseHandlers()
@@ -117,24 +114,41 @@ describe('conversation fork IPC', () => {
     })
   })
 
-  it('pins a chat and lists it ahead of unpinned chats', async () => {
-    const insert = mocks.db!.prepare(
-      `INSERT INTO conversations (id, title, created_at, updated_at, sidebar_order)
-       VALUES (?, ?, ?, ?, ?)`
-    )
-    insert.run('older', 'Older chat', 1, 1, 1)
-    insert.run('newer', 'Newer chat', 2, 2, 0)
+  it('starts a new chat on the model it is given, and a fork on its source chat’s model', async () => {
+    const create = mocks.handlers.get('conversations:create') as RegisteredHandler
+    const created = (await create(
+      {},
+      'New Conversation',
+      null,
+      'placeholder',
+      'ollama:ollama-local/qwen3:8b'
+    )) as { id: string; model_id: string | null }
+    const withoutModel = (await create({}, 'New Conversation', null, 'placeholder', 42)) as {
+      id: string
+      model_id: string | null
+    }
+    const modelOf = (id: string): unknown =>
+      (
+        mocks.db!.prepare('SELECT model_id FROM conversations WHERE id = ?').get(id) as {
+          model_id: string | null
+        }
+      ).model_id
 
-    const setPinned = mocks.handlers.get('conversations:setPinned') as RegisteredHandler
-    await setPinned({}, 'older', true)
-    const list = mocks.handlers.get('conversations:list') as RegisteredHandler
-    const conversations = (await list({})) as Array<{ id: string; is_pinned: number }>
+    expect(created.model_id).toBe('ollama:ollama-local/qwen3:8b')
+    expect(modelOf(created.id)).toBe('ollama:ollama-local/qwen3:8b')
+    // Anything that is not a model id leaves the chat on the new-chat default.
+    expect(modelOf(withoutModel.id)).toBeNull()
 
-    expect(conversations.map(({ id }) => id)).toEqual(['older', 'newer'])
-    expect(conversations[0].is_pinned).toBe(1)
+    const fork = mocks.handlers.get('conversations:fork') as RegisteredHandler
+    const forked = (await fork({}, { sourceId: created.id, workspaceMode: 'current' })) as {
+      id: string
+      model_id: string | null
+    }
+    expect(forked.model_id).toBe('ollama:ollama-local/qwen3:8b')
+    expect(modelOf(forked.id)).toBe('ollama:ollama-local/qwen3:8b')
   })
 
-  it('preserves the committed fork and copied messages when worktree setup fails', async () => {
+  it('forks into its own new worktree in the source project, with the history copied', async () => {
     const insertProject = mocks.db!.prepare(
       `INSERT INTO projects (id, name, folder_path, created_at, updated_at)
        VALUES (?, ?, ?, 1, 1)`
@@ -164,58 +178,21 @@ describe('conversation fork IPC', () => {
         .run()
       return { id: 'fork-worktree', folderPath: '/fork-worktree' }
     })
-    let committedForkId: string | undefined
-    mocks.setupCreatedWorktree.mockImplementation(async () => {
-      // The external setup boundary must only run after the transaction commits.
-      expect(mocks.db!.inTransaction).toBe(false)
-      const persisted = mocks
-        .db!.prepare('SELECT id FROM conversations WHERE forked_from_conversation_id = ?')
-        .get('source') as { id: string } | undefined
-      expect(persisted).toBeDefined()
-      committedForkId = persisted?.id
-      expect(
-        mocks
-          .db!.prepare('SELECT content FROM messages WHERE conversation_id = ?')
-          .all(committedForkId)
-      ).toEqual([{ content: 'Keep this durable history' }])
-      throw new Error('Injected setup failure after durable fork')
+    const handler = mocks.handlers.get('conversations:fork') as RegisteredHandler
+    const forked = (await handler(
+      { sender: { id: 42 } },
+      { sourceId: 'source', workspaceMode: 'worktree' }
+    )) as { id: string; project_id: string }
+    // The fork stays in its project and works in its own new worktree.
+    expect(forked).toMatchObject({
+      project_id: 'source-project',
+      worktree_id: 'fork-worktree',
+      worktree_folder: '/fork-worktree'
     })
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    try {
-      const sender = { id: 42 }
-      const handler = mocks.handlers.get('conversations:fork') as RegisteredHandler
-      const forked = (await handler(
-        { sender },
-        { sourceId: 'source', workspaceMode: 'worktree' }
-      )) as { id: string; project_id: string }
-      // The fork stays in its project and works in its own new worktree.
-      expect(forked).toMatchObject({
-        id: committedForkId,
-        project_id: 'source-project',
-        worktree_id: 'fork-worktree',
-        worktree_folder: '/fork-worktree'
-      })
-      expect(mocks.setupCreatedWorktree).toHaveBeenCalledWith(
-        sender,
-        '/source-project',
-        '/fork-worktree'
-      )
-      expect(mocks.discardFresh).not.toHaveBeenCalled()
-      expect(
-        mocks.db!.prepare('SELECT worktree_id FROM conversations WHERE id = ?').get(forked.id)
-      ).toEqual({ worktree_id: 'fork-worktree' })
-      expect(
-        mocks.db!.prepare('SELECT id FROM conversations WHERE id = ?').get(forked.id)
-      ).toBeDefined()
-      expect(
-        mocks.db!.prepare('SELECT content FROM messages WHERE conversation_id = ?').all(forked.id)
-      ).toEqual([{ content: 'Keep this durable history' }])
-      expect(warning).toHaveBeenCalledWith(
-        '[Worktrees] Setup could not finish; created fork preserved'
-      )
-    } finally {
-      warning.mockRestore()
-    }
+    expect(mocks.discardFresh).not.toHaveBeenCalled()
+    expect(
+      mocks.db!.prepare('SELECT content FROM messages WHERE conversation_id = ?').all(forked.id)
+    ).toEqual([{ content: 'Keep this durable history' }])
   })
 
   it('persists typed file and folder references and pasted text separately from visible message text', async () => {
@@ -260,6 +237,58 @@ describe('conversation fork IPC', () => {
       content: 'Review this folder',
       attachments: [attachment, pasted]
     })
+  })
+
+  it('stores a large original image, and refuses images the renderer misdescribes', async () => {
+    mocks
+      .db!.prepare(
+        `INSERT INTO conversations (id, title, created_at, updated_at)
+         VALUES ('conversation', 'Images', 1, 1)`
+      )
+      .run()
+    const pixel = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      'base64'
+    )
+    // Over the old 8 MB limit; only the copy a model receives is reduced.
+    const large = Buffer.concat([pixel.subarray(0, 33), Buffer.alloc(9 * 1024 * 1024)])
+    const bomb = Buffer.from(pixel)
+    bomb.writeUInt32BE(60_000, 16)
+    bomb.writeUInt32BE(60_000, 20)
+    const image = (bytes: Buffer, mimeType = 'image/png') => ({
+      id: `image-${mimeType}-${bytes.length}`,
+      name: 'screenshot.png',
+      mimeType,
+      dataUrl: `data:${mimeType};base64,${bytes.toString('base64')}`
+    })
+    const save = mocks.handlers.get('conversations:saveMessage') as RegisteredHandler
+    const message = (id: string, images: unknown[]) => ({
+      id,
+      conversation_id: 'conversation',
+      role: 'user',
+      content: 'Look',
+      images,
+      timestamp: 2
+    })
+
+    await save({}, message('large', [image(large)]))
+    const stored = mocks.db!.prepare("SELECT images FROM messages WHERE id = 'large'").get() as {
+      images: string
+    }
+    expect(JSON.parse(stored.images)[0].dataUrl).toBe(image(large).dataUrl)
+
+    for (const forged of [
+      image(bomb),
+      image(pixel, 'image/jpeg'),
+      image(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'))
+    ]) {
+      await expect(save({}, message(`forged-${forged.id}`, [forged]))).rejects.toThrow(
+        'Invalid message image attachment'
+      )
+    }
+    expect(
+      mocks.db!.prepare("SELECT COUNT(*) AS count FROM messages WHERE id LIKE 'forged-%'").get()
+    ).toEqual({ count: 0 })
   })
 
   it('keeps a notice tone across reopening, and ignores tones it does not know', async () => {

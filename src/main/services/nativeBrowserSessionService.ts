@@ -1,10 +1,20 @@
 import type { BrowserDeviceState } from '../../shared/browserDevices'
+import type { BrowserCertificateNotice } from '../../shared/browserWorkspace'
 import { browserNetworkOrigin, loopbackHost, privateNetworkHost } from '../../shared/browserNetwork'
+import { getDomain } from 'tldts'
 import { credentialPageOrigin } from '../../shared/credentials'
 import type { BrowserNetworkPolicy } from './browserNetworkApprovals'
+import {
+  BrowserCertificateError,
+  certificateAllowed,
+  certificateNotice,
+  type BrowserCertificateEvent,
+  type BrowserCertificateFailure,
+  type BrowserCertificatePolicy
+} from './browserCertificatePolicy'
 import { createHash, randomUUID } from 'crypto'
 import { browserTextTargetOwnsFocus } from './browserTextFocus'
-import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
+import { locateWorkspacePath, resolveSecureWorkspacePath } from '../utils/workspacePaths'
 import { atomicNewFile } from '../utils/atomicNewFile'
 import { capturePublicationDirectory } from '../utils/publicationDirectory'
 import { promises as fs, realpathSync } from 'fs'
@@ -44,6 +54,32 @@ import {
   revokeBrowserPdfSession,
   revokeBrowserPdfSessionsByOwner
 } from '../bootstrap/browserPdfSessionRegistry'
+import { externalSchemaIssues } from './agentToolRegistry'
+import {
+  busyRequests,
+  SETTLE_INSTALL_SCRIPT,
+  SETTLE_MARK_SCRIPT,
+  settleProbeScript
+} from './browserSettle'
+import {
+  foldChoiceText,
+  PICKER_PAGE_FUNCTION,
+  rankChoices,
+  showsChoice,
+  type PickerKind,
+  type PickerOption,
+  type PickerScan
+} from './browserPicker'
+import { fieldDateFormat, formatDate, nativeDateFormat, sameEnteredText } from './browserDates'
+import {
+  WEBMCP_CALL_TIMEOUT_MS,
+  WEBMCP_COMPATIBILITY_SCRIPT,
+  WebMcpCallError,
+  WebMcpPageTools,
+  type WebMcpCallOutcome,
+  type WebMcpPageListing,
+  type WebMcpTool
+} from './webMcpPageTools'
 
 export interface BrowserViewport {
   width: number
@@ -172,7 +208,7 @@ export interface BrowserObservation {
   pointer?: BrowserPointer | null
   semanticSnapshot?: string
   semanticNodeCount?: number
-  /** A site-owned anti-bot checkpoint that requires same-session human takeover. */
+  /** A site-owned anti-bot checkpoint only the user can clear, in the Browser panel. */
   humanVerification?: BrowserHumanVerification | null
   screenshot?: BrowserScreenshotArtifact
   /** Capture failed transiently; no image was observed. The page remains usable. */
@@ -182,6 +218,8 @@ export interface BrowserObservation {
   console: BrowserConsoleEntry[]
   failedRequests: BrowserNetworkFailure[]
   cursors: { console: number; network: number }
+  /** Names of the WebMCP tools the page offers, when it offers any. */
+  webMcpTools?: string[]
 }
 
 export interface BrowserQuiescenceResult {
@@ -275,7 +313,7 @@ export interface BrowserFillFormInput {
   fields: BrowserFormFieldInput[]
 }
 
-/** A stored sign-in to fill on the current page, which must be on one of `allowedOrigins`. */
+/** A stored sign-in to fill on the current page, which must be on `site`. */
 export interface BrowserSignInInput {
   sessionId: string
   /** Found on the page, as a password manager finds them, when absent. */
@@ -283,8 +321,31 @@ export interface BrowserSignInInput {
   passwordTarget?: BrowserTarget
   username?: string
   password?: string
-  allowedOrigins: readonly string[]
+  /** The origin the use was approved for. Its form may send only to the same site. */
+  site: string
   submit?: boolean
+}
+
+/**
+ * The registrable domain of an HTTPS sign-in site, such as example.com for login.example.com, or
+ * null for an address or a server on this computer, where only the exact origin counts.
+ */
+export function signInDomain(site: string): string | null {
+  const url = new URL(site)
+  if (url.protocol !== 'https:' || url.port) return null
+  return getDomain(url.hostname, { allowPrivateDomains: true })
+}
+
+/** A sign-in form may send to its own origin, or over HTTPS to another site of the same domain. */
+export function sameSignInSite(site: string, domain: string | null, target: string): boolean {
+  if (target === site) return true
+  if (!domain) return false
+  const url = new URL(target)
+  return (
+    url.protocol === 'https:' &&
+    !url.port &&
+    (url.hostname === domain || url.hostname.endsWith(`.${domain}`))
+  )
 }
 
 export interface BrowserSignInResult extends BrowserActionResult {
@@ -470,16 +531,44 @@ export interface BrowserVerificationResult {
   observation: BrowserObservation
 }
 
+/**
+ * What a call to a page's tool was checked against before anyone was asked: the tab, its document
+ * and the tool as it stood. A call made under it is refused if any of them changed since.
+ */
+export interface WebMcpCallBinding {
+  tabId: string
+  document: number
+  origin: string
+  tool: WebMcpTool
+}
+
+export interface BrowserWebMcpCallInput {
+  sessionId: string
+  /** The site the caller means to act on; the call is refused on any other. */
+  origin: string
+  tool: string
+  arguments: Record<string, unknown>
+  binding?: WebMcpCallBinding
+}
+
+export interface BrowserWebMcpCallResult {
+  sessionId: string
+  tabId: string
+  origin: string
+  tool: Pick<
+    WebMcpTool,
+    'name' | 'readOnly' | 'untrustedContent' | 'consequential' | 'form' | 'autosubmit'
+  >
+  outcome: WebMcpCallOutcome
+  durationMs: number
+  page: { url: string; title: string }
+}
+
 export interface BrowserCloseInput {
   sessionId?: string
   runId?: string
   tabId?: string
   deleteArtifacts?: boolean
-}
-
-export interface BrowserHumanTakeoverResult {
-  active: boolean
-  observation: BrowserObservation
 }
 
 export interface NativeBrowserSessionServiceOptions {
@@ -497,6 +586,8 @@ export interface NativeBrowserSessionServiceOptions {
   maxRemotePdfBytes?: number
   /** Which local-network origins may be opened over plain HTTP; none without it. */
   networkPolicy?: BrowserNetworkPolicy
+  /** Which untrusted certificates a tab may go on past; none without it. */
+  certificatePolicy?: BrowserCertificatePolicy
   artifactRetentionMs?: number
   maxTelemetryEntries?: number
   maxRepeatedNoChangeActions?: number
@@ -536,9 +627,6 @@ export interface NativeBrowserSurface {
   fetch(url: string, init?: RequestInit): Promise<Response>
   stop(): void
   close(): Promise<void>
-  showForHumanTakeover(): void
-  hideHumanTakeover(): void
-  isHumanTakeoverVisible(): boolean
   focus(): void
   insertText(text: string): Promise<void>
   sendInputEvent(event: MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent): void
@@ -560,6 +648,10 @@ export interface NativeBrowserSurface {
   setNavigationGuard(guard: (url: string) => boolean): void
   /** Guards file:// document and subresource requests in the isolated partition. */
   setRequestGuard(guard: (url: string) => boolean): void
+  /** Answers each connection this tab's isolated session would refuse for its certificate. */
+  setCertificateGuard(guard: (event: BrowserCertificateEvent) => boolean): void
+  /** Ends this tab's session's open connections, so the next request is judged afresh. */
+  closeConnections?(): Promise<void>
   onConsole(listener: (message: NativeBrowserSurfaceConsoleMessage) => void): () => void
   onLoadFailure(listener: (failure: NativeBrowserSurfaceLoadFailure) => void): () => void
   onDebuggerMessage(listener: (method: string, params: Record<string, unknown>) => void): () => void
@@ -637,6 +729,8 @@ interface CoordinateCaptureState {
 interface TabState {
   id: string
   surface: NativeBrowserSurface
+  /** The certificate refused for the page this tab tried to open last. */
+  certificate?: BrowserCertificateFailure
   /** A fixed viewport in effect, and who chose it; absent while the page is responsive. */
   device?: BrowserDeviceState
   /** User-facing source URL when the WebContents is showing an internal viewer. */
@@ -658,6 +752,8 @@ interface TabState {
   lastScreenshotHashes: Partial<Record<BrowserScreenshotKind, string>>
   unchangedScreenshotStreaks: Partial<Record<BrowserScreenshotKind, number>>
   inFlight: Map<string, RequestMetadata>
+  /** Where the latest action began, so its wait counts only what the action changed. */
+  settleMark?: { token: string; id: string; at: number }
   actionHistory: ActionRecord[]
   disposers: Array<() => void>
   /**
@@ -665,6 +761,8 @@ interface TabState {
    * value, screenshots are withheld if it stops being a password field, and evaluation is refused.
    */
   secretFields?: number[]
+  /** The WebMCP tools the tab's top-level document offers. */
+  webMcp: WebMcpPageTools
 }
 
 interface OpeningReservation {
@@ -685,7 +783,6 @@ interface SessionState {
   tabs: Map<string, TabState>
   pendingTabs: Set<OpeningReservation>
   activeTabId: string
-  humanTakeoverTabId?: string
   console: BrowserConsoleEntry[]
   failures: BrowserNetworkFailure[]
   consoleSequence: number
@@ -707,6 +804,8 @@ interface BrowserFormControlState {
   disabled: boolean
   readOnly: boolean
   value?: string
+  inputType?: string
+  placeholder?: string
   selectedValues?: string[]
   checked?: boolean
 }
@@ -889,6 +988,30 @@ async function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefined
       }
     )
   })
+}
+
+/**
+ * A page held by a JavaScript dialog or a busy script never answers; a bounded wait turns that
+ * into an error the agent can act on instead of a run that never ends.
+ */
+async function pageAnswer<T>(operation: Promise<T>, limitMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  const stuck = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `The page did not respond within ${limitMs / 1000} s; it may be showing a dialog or running a long script`
+          )
+        ),
+      limitMs
+    )
+  })
+  try {
+    return await Promise.race([operation, stuck])
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 async function delay(ms: number, signal?: AbortSignal): Promise<void> {
@@ -1096,9 +1219,8 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   private readonly destroyedListeners = new Set<() => void>()
   private readonly openUrlListeners = new Set<(url: string) => void>()
   private navigationGuard: (url: string) => boolean = (url) => url === 'about:blank'
+  private certificateGuard: (event: BrowserCertificateEvent) => boolean = () => false
   private debuggerOwned = false
-  private closing = false
-  private humanTakeoverVisible = false
   /** A viewport the agent set, and the scale it is drawn at where it is shown. */
   private agentViewport?: BrowserViewport
   private agentViewportScale = 1
@@ -1110,20 +1232,6 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
     private readonly view?: import('electron').WebContentsView
   ) {
     this.webContentsId = contents.id
-    ownerWindow?.on('close', (event) => {
-      if (this.closing || !this.humanTakeoverVisible) return
-      // Closing the takeover window returns control to SideKick without
-      // destroying the isolated tab, cookies, form state, or browser history.
-      event.preventDefault()
-      this.hideHumanTakeover()
-    })
-    ownerWindow?.on('page-title-updated', (event) => {
-      if (!this.humanTakeoverVisible) return
-      event.preventDefault()
-      this.updateTakeoverTitle()
-    })
-    contents.on('did-navigate', () => this.updateTakeoverTitle())
-    contents.on('did-navigate-in-page', () => this.updateTakeoverTitle())
     contents.on('dom-ready', () => {
       void contents.insertCSS(STANDALONE_SVG_VIEWER_CSS).catch(() => undefined)
     })
@@ -1141,6 +1249,25 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
       const url = (details as unknown as { url?: string }).url ?? deprecatedUrl
       if (!this.navigationGuard(url)) details.preventDefault()
     })
+    // This tab's own event, not the app-wide one: no other traffic can reach this decision, and a
+    // contents the service attached to keeps Chromium's refusal.
+    if (!attached) {
+      contents.on('certificate-error', (event, url, error, certificate, callback, isMainFrame) => {
+        event.preventDefault()
+        callback(
+          this.certificateGuard({
+            url,
+            error,
+            fingerprint: certificate.fingerprint,
+            subject: certificate.subjectName,
+            issuer: certificate.issuerName,
+            validUntil: certificate.validExpiry,
+            isMainFrame,
+            pageUrl: contents.getURL()
+          })
+        )
+      })
+    }
     contents.on('console-message', (details) => {
       const modern = details as unknown as {
         level: NativeBrowserSurfaceConsoleMessage['level']
@@ -1261,9 +1388,7 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
 
   async close(): Promise<void> {
     if (this.contents.isDestroyed()) return
-    this.closing = true
     parkBrowserView(this.webContentsId)
-    this.humanTakeoverVisible = false
     this.detachDebugger()
     this.clearListeners()
     if (!this.attached) {
@@ -1271,60 +1396,6 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
       if (this.ownerWindow && !this.ownerWindow.isDestroyed()) this.ownerWindow.destroy()
       else this.contents.close({ waitForBeforeUnload: false })
     }
-  }
-
-  showForHumanTakeover(): void {
-    const host = browserViewHost(this.webContentsId)
-    if (host && !host.isDestroyed()) {
-      this.humanTakeoverVisible = true
-      host.focus()
-      this.contents.focus()
-      return
-    }
-    if (!this.ownerWindow || this.ownerWindow.isDestroyed() || this.contents.isDestroyed()) {
-      throw new Error('This browser surface cannot be shown for human takeover')
-    }
-    this.humanTakeoverVisible = true
-    this.ownerWindow.setOpacity(1)
-    this.ownerWindow.setFocusable(true)
-    this.ownerWindow.setSkipTaskbar(false)
-    this.ownerWindow.center()
-    this.updateTakeoverTitle()
-    this.ownerWindow.show()
-    this.ownerWindow.focus()
-    this.contents.focus()
-  }
-
-  hideHumanTakeover(): void {
-    this.humanTakeoverVisible = false
-    if (browserViewHost(this.webContentsId)) return
-    if (this.ownerWindow && !this.ownerWindow.isDestroyed()) {
-      this.ownerWindow.setSkipTaskbar(true)
-      this.ownerWindow.setOpacity(0)
-      this.ownerWindow.setFocusable(false)
-      this.ownerWindow.showInactive()
-    }
-  }
-
-  isHumanTakeoverVisible(): boolean {
-    return Boolean(
-      this.humanTakeoverVisible &&
-      this.ownerWindow &&
-      !this.ownerWindow.isDestroyed() &&
-      (browserViewHost(this.webContentsId)?.isVisible() || this.ownerWindow.isVisible())
-    )
-  }
-
-  private updateTakeoverTitle(): void {
-    if (!this.humanTakeoverVisible || !this.ownerWindow || this.ownerWindow.isDestroyed()) return
-    let origin = 'unknown origin'
-    try {
-      const url = new URL(this.contents.getURL())
-      origin = url.protocol === 'file:' ? 'local file' : url.origin
-    } catch {
-      // Keep a main-process-owned title even for a transient navigation URL.
-    }
-    this.ownerWindow.setTitle(`SideKick Browser — ${origin}`)
   }
 
   focus(): void {
@@ -1407,7 +1478,7 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   }
 
   async executeJavaScript<T>(source: string): Promise<T> {
-    return (await this.contents.executeJavaScript(source, true)) as T
+    return (await pageAnswer(this.contents.executeJavaScript(source, true), 30_000)) as T
   }
 
   async captureViewport(): Promise<NativeBrowserSurfaceCapture> {
@@ -1542,9 +1613,12 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
       this.ownerWindow.setPosition(-32_000, -32_000, false)
       this.ownerWindow.showInactive()
     }
-    return (await browserDebuggerCommand(this.webContentsId, method, () =>
-      this.contents.debugger.sendCommand(method, params)
-    )) as T
+    return pageAnswer(
+      browserDebuggerCommand(this.webContentsId, method, () =>
+        this.contents.debugger.sendCommand(method, params)
+      ),
+      method === 'Page.captureScreenshot' ? 60_000 : 30_000
+    ) as Promise<T>
   }
 
   setNavigationGuard(guard: (url: string) => boolean): void {
@@ -1557,6 +1631,15 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
       { urls: ['file://*/*'] },
       (details, callback) => callback({ cancel: !guard(details.url) })
     )
+  }
+
+  setCertificateGuard(guard: (event: BrowserCertificateEvent) => boolean): void {
+    this.certificateGuard = guard
+  }
+
+  async closeConnections(): Promise<void> {
+    if (!this.attached && !this.contents.isDestroyed())
+      await this.contents.session.closeAllConnections()
   }
 
   onConsole(listener: (message: NativeBrowserSurfaceConsoleMessage) => void): () => void {
@@ -1629,9 +1712,12 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
         webSecurity: true,
         allowRunningInsecureContent: false,
         backgroundThrottling: false,
-        // Use a normal WebContents so this exact tab can be revealed for
-        // same-session human takeover. Full-page CDP capture briefly wakes
-        // the window offscreen to keep Chromium's compositor responsive.
+        // Chromium's own WebMCP, off by default in Electron 43: pages can offer tools that the
+        // agent lists and calls through the DevTools WebMCP domain. Only these tabs get it.
+        enableBlinkFeatures: 'WebMCP',
+        // Use a normal WebContents so the Browser panel can show this exact
+        // tab. Full-page CDP capture briefly wakes the window offscreen to
+        // keep Chromium's compositor responsive.
         offscreen: false,
         devTools: false
       }
@@ -1652,8 +1738,7 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
       browserSession.on('will-download', (event) => event.preventDefault())
     }
     // Keep Chromium's compositor live for background automation without
-    // putting the browser in the taskbar or on a usable display. Takeover
-    // moves this exact window on screen; completion parks it here again.
+    // putting the browser in the taskbar or on a usable display.
     window.showInactive()
     return new ElectronNativeBrowserSurface(view.webContents, window, false, view)
   }
@@ -1670,12 +1755,78 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
 export class NativeBrowserSessionService {
   workspaceSnapshot(sessionId: string) {
     const session = this.getSession(sessionId)
+    const tab = this.getTab(session)
+    const tools = tab.webMcp.snapshot()
     return {
       sessionId,
       activeTabId: session.activeTabId,
       tabs: this.tabSummaries(session),
-      device: this.getTab(session).device ?? null,
-      ...browserNavigationState(this.getTab(session).surface.webContentsId)
+      device: tab.device ?? null,
+      certificate: this.shownCertificateNotice(tab) ?? null,
+      pageTools: tools.tools.length
+        ? {
+            origin: tools.origin,
+            tools: tools.tools.map((tool) => ({
+              name: tool.name,
+              description: tool.description.slice(0, 300),
+              readOnly: tool.readOnly,
+              form: tool.form
+            }))
+          }
+        : null,
+      ...browserNavigationState(tab.surface.webContentsId)
+    }
+  }
+
+  /**
+   * Asks the user about the certificate refused on the active tab, and returns the address to open
+   * if they allow it. It takes nothing from the caller, and only the Browser panel's request leads
+   * here: what the dialog shows and the approval records is what Chromium reported to this process.
+   * It waits outside the session's queue, because the user may take their time.
+   */
+  async approveCertificate(sessionId: string): Promise<string | undefined> {
+    const tab = this.getTab(this.getSession(sessionId))
+    const failure = tab.certificate
+    const policy = this.options.certificatePolicy
+    if (!failure || !policy || !this.shownCertificateNotice(tab)?.canContinue) return undefined
+    return (await policy.approve(failure)) ? failure.url : undefined
+  }
+
+  /** What to say about the tab's refused page, while the tab is still on it. */
+  private shownCertificateNotice(tab: TabState): BrowserCertificateNotice | undefined {
+    const failure = tab.certificate
+    if (!failure) return undefined
+    const notice = certificateNotice(failure, this.options.certificatePolicy)
+    try {
+      return new URL(tab.surface.getURL()).origin === notice.origin ? notice : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /** After an approval is removed, so no connection already past the certificate outlives it. */
+  async closeConnections(): Promise<void> {
+    const surfaces = [...this.sessions.values()].flatMap((session) =>
+      [...session.tabs.values()].map((tab) => tab.surface)
+    )
+    await Promise.all(surfaces.map((surface) => surface.closeConnections?.()))
+  }
+
+  /**
+   * The active tab, for the marks the user makes on it in the Browser panel. They are read over
+   * the protocol only, never by running script in the page, and outside the session's action
+   * queue: reading does not change the page, and the user may mark it while the agent works.
+   */
+  annotationPage(sessionId: string): import('./browserAnnotations').BrowserAnnotationPage {
+    const session = this.getSession(sessionId)
+    const tab = this.getTab(session)
+    return {
+      tabId: tab.id,
+      webContentsId: tab.surface.webContentsId,
+      url: this.tabUrl(tab),
+      title: tab.surface.getTitle(),
+      send: (method, params) => tab.surface.sendDebuggerCommand(method, params),
+      secretShownAsText: () => this.secretShownAsText(tab)
     }
   }
 
@@ -2112,9 +2263,13 @@ export class NativeBrowserSessionService {
       unchangedScreenshotStreaks: {},
       inFlight: new Map(),
       actionHistory: [],
-      disposers: []
+      disposers: [],
+      webMcp: new WebMcpPageTools()
     }
     session.tabs.set(tab.id, tab)
+    if (!surface.attached) {
+      surface.setCertificateGuard((event) => this.judgeCertificate(session, tab, event))
+    }
     tab.disposers.push(
       surface.onConsole((message) => this.recordConsole(session, tab, message)),
       surface.onLoadFailure((failure) => this.recordLoadFailure(session, tab, failure)),
@@ -2123,7 +2278,7 @@ export class NativeBrowserSessionService {
       ),
       surface.onDestroyed(() => this.handleSurfaceDestroyed(session, tab)),
       surface.onOpenUrl((url) => {
-        void this.openPopup(session, tab, url).catch((error) => {
+        void this.openPopup(session, url).catch((error) => {
           this.recordConsole(session, tab, {
             level: 'error',
             message: `Blocked popup: ${error instanceof Error ? error.message : String(error)}`
@@ -2131,7 +2286,55 @@ export class NativeBrowserSessionService {
         })
       })
     )
+    if (!surface.attached) await this.enableWebMcp(tab, signal)
     return tab
+  }
+
+  /**
+   * Starts reading the tab's WebMCP tools from Chromium. A tab where this fails, as with a Chromium
+   * without the domain, simply offers no tools.
+   */
+  private async enableWebMcp(tab: TabState, signal?: AbortSignal): Promise<void> {
+    const command = <T>(method: string, params?: Record<string, unknown>): Promise<T> =>
+      abortable(
+        tab.surface.sendDebuggerCommand<T>(method, params),
+        signal ? AbortSignal.any([signal, AbortSignal.timeout(3_000)]) : AbortSignal.timeout(3_000)
+      )
+    try {
+      await command('Page.addScriptToEvaluateOnNewDocument', {
+        source: WEBMCP_COMPATIBILITY_SCRIPT
+      })
+      const tree = await command<{ frameTree?: { frame?: Record<string, unknown> } }>(
+        'Page.getFrameTree'
+      )
+      if (!tree?.frameTree?.frame) return
+      // Enabling replays the tools the document already has, so the frame must be known first.
+      tab.webMcp.attach(tree.frameTree.frame)
+      await command('WebMCP.enable')
+      tab.webMcp.available = true
+    } catch (error) {
+      if (signal?.aborted) throw error
+    }
+  }
+
+  /** Chromium would refuse this connection; only an approval already made lets it go on. */
+  private judgeCertificate(
+    session: SessionState,
+    tab: TabState,
+    event: BrowserCertificateEvent
+  ): boolean {
+    const policy = this.options.certificatePolicy
+    const allowed = Boolean(policy && certificateAllowed(event, policy))
+    if (event.isMainFrame) {
+      const { isMainFrame: _isMainFrame, pageUrl: _pageUrl, ...failure } = event
+      tab.certificate = allowed ? undefined : failure
+    } else if (!allowed) {
+      this.recordConsole(session, tab, {
+        level: 'error',
+        message: `Blocked ${event.url}: its certificate is not trusted (${event.error})`
+      })
+    }
+    return allowed
   }
 
   private recordConsole(
@@ -2178,6 +2381,13 @@ export class NativeBrowserSessionService {
     method: string,
     params: Record<string, unknown>
   ): void {
+    if (
+      method.startsWith('WebMCP.') ||
+      method === 'Page.frameNavigated' ||
+      method === 'Page.navigatedWithinDocument'
+    ) {
+      tab.webMcp.handle(method, params)
+    }
     if (method === 'Network.requestWillBeSent') {
       const requestId = String(params.requestId ?? '')
       const request = (params.request ?? {}) as Record<string, unknown>
@@ -2230,12 +2440,12 @@ export class NativeBrowserSessionService {
   }
 
   private handleSurfaceDestroyed(session: SessionState, tab: TabState): void {
+    tab.webMcp.close()
     for (const token of tab.pdfSessionTokens) revokeBrowserPdfSession(token)
     tab.pdfSessionTokens.clear()
     void this.cleanupTemporaryPdfSources(tab)
     for (const dispose of tab.disposers.splice(0)) dispose()
     session.tabs.delete(tab.id)
-    if (session.humanTakeoverTabId === tab.id) session.humanTakeoverTabId = undefined
     if (session.activeTabId === tab.id) session.activeTabId = session.tabs.keys().next().value ?? ''
     if (!session.tabs.size) {
       this.retireSession(session)
@@ -2331,21 +2541,9 @@ export class NativeBrowserSessionService {
       : new Error('Chromium failed to commit the browser bootstrap document')
   }
 
-  private async openPopup(
-    session: SessionState,
-    opener: TabState,
-    inputUrl: string
-  ): Promise<void> {
+  private async openPopup(session: SessionState, inputUrl: string): Promise<void> {
     const url = await this.normalizeNavigationUrl(inputUrl, session.allowedFileRoots)
     await this.withSessionLock(session, {}, async (signal) => {
-      if (session.humanTakeoverTabId === opener.id && session.tabs.has(opener.id)) {
-        // A popup cannot safely become a second hidden window while the user
-        // owns the visible takeover surface. Keep the navigation in that exact
-        // window so completion always recaptures what the user interacted with.
-        session.activeTabId = opener.id
-        await this.navigateUnlocked(session, opener, url, signal)
-        return
-      }
       const viewport = await this.currentViewport(this.getTab(session))
       const tab = await this.createOwnedTab(session, viewport, signal)
       session.activeTabId = tab.id
@@ -2454,6 +2652,7 @@ export class NativeBrowserSessionService {
       this.guardRepeatedAction(tab, fingerprint)
       await this.ensureBaselineHash(session, tab, signal)
       tab.lastPointer = undefined
+      tab.certificate = undefined
       let navigationQuiescence: BrowserQuiescenceResult
       if (navigationAction === 'url') {
         navigationQuiescence = await this.navigateUnlocked(session, tab, url!, signal)
@@ -2534,7 +2733,9 @@ export class NativeBrowserSessionService {
       tab.pdfSessionTokens.add(pdfSession.token)
       navigationUrl = browserPdfViewerUrl(pdfSession)
     } else if (isRemotePdfUrl(url)) {
-      const remotePdf = await this.downloadRemotePdf(session, tab, url, signal)
+      const remotePdf = await this.downloadRemotePdf(session, tab, url, signal).catch((error) => {
+        throw this.certificateRefusal(tab, url, error)
+      })
       newPdfSourcePath = remotePdf.sourcePath
       const pdfSession = createBrowserPdfSession(remotePdf.sourcePath, session.id, {
         sourceName: remotePdf.sourceName,
@@ -2558,11 +2759,36 @@ export class NativeBrowserSessionService {
         tab.temporaryPdfSources.delete(newPdfSourcePath)
         await fs.unlink(newPdfSourcePath).catch(() => undefined)
       }
-      throw error
+      throw this.certificateRefusal(tab, url, error)
     }
     tab.logicalUrl = newPdfToken ? url : undefined
     tab.pdfSessionToken = newPdfToken
     return this.waitForQuiescence(tab, this.navigationQuiescence(navigationUrl), signal)
+  }
+
+  /**
+   * A load refused for its certificate, in words the user and the agent can act on. A download has
+   * no page to report the certificate, so it fails with no way past it.
+   */
+  private certificateRefusal(tab: TabState, url: string, error: unknown): unknown {
+    const message = error instanceof Error ? error.message : String(error)
+    const code = /\bERR_CERT_[A-Z_]+/.exec(message)?.[0]
+    if (!code) return error
+    return new BrowserCertificateError(
+      tab.certificate
+        ? certificateNotice(tab.certificate, this.options.certificatePolicy)
+        : {
+            ...certificateNotice({
+              url,
+              error: code,
+              fingerprint: '',
+              subject: '',
+              issuer: ''
+            }),
+            note: 'SideKick does not download files from an address whose certificate it cannot trust.',
+            canContinue: false
+          }
+    )
   }
 
   private async downloadRemotePdf(
@@ -2651,12 +2877,14 @@ export class NativeBrowserSessionService {
     const session = this.getSession(input.sessionId)
     return this.withSessionLock(session, operation, async (signal) => {
       signal?.throwIfAborted()
+      // The destination may be in any of the project's folders, which is then its boundary.
+      const folder = locateWorkspacePath(input.workspaceRoot, input.destination)
       const publication = await capturePublicationDirectory(
-        input.workspaceRoot,
-        dirname(resolve(input.workspaceRoot, input.destination))
+        folder.root,
+        dirname(resolve(folder.root, folder.path))
       )
       const destination = await resolveSecureWorkspacePath(input.workspaceRoot, input.destination, {
-        rejectSymlinks: true
+        rejectLinks: true
       })
       const tab = this.getTab(session)
       await this.assertAutomatedMutationAllowed(tab, signal)
@@ -2793,6 +3021,10 @@ export class NativeBrowserSessionService {
     signal?: AbortSignal
   ): Promise<BrowserObservation> {
     const tab = this.getTab(session, options.tabId)
+    // The page's own changes from here on tell the next action's wait what is noise.
+    await abortable(tab.surface.executeJavaScript(SETTLE_INSTALL_SCRIPT), signal).catch(
+      () => undefined
+    )
     const viewport = await abortable(this.currentViewport(tab), signal)
     let semanticSnapshot: string | undefined
     let semanticNodeCount: number | undefined
@@ -2825,6 +3057,7 @@ export class NativeBrowserSessionService {
     tab.consoleCursor = session.consoleSequence
     tab.networkCursor = session.networkSequence
     const humanVerification = await this.detectHumanVerification(tab, semanticSnapshot, signal)
+    const webMcpTools = tab.webMcp.snapshot().tools.map((tool) => tool.name)
     return {
       sessionId: session.id,
       runId: session.runId,
@@ -2843,7 +3076,8 @@ export class NativeBrowserSessionService {
         screenshot?.unchangedStreak ?? tab.unchangedScreenshotStreaks.viewport ?? 0,
       console: consoleEntries,
       failedRequests: failures,
-      cursors: { console: session.consoleSequence, network: session.networkSequence }
+      cursors: { console: session.consoleSequence, network: session.networkSequence },
+      ...(webMcpTools.length ? { webMcpTools } : {})
     }
   }
 
@@ -3490,24 +3724,37 @@ export class NativeBrowserSessionService {
       tab.surface.sendDebuggerCommand('DOM.scrollIntoViewIfNeeded', { backendNodeId }),
       signal
     ).catch(() => undefined)
-    const rect = await this.callOnNode<{
+    type Rect = {
       x: number
       y: number
       pageX: number
       pageY: number
       width: number
       height: number
-    }>(
-      tab,
-      backendNodeId,
-      `function() {
-        const rect = this.getBoundingClientRect();
-        return { x: rect.x, y: rect.y, pageX: rect.x + window.scrollX, pageY: rect.y + window.scrollY,
-          width: rect.width, height: rect.height };
-      }`,
-      [],
-      signal
-    )
+    }
+    const read = (): Promise<Rect> =>
+      this.callOnNode<Rect>(
+        tab,
+        backendNodeId,
+        `function() {
+          const rect = this.getBoundingClientRect();
+          return { x: rect.x, y: rect.y, pageX: rect.x + window.scrollX, pageY: rect.y + window.scrollY,
+            width: rect.width, height: rect.height };
+        }`,
+        [],
+        signal
+      )
+    // A page that scrolls smoothly is still moving the element for a few frames after it is
+    // scrolled into view; its position counts once it holds still. The wait is kept here rather
+    // than in the page, whose timers a hidden page slows to a crawl.
+    let rect = await read()
+    for (let attempt = 0; attempt < 15; attempt++) {
+      await delay(30, signal)
+      const next = await read()
+      const settled = next && rect && next.x === rect.x && next.y === rect.y
+      rect = next
+      if (settled) break
+    }
     if (!rect || rect.width <= 0 || rect.height <= 0) {
       throw new Error('Browser element is not visible')
     }
@@ -3650,8 +3897,8 @@ export class NativeBrowserSessionService {
       await this.assertAutomatedMutationAllowed(tab, signal)
       const target = await this.resolveTarget(tab, input.target, true, signal)
       // Press-and-hold is useful for ordinary canvas, map, slider, and test UI.
-      // It is not an automated CAPTCHA solver; detected anti-bot checkpoints
-      // always cross the same-session human-takeover boundary.
+      // It is not an automated CAPTCHA solver; a detected anti-bot checkpoint
+      // stops automated input until the user clears it in the Browser panel.
       const startedAt = this.now()
       this.setPointer(tab, target, 'hold', startedAt)
       tab.surface.focus()
@@ -3696,6 +3943,16 @@ export class NativeBrowserSessionService {
     // post-action observation still produces the rich semantic state once.
     const challenge = await this.detectHumanVerification(tab, undefined, signal)
     if (challenge) throw new BrowserHumanVerificationError()
+    // Every action that changes the page passes here first, so this is where it begins.
+    const at = this.now()
+    const mark = await abortable(
+      tab.surface.executeJavaScript<{ token?: unknown; id?: unknown }>(SETTLE_MARK_SCRIPT),
+      signal
+    ).catch(() => undefined)
+    tab.settleMark =
+      typeof mark?.token === 'string' && typeof mark.id === 'string'
+        ? { token: mark.token, id: mark.id, at }
+        : undefined
   }
 
   async type(
@@ -3769,7 +4026,7 @@ export class NativeBrowserSessionService {
       let bytes = 0
       for (const path of input.paths) {
         const file = await resolveSecureWorkspacePath(input.workspaceRoot, path, {
-          rejectSymlinks: true
+          rejectLinks: true
         })
         const info = await fs.stat(file)
         if (!info.isFile()) throw new Error('Uploads must be regular files')
@@ -3857,7 +4114,8 @@ export class NativeBrowserSessionService {
         }
         const unsupportedInputs = new Set(['button', 'submit', 'reset', 'file', 'hidden', 'image', 'range', 'color']);
         if ((tag === 'input' && !unsupportedInputs.has(inputType)) || tag === 'textarea') {
-          return { kind: 'textbox', disabled, readOnly, value: String(this.value ?? '') };
+          return { kind: 'textbox', disabled, readOnly, value: String(this.value ?? ''), inputType,
+            placeholder: String(this.getAttribute('placeholder') || this.getAttribute('aria-placeholder') || '') };
         }
         if (this.isContentEditable === true) {
           return { kind: 'textbox', disabled, readOnly, value: String(this.textContent ?? '') };
@@ -3865,6 +4123,31 @@ export class NativeBrowserSessionService {
         return { kind: 'unsupported', disabled, readOnly };
       }`,
       [],
+      signal
+    )
+  }
+
+  /**
+   * Sets a native date or time input, which ignores its value typed as text, the way the
+   * browser's own picker does: through the value setter, then input and change events.
+   */
+  private async setNativeInputValue(
+    tab: TabState,
+    backendNodeId: number,
+    value: string,
+    signal?: AbortSignal
+  ): Promise<void> {
+    await this.callOnNode(
+      tab,
+      backendNodeId,
+      `function(value) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        this.focus();
+        setter.call(this, value);
+        this.dispatchEvent(new Event('input', { bubbles: true }));
+        this.dispatchEvent(new Event('change', { bubbles: true }));
+      }`,
+      [value],
       signal
     )
   }
@@ -4112,6 +4395,10 @@ export class NativeBrowserSessionService {
 
   private formFieldFailure(error: unknown): BrowserFormFieldResult['error'] {
     const message = error instanceof Error ? error.message : String(error)
+    // Names the format a date field takes, never the value it was given.
+    if (message.startsWith('Unsupported value: ')) {
+      return { code: 'unsupported_control', message: message.slice('Unsupported value: '.length) }
+    }
     if (/stale|not found|no longer available|ambiguous|not visible|requires a ref/i.test(message)) {
       return {
         code: 'target_not_found',
@@ -4185,20 +4472,27 @@ export class NativeBrowserSessionService {
           if (field.kind === 'textbox') {
             sensitiveStrings.add(field.value)
             if (before.readOnly) throw new Error('Target form control is read-only')
-            if (before.value !== field.value) {
-              await this.replaceFormText(
-                tab,
-                target,
-                field.value,
-                initialUrl,
-                initialRefEpoch,
-                signal
-              )
+            const native = nativeDateFormat(before.inputType)
+            // A text box that asks for a date format takes an ISO date written in it.
+            const format = native ? undefined : fieldDateFormat(before.placeholder)
+            const text = (format && formatDate(field.value, format)) || field.value
+            sensitiveStrings.add(text)
+            if (before.value !== text) {
+              if (native) {
+                if (!native.pattern.test(text)) {
+                  throw new Error(
+                    `Unsupported value: a ${before.inputType} field takes ${native.example}`
+                  )
+                }
+                await this.setNativeInputValue(tab, backendNodeId, text, signal)
+              } else {
+                await this.replaceFormText(tab, target, text, initialUrl, initialRefEpoch, signal)
+              }
               status = 'filled'
             }
             if (pageChanged()) throw new Error('Browser page changed while filling the form')
             const after = await this.inspectFormControl(tab, backendNodeId, signal)
-            const passed = after.kind === 'textbox' && after.value === field.value
+            const passed = after.kind === 'textbox' && sameEnteredText(after.value, text)
             verification = { passed, valueLength: after.value?.length }
           } else if (field.kind === 'select') {
             for (const value of field.values) sensitiveStrings.add(value)
@@ -4333,9 +4627,166 @@ export class NativeBrowserSessionService {
     return this.getTab(this.getSession(sessionId)).surface.getURL()
   }
 
+  /** The WebMCP tools of the active tab's page, binding the calls that follow to this listing. */
+  listWebMcpTools(sessionId: string, tabId?: string): WebMcpPageListing & { tabId: string } {
+    const tab = this.getTab(this.getSession(sessionId), tabId)
+    return { ...tab.webMcp.list(), tabId: tab.id }
+  }
+
+  /**
+   * What a call with this input would run on the active tab, for the decision whether to ask and
+   * for the approval card; throws why it would be refused, so a call bound to fail asks no one.
+   */
+  webMcpCallBinding(
+    sessionId: string,
+    origin: string,
+    name: string,
+    input: unknown = {}
+  ): WebMcpCallBinding {
+    const tab = this.getTab(this.getSession(sessionId))
+    const call = this.checkedWebMcpCall(tab, origin, name, input)
+    return { tabId: tab.id, document: call.document, origin, tool: { ...call.tool } }
+  }
+
+  private checkedWebMcpCall(tab: TabState, origin: string, name: string, input: unknown) {
+    const call = tab.webMcp.callable(origin, name)
+    const correct =
+      "Correct the arguments to match the schema browser_list_webmcp_tools returned; the schema's text is the site's own."
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      throw new WebMcpCallError(
+        'invalid_arguments',
+        'The arguments must be a JSON object.',
+        correct
+      )
+    }
+    const issues = call.tool.inputSchema ? externalSchemaIssues(call.tool.inputSchema, input) : []
+    if (issues?.length) {
+      // Paths and messages name the schema's own properties and values, which are the page's.
+      throw new WebMcpCallError(
+        'invalid_arguments',
+        `The arguments do not fit ${name}'s input schema.`,
+        correct,
+        issues.slice(0, 20).map(({ path, code, message }) => ({ path, code, message }))
+      )
+    }
+    return call
+  }
+
+  /**
+   * Calls a listed WebMCP tool of the active tab's page, through Chromium as its own agent does.
+   * Refused before anything runs when the page is another site's, has loaded a new document or
+   * changed the tool since it was listed or since `binding` was taken, when the input does not fit
+   * the tool's schema, or while a stored password is filled in on the page.
+   */
+  async callWebMcpTool(
+    input: BrowserWebMcpCallInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserWebMcpCallResult> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session)
+      const { tool, frameId, document } = this.checkedWebMcpCall(
+        tab,
+        input.origin,
+        input.tool,
+        input.arguments
+      )
+      const bound = input.binding
+      if (
+        bound &&
+        (bound.tabId !== tab.id ||
+          bound.document !== document ||
+          bound.origin !== input.origin ||
+          JSON.stringify(bound.tool) !== JSON.stringify(tool))
+      ) {
+        throw new WebMcpCallError(
+          'changed',
+          `The tab, its page or ${tool.name} changed after this call was checked, so it was not run.`,
+          'Call browser_list_webmcp_tools again and call the tool from what the page offers now.'
+        )
+      }
+      if (await this.secretStillOnPage(tab, signal)) {
+        throw new WebMcpCallError(
+          'secret_on_page',
+          "A page's tools cannot be called while a stored password is filled in on the page, since the page's code could read it.",
+          'Submit the sign-in form or leave the page first.'
+        )
+      }
+      await this.assertAutomatedMutationAllowed(tab, signal)
+      const startedAt = this.now()
+      // Chromium starts the tool as it answers, so the call is not abandoned without its id:
+      // a stopped run waits the moment it takes, then cancels the tool in the page.
+      const { invocationId } = await abortable(
+        tab.surface.sendDebuggerCommand<{ invocationId: string }>('WebMCP.invokeTool', {
+          frameId,
+          toolName: tool.name,
+          input: input.arguments
+        }),
+        AbortSignal.timeout(10_000)
+      )
+      const cancel = (): void =>
+        void tab.surface
+          .sendDebuggerCommand('WebMCP.cancelInvocation', { invocationId })
+          .catch(() => undefined)
+      if (signal?.aborted) {
+        cancel()
+        throw abortError('Browser operation cancelled')
+      }
+      if (tab.webMcp.snapshot().document !== document) {
+        // The page loaded another document before Chromium took the call, so it may have reached
+        // a tool of the same name there, possibly another site's.
+        cancel()
+        throw new WebMcpCallError(
+          'navigated',
+          `The page loaded a new document as ${tool.name} was called; SideKick cancelled the call, which may have reached the new page.`,
+          'Call browser_list_webmcp_tools again and check the page before calling anything.'
+        )
+      }
+      const outcome = await tab.webMcp.awaitResult(invocationId, {
+        form: tool.form,
+        timeoutMs: WEBMCP_CALL_TIMEOUT_MS,
+        signal: signal ?? new AbortController().signal
+      })
+      if (outcome.status === 'timeout' || outcome.status === 'cancelled') cancel()
+      if (outcome.status === 'error' && outcome.exceptionObjectId) {
+        void tab.surface
+          .sendDebuggerCommand('Runtime.releaseObject', { objectId: outcome.exceptionObjectId })
+          .catch(() => undefined)
+      }
+      const navigated =
+        outcome.status === 'navigated' ||
+        (outcome.status === 'completed' && outcome.navigatedTo !== undefined)
+      if (navigated && !signal?.aborted) {
+        await this.waitForQuiescence(
+          tab,
+          this.navigationQuiescence(tab.surface.getURL()),
+          signal
+        ).catch((error) => {
+          if (signal?.aborted) throw error
+        })
+      }
+      return {
+        sessionId: session.id,
+        tabId: tab.id,
+        origin: input.origin,
+        tool: {
+          name: tool.name,
+          readOnly: tool.readOnly,
+          untrustedContent: tool.untrustedContent,
+          consequential: tool.consequential,
+          form: tool.form,
+          autosubmit: tool.autosubmit
+        },
+        outcome,
+        durationMs: this.now() - startedAt,
+        page: { url: this.tabUrl(tab), title: tab.surface.getTitle() }
+      }
+    })
+  }
+
   /**
    * Fills a stored sign-in into the current page. Values go only into fields of the top document
-   * whose origin, and whose form's target, are among `allowedOrigins`, checked again immediately
+   * on `site`, whose form sends to that site or another of the same domain, checked again immediately
    * before each value is typed; the password only into a password field. The result has no
    * screenshot, and its semantic snapshot is redacted.
    */
@@ -4352,11 +4803,12 @@ export class NativeBrowserSessionService {
       const initialUrl = tab.surface.getURL()
       const initialRefEpoch = tab.refEpoch
       const origin = credentialPageOrigin(initialUrl)
-      if (!origin || !input.allowedOrigins.includes(origin)) {
+      if (!origin || origin !== input.site) {
         throw new Error(
-          `This sign-in is filled in only on ${input.allowedOrigins.join(', ')}; the page is not one of them.`
+          `This sign-in was approved for ${input.site || 'another page'}, and the page is no longer on it.`
         )
       }
+      const domain = signInDomain(origin)
       const passwordTarget = input.password
         ? await this.signInField(tab, 'password', input.passwordTarget, signal)
         : undefined
@@ -4406,7 +4858,7 @@ export class NativeBrowserSessionService {
         if (facts.formOrigin !== null) {
           const target =
             facts.formOrigin === 'invalid' ? null : credentialPageOrigin(facts.formOrigin)
-          if (!target || !input.allowedOrigins.includes(target)) {
+          if (!target || !sameSignInSite(origin, domain, target)) {
             throw new Error('The sign-in form sends to another site, so it was not filled')
           }
         }
@@ -4467,14 +4919,17 @@ export class NativeBrowserSessionService {
         const submission = await this.callOnNode<'form' | 'none' | 'refused'>(
           tab,
           last.backendNodeId!,
-          `function(allowed, clear) {
+          `function(site, domain, clear) {
             const form = this.form;
             if (!form) return 'none';
             let target = null;
             try {
-              target = new URL(form.getAttribute('action') || this.ownerDocument.location.href, this.ownerDocument.baseURI).origin;
+              target = new URL(form.getAttribute('action') || this.ownerDocument.location.href, this.ownerDocument.baseURI);
             } catch {}
-            if (!target || !allowed.includes(target)) {
+            const sameSite = Boolean(target) && (target.origin === site || (domain !== null &&
+              target.protocol === 'https:' && !target.port &&
+              (target.hostname === domain || target.hostname.endsWith('.' + domain))));
+            if (!sameSite) {
               if (clear) this.value = '';
               return 'refused';
             }
@@ -4482,7 +4937,7 @@ export class NativeBrowserSessionService {
             else form.submit();
             return 'form';
           }`,
-          [input.allowedOrigins, last === passwordTarget],
+          [origin, domain, last === passwordTarget],
           signal
         )
         if (submission === 'refused') {
@@ -4653,6 +5108,26 @@ export class NativeBrowserSessionService {
       }
       const startedAt = this.now()
       this.setPointer(tab, target, 'select', startedAt)
+      const kind = await this.callOnNode<PickerKind>(
+        tab,
+        target.backendNodeId!,
+        PICKER_PAGE_FUNCTION,
+        [{ phase: 'detect' }],
+        signal
+      )
+      if (kind !== 'select') {
+        await this.pickValues(tab, target, kind, input.values, signal)
+        return this.finishAction(
+          session,
+          tab,
+          'select',
+          target.mode,
+          false,
+          fingerprint,
+          startedAt,
+          signal
+        )
+      }
       const expectedSelected = await this.callOnNode<string[]>(
         tab,
         target.backendNodeId!,
@@ -4751,6 +5226,357 @@ export class NativeBrowserSessionService {
       }
       return result
     })
+  }
+
+  /**
+   * Chooses each value in a picker the page builds itself, as a person would: opens it or types
+   * into it, waits for its options to settle, clicks the one option the value names, confirms a
+   * dialog, and checks the control shows the choice. See browserPicker.ts.
+   */
+  private async pickValues(
+    tab: TabState,
+    control: ElementPoint,
+    kind: Exclude<PickerKind, 'select'>,
+    values: string[],
+    signal?: AbortSignal
+  ): Promise<void> {
+    const picked: PickerOption[] = []
+    for (const wanted of values) {
+      // An earlier pick can move the control, as a chip added beside it does.
+      const rect = await this.elementRect(tab, control.backendNodeId!, signal)
+      const at = { ...control, x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+      picked.push(await this.pickValue(tab, at, kind, wanted, signal))
+    }
+    if (picked.length < 2) return
+    // A later pick can replace an earlier one in a picker that holds a single value.
+    const readback = await this.pickerCall<{ own: string; around: string }>(
+      tab,
+      control,
+      randomUUID(),
+      'readback',
+      {},
+      signal
+    )
+    const lost = picked.filter((option) => !showsChoice(readback, option.names))
+    if (lost.length) {
+      throw new Error(
+        `The picker kept only some of the requested values; it no longer shows ${lost.map((option) => JSON.stringify(option.label)).join(', ')}`
+      )
+    }
+  }
+
+  private async pickValue(
+    tab: TabState,
+    control: ElementPoint,
+    kind: Exclude<PickerKind, 'select'>,
+    wanted: string,
+    signal?: AbortSignal
+  ): Promise<PickerOption> {
+    const token = randomUUID()
+    const call = <T>(phase: string, extra: Record<string, unknown> = {}): Promise<T> =>
+      this.pickerCall<T>(tab, control, token, phase, extra, signal)
+    // A picker often rewrites the address as it goes without leaving the page, so only a page
+    // that is gone stops it; a new document fails every call on the control. Each entry of text
+    // is still bound to the address it starts on.
+    const enter = (field: ElementPoint, text: string): Promise<void> =>
+      this.replaceFormText(tab, field, text, tab.surface.getURL(), tab.refEpoch, signal)
+    try {
+      if (kind === 'datalist') {
+        const options = await call<PickerOption[]>('datalist')
+        const option = this.pickerChoice(options, wanted)
+        await enter(control, option.value)
+        const after = await this.inspectFormControl(tab, control.backendNodeId!, signal)
+        if (after.value !== option.value) {
+          throw new Error('The field did not keep the chosen suggestion')
+        }
+        return option
+      }
+      await call('snapshot')
+      const since = this.now()
+      let field = control
+      if (kind === 'typeahead') {
+        // A field that opens an overlay with a text box of its own takes the typing there, once
+        // the overlay has finished opening.
+        await this.clickFormControl(tab, control, signal)
+        let moved: number | undefined
+        for (let attempt = 0; attempt < 20 && !moved; attempt++) {
+          await delay(50, signal)
+          moved = await this.pickerNode(tab, control, token, 'focused-node', signal)
+        }
+        if (moved) {
+          await delay(250, signal)
+          field = await this.pointOfNode(tab, moved, signal)
+        }
+      } else if (!(await call<boolean>('open'))) {
+        // A list the model already opened stays open; clicking its control again would close it.
+        await this.clickFormControl(tab, control, signal)
+      }
+      // A site searches by a shorter text than an option's whole label, as a model often passes:
+      // the full value first, then its text before the first comma, then its first word. Every
+      // list is ranked against the full value.
+      const queries = [
+        ...new Set(
+          [wanted, wanted.split(',')[0], wanted.split(/\s+/)[0]].map((query) => query.trim())
+        )
+      ].filter((query) => query.length >= 2)
+      let scan: PickerScan | undefined
+      let ranking: ReturnType<typeof rankChoices> = { status: 'missing' }
+      for (const [attempt, query] of queries.entries()) {
+        if (kind === 'typeahead') {
+          await enter(field, query)
+        } else if (attempt > 0 || scan) {
+          // A list whose first view lacks the value, or holds it only among other words, is
+          // narrowed with the search box it brings.
+          if (!scan?.search) break
+          const search = await this.pickerNode(tab, control, token, 'search-node', signal)
+          if (!search) break
+          await enter(await this.pointOfNode(tab, search, signal), query)
+        }
+        const typed = kind === 'typeahead' || attempt > 0 ? query : undefined
+        scan = await this.pickerSettle(tab, control, token, since, signal, typed)
+        ranking = rankChoices(scan.options, [wanted])
+        const narrow =
+          ranking.status === 'missing' || ('rank' in ranking && ranking.rank === 'words')
+        // A dropdown is first read as it opens, before anything is typed into its search box.
+        if (kind !== 'typeahead' && attempt === 0 && narrow && scan.search) {
+          const search = await this.pickerNode(tab, control, token, 'search-node', signal)
+          if (search) {
+            await enter(await this.pointOfNode(tab, search, signal), query)
+            scan = await this.pickerSettle(tab, control, token, since, signal, query)
+            ranking = rankChoices(scan.options, [wanted])
+          }
+        }
+        if (ranking.status !== 'missing') break
+      }
+      if (!scan) throw new Error('The control opened no list of options')
+      if (!scan.popup) {
+        throw new Error(
+          'The control opened no list of options; observe the page and choose the option directly'
+        )
+      }
+      const option = this.pickerChoice(scan.options, wanted, ranking)
+      const index = scan.options.indexOf(option)
+      const before = await call<{ own: string; around: string }>('readback')
+      const point = await call<{ x: number; y: number } | null>('point', {
+        which: 'option',
+        index
+      })
+      if (!point) throw new Error('The chosen option disappeared before it could be clicked')
+      await this.clickFormControl(
+        tab,
+        { ...point, mode: control.mode, fallbackUsed: false },
+        signal
+      )
+      // A click counts once the page shows it did something: the option or its list went away,
+      // or the option became selected. A field holding the typed text already shows the label.
+      const typedAlready = showsChoice(before, option.names)
+      const deadline = this.now() + 3_000
+      let confirmed = false
+      while (true) {
+        await delay(100, signal)
+        if (tab.surface.isDestroyed())
+          throw new Error('Browser page closed while choosing an option')
+        const after = await call<{ gone: boolean; closed: boolean; selected: boolean }>('after', {
+          index
+        })
+        // A dialog's row is often only highlighted until its Select or OK button is pressed.
+        if (scan.dialog && !after.closed && !confirmed) {
+          const again = await call<PickerScan>('scan')
+          const confirm = again.confirm
+            ? await call<{ x: number; y: number } | null>('point', { which: 'confirm' })
+            : null
+          if (confirm) {
+            await this.clickFormControl(
+              tab,
+              { ...confirm, mode: control.mode, fallbackUsed: false },
+              signal
+            )
+            confirmed = true
+            continue
+          }
+        }
+        const readback = await call<{ own: string; around: string }>('readback')
+        if (
+          showsChoice(readback, option.names) &&
+          (!typedAlready || after.gone || after.closed || after.selected)
+        ) {
+          return option
+        }
+        if (this.now() >= deadline) {
+          throw new Error(
+            `The control did not keep ${JSON.stringify(option.label)} after it was clicked; observe the page before retrying`
+          )
+        }
+      }
+    } catch (error) {
+      // Leaves the page as it was found rather than with a list hanging open: Escape, or, for a
+      // menu that ignores it, the control that opened it.
+      if (!tab.surface.isDestroyed()) {
+        tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' })
+        tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' })
+        if (kind === 'dropdown') {
+          await delay(100, signal).catch(() => undefined)
+          const open = await call<{ closed: boolean }>('after', { index: -1 }).catch(() => null)
+          if (open && !open.closed)
+            await this.clickFormControl(tab, control, signal).catch(() => undefined)
+        }
+      }
+      throw error
+    } finally {
+      await call('cleanup').catch(() => undefined)
+    }
+  }
+
+  private pickerCall<T>(
+    tab: TabState,
+    control: ElementPoint,
+    token: string,
+    phase: string,
+    extra: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<T> {
+    return this.callOnNode<T>(
+      tab,
+      control.backendNodeId!,
+      PICKER_PAGE_FUNCTION,
+      [{ ...extra, token, phase }],
+      signal
+    )
+  }
+
+  /** The option `wanted` names, or an error that lists what the picker offers instead. */
+  private pickerChoice(
+    options: PickerOption[],
+    wanted: string,
+    ranking = rankChoices(options, [wanted])
+  ): PickerOption {
+    const safe = (text: string): string => JSON.stringify(text.slice(0, 80))
+    if (ranking.status === 'picked') return options[ranking.index]
+    if (ranking.status === 'disabled') {
+      throw new Error(`The option ${safe(options[ranking.index].label)} is disabled`)
+    }
+    if (ranking.status === 'ambiguous') {
+      const tied = ranking.indexes.slice(0, 8).map((index) => options[index])
+      // Options that share a label, such as two places called Lisbon, are told apart by their
+      // whole text, which also picks one when passed back.
+      const label = (option: PickerOption): string =>
+        tied.filter((other) => other.label === option.label).length > 1
+          ? option.names.reduce((long, name) => (name.length > long.length ? name : long))
+          : option.label
+      throw new Error(
+        `${safe(wanted)} matches several options: ${tied.map((option) => safe(label(option))).join(', ')}. Pass the exact label of one.`
+      )
+    }
+    const available = options.filter((option) => !option.disabled && !option.echo).slice(0, 20)
+    throw new Error(
+      available.length
+        ? `No option matched ${safe(wanted)}. Options listed: ${available.map((option) => safe(option.label)).join(', ')}${options.length > available.length ? ', ...' : ''}`
+        : `The picker listed no options for ${safe(wanted)}`
+    )
+  }
+
+  /**
+   * The picker's options once they hold still: no loading sign, no request since the pick began,
+   * and the same options for a moment. An empty list is waited on a little longer, since a
+   * typeahead often asks the server only after a pause in typing.
+   */
+  private async pickerSettle(
+    tab: TabState,
+    control: ElementPoint,
+    token: string,
+    since: number,
+    signal?: AbortSignal,
+    typed?: string
+  ): Promise<PickerScan> {
+    const startedAt = this.now()
+    let last: PickerScan | undefined
+    let stableSince = startedAt
+    // After typing, a list none of whose options mention what was typed, such as a calendar
+    // that opened beside the field, is waited past like an empty one.
+    const word = foldChoiceText(typed ?? '').split(' ')[0]
+    const answers = (scan: PickerScan): boolean =>
+      !word ||
+      scan.options.some((option) =>
+        option.names.some((name) => ` ${foldChoiceText(name)}`.includes(` ${word}`))
+      )
+    while (true) {
+      const scan = await this.pickerCall<PickerScan>(tab, control, token, 'scan', {}, signal)
+      const now = this.now()
+      if (
+        !last ||
+        scan.signature !== last.signature ||
+        scan.loading ||
+        busyRequests(tab.inFlight.values(), since, now) > 0
+      ) {
+        stableSince = now
+      }
+      last = scan
+      if (
+        now - stableSince >= 400 &&
+        ((scan.options.length && answers(scan)) || now - startedAt >= 2_500)
+      )
+        return scan
+      if (now - startedAt >= 8_000) return scan
+      await delay(100, signal)
+    }
+  }
+
+  /** A node the picker's page code found, such as its search box, for text entry to target. */
+  private async pickerNode(
+    tab: TabState,
+    control: ElementPoint,
+    token: string,
+    phase: 'search-node' | 'focused-node',
+    signal?: AbortSignal
+  ): Promise<number | undefined> {
+    const objectId = await this.resolvedNodeObject(tab, control.backendNodeId!, signal)
+    let searchId: string | undefined
+    try {
+      const response = await abortable(
+        tab.surface.sendDebuggerCommand<{ result?: { objectId?: string } }>(
+          'Runtime.callFunctionOn',
+          {
+            objectId,
+            functionDeclaration: PICKER_PAGE_FUNCTION,
+            arguments: [{ value: { token, phase } }],
+            returnByValue: false
+          }
+        ),
+        signal
+      )
+      searchId = response.result?.objectId
+      if (!searchId) return undefined
+      const described = await abortable(
+        tab.surface.sendDebuggerCommand<{ node?: { backendNodeId?: number } }>('DOM.describeNode', {
+          objectId: searchId
+        }),
+        signal
+      )
+      return described.node?.backendNodeId
+    } finally {
+      for (const id of [objectId, searchId]) {
+        if (id) {
+          await tab.surface
+            .sendDebuggerCommand('Runtime.releaseObject', { objectId: id })
+            .catch(() => undefined)
+        }
+      }
+    }
+  }
+
+  private async pointOfNode(
+    tab: TabState,
+    backendNodeId: number,
+    signal?: AbortSignal
+  ): Promise<ElementPoint> {
+    const rect = await this.elementRect(tab, backendNodeId, signal)
+    return {
+      x: rect.x + rect.width / 2,
+      y: rect.y + rect.height / 2,
+      backendNodeId,
+      mode: 'selector',
+      fallbackUsed: false
+    }
   }
 
   async press(
@@ -5030,24 +5856,6 @@ export class NativeBrowserSessionService {
     })
   }
 
-  private async mutationRevision(tab: TabState, signal?: AbortSignal): Promise<number> {
-    return abortable(
-      tab.surface.executeJavaScript<number>(`(() => {
-        const key = Symbol.for('io.sidekick.browser.mutation-state');
-        let state = window[key];
-        if (!state) {
-          state = { revision: 0 };
-          const observer = new MutationObserver(() => state.revision++);
-          observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-          state.observer = observer;
-          window[key] = state;
-        }
-        return state.revision;
-      })()`),
-      signal
-    )
-  }
-
   private async coordinateCaptureState(
     tab: TabState,
     signal?: AbortSignal
@@ -5113,14 +5921,6 @@ export class NativeBrowserSessionService {
     )
   }
 
-  private pendingRequests(tab: TabState): number {
-    let pending = 0
-    for (const request of tab.inFlight.values()) {
-      if (!request.ignoredForIdle && this.now() - request.startedAt < 2_000) pending++
-    }
-    return pending
-  }
-
   private setPointer(
     tab: TabState,
     target: Pick<ElementPoint, 'x' | 'y' | 'mode'>,
@@ -5137,6 +5937,11 @@ export class NativeBrowserSessionService {
     tab.surface.showPointer?.(target.x, target.y)
   }
 
+  /**
+   * Waits until what the latest action set off has finished: its requests, the changes it made and
+   * any loading sign it brought up, ignoring the page's own background activity. See
+   * browserSettle.ts.
+   */
   private async waitForQuiescence(
     tab: TabState,
     input: { idleMs?: number; maxWaitMs?: number },
@@ -5145,20 +5950,44 @@ export class NativeBrowserSessionService {
     const idleMs = boundedInteger(input.idleMs ?? 350, 50, 5_000, 'idleMs')
     const maxWaitMs = boundedInteger(input.maxWaitMs ?? 5_000, idleMs, 30_000, 'maxWaitMs')
     const startedAt = this.now()
+    const mark =
+      tab.settleMark && startedAt - tab.settleMark.at < 60_000 ? tab.settleMark : undefined
+    const since = mark?.at ?? startedAt
+    // A page can answer anything; what is not a count reads as no change and no loading sign.
+    const probe = async (): Promise<{ changes?: number; loading?: number }> => {
+      const state = await abortable(
+        tab.surface.executeJavaScript<unknown>(settleProbeScript(mark)),
+        signal
+      ).catch(() => undefined)
+      const count = (value: unknown): number | undefined =>
+        typeof value === 'number' && Number.isFinite(value) ? value : undefined
+      return state && typeof state === 'object'
+        ? {
+            changes: count((state as { changes?: unknown }).changes),
+            loading: count((state as { loading?: unknown }).loading)
+          }
+        : {}
+    }
     let stableSince = startedAt
-    let revision = await this.mutationRevision(tab, signal).catch(() => 0)
+    let changes = (await probe()).changes ?? 0
+    let pending = 0
     while (this.now() - startedAt < maxWaitMs) {
-      const nextRevision = await this.mutationRevision(tab, signal).catch(() => revision)
-      const pending = this.pendingRequests(tab)
-      if (nextRevision !== revision || pending > 0 || tab.surface.isLoading()) {
-        revision = nextRevision
+      const state = await probe()
+      pending = busyRequests(tab.inFlight.values(), since, this.now())
+      if (
+        (state.changes ?? changes) !== changes ||
+        (state.loading ?? 0) > 0 ||
+        pending > 0 ||
+        tab.surface.isLoading()
+      ) {
+        changes = state.changes ?? changes
         stableSince = this.now()
       } else if (this.now() - stableSince >= idleMs) {
         return {
           idle: true,
           waitedMs: this.now() - startedAt,
           pendingRequests: pending,
-          mutationRevision: revision,
+          mutationRevision: changes,
           timedOut: false
         }
       }
@@ -5167,8 +5996,8 @@ export class NativeBrowserSessionService {
     return {
       idle: false,
       waitedMs: this.now() - startedAt,
-      pendingRequests: this.pendingRequests(tab),
-      mutationRevision: revision,
+      pendingRequests: pending,
+      mutationRevision: changes,
       timedOut: true
     }
   }
@@ -5489,26 +6318,7 @@ export class NativeBrowserSessionService {
         )
       }
       await this.assertAutomatedMutationAllowed(tab, signal)
-      const envelope = await abortable(
-        tab.surface.executeJavaScript<{ json: string; truncated: boolean }>(`(async () => {
-          let value = await (0, eval)(${JSON.stringify(input.expression)});
-          if (value === undefined) value = null;
-          const seen = new WeakSet();
-          let json = JSON.stringify(value, (_key, item) => {
-            if (typeof item === 'bigint') return item.toString();
-            if (typeof item === 'object' && item !== null) {
-              if (seen.has(item)) return '[Circular]';
-              seen.add(item);
-            }
-            return item;
-          });
-          if (json === undefined) json = 'null';
-          const limit = ${MAX_EVALUATION_BYTES};
-          const truncated = json.length > limit;
-          return { json: truncated ? json.slice(0, limit) : json, truncated };
-        })()`),
-        signal
-      )
+      const envelope = await this.evaluateExpression(tab, input.expression, signal)
       let value: unknown = envelope.json
       if (!envelope.truncated) {
         try {
@@ -5525,6 +6335,99 @@ export class NativeBrowserSessionService {
         truncated: envelope.truncated
       }
     })
+  }
+
+  /**
+   * Runs the expression as DevTools' console does, through the protocol rather than `eval` in
+   * the page, so a page whose Content Security Policy or Trusted Types forbid `eval` can still be
+   * read. REPL mode keeps statements, top-level `await` and the last expression's value.
+   */
+  private async evaluateExpression(
+    tab: TabState,
+    expression: string,
+    signal?: AbortSignal
+  ): Promise<{ json: string; truncated: boolean }> {
+    const evaluated = await abortable(
+      tab.surface.sendDebuggerCommand<{
+        result?: {
+          objectId?: string
+          subtype?: string
+          value?: unknown
+          unserializableValue?: string
+        }
+        exceptionDetails?: { text?: string; exception?: { description?: string } }
+      }>('Runtime.evaluate', {
+        expression,
+        replMode: true,
+        awaitPromise: true,
+        returnByValue: false,
+        userGesture: true
+      }),
+      signal
+    ).catch((error: unknown) => {
+      throw pageChangedError(error)
+    })
+    if (evaluated.exceptionDetails) {
+      throw new Error(
+        evaluated.exceptionDetails.exception?.description ??
+          evaluated.exceptionDetails.text ??
+          'Browser page evaluation failed'
+      )
+    }
+    const result = evaluated.result ?? {}
+    const bounded = (json: string): { json: string; truncated: boolean } =>
+      json.length > MAX_EVALUATION_BYTES
+        ? { json: json.slice(0, MAX_EVALUATION_BYTES), truncated: true }
+        : { json, truncated: false }
+    if (!result.objectId) {
+      const value = result.unserializableValue ?? result.value ?? null
+      return bounded(JSON.stringify(value) ?? 'null')
+    }
+    try {
+      const serialized = await abortable(
+        tab.surface.sendDebuggerCommand<{
+          result?: { value?: { json: string; truncated: boolean } }
+          exceptionDetails?: { text?: string; exception?: { description?: string } }
+        }>('Runtime.callFunctionOn', {
+          objectId: result.objectId,
+          functionDeclaration: `async function(limit) {
+            let value = this;
+            if (value && typeof value.then === 'function') value = await value;
+            if (value === undefined) value = null;
+            const seen = new WeakSet();
+            let json = JSON.stringify(value, (_key, item) => {
+              if (typeof item === 'bigint') return item.toString();
+              if (typeof item === 'object' && item !== null) {
+                if (seen.has(item)) return '[Circular]';
+                seen.add(item);
+              }
+              return item;
+            });
+            if (json === undefined) json = 'null';
+            const truncated = json.length > limit;
+            return { json: truncated ? json.slice(0, limit) : json, truncated };
+          }`,
+          arguments: [{ value: MAX_EVALUATION_BYTES }],
+          awaitPromise: true,
+          returnByValue: true
+        }),
+        signal
+      ).catch((error: unknown) => {
+        throw pageChangedError(error)
+      })
+      if (serialized.exceptionDetails || !serialized.result?.value) {
+        throw new Error(
+          serialized.exceptionDetails?.exception?.description ??
+            serialized.exceptionDetails?.text ??
+            'The evaluated value could not be read'
+        )
+      }
+      return serialized.result.value
+    } finally {
+      await tab.surface
+        .sendDebuggerCommand('Runtime.releaseObject', { objectId: result.objectId })
+        .catch(() => undefined)
+    }
   }
 
   async verify(
@@ -5583,53 +6486,21 @@ export class NativeBrowserSessionService {
     })
   }
 
-  async beginHumanTakeover(
+  /**
+   * Whether the active tab still shows a human check. Once the user has cleared it, refs from
+   * before their clicks are dropped and the page has settled.
+   */
+  async humanVerificationRequired(
     sessionId: string,
     operation: BrowserOperationOptions = {}
-  ): Promise<BrowserHumanTakeoverResult> {
+  ): Promise<boolean> {
     const session = this.getSession(sessionId)
     return this.withSessionLock(session, operation, async (signal) => {
       const tab = this.getTab(session)
-      session.humanTakeoverTabId = tab.id
-      try {
-        tab.surface.showForHumanTakeover()
-        const observation = await this.observeUnlocked(
-          session,
-          { tabId: tab.id, screenshot: 'none', includeSemanticSnapshot: true },
-          signal
-        )
-        return {
-          active: tab.surface.isHumanTakeoverVisible(),
-          observation
-        }
-      } catch (error) {
-        tab.surface.hideHumanTakeover()
-        session.humanTakeoverTabId = undefined
-        throw error
-      }
-    })
-  }
-
-  async completeHumanTakeover(
-    sessionId: string,
-    operation: BrowserOperationOptions = {}
-  ): Promise<BrowserHumanTakeoverResult> {
-    const session = this.getSession(sessionId)
-    return this.withSessionLock(session, operation, async (signal) => {
-      if (!session.humanTakeoverTabId) throw new Error('Human browser takeover is not active')
-      const tab = this.getTab(session, session.humanTakeoverTabId)
-      tab.surface.hideHumanTakeover()
-      session.humanTakeoverTabId = undefined
+      if (await this.detectHumanVerification(tab, undefined, signal)) return true
       this.invalidateSemanticRefs(tab)
       await this.waitForQuiescence(tab, { idleMs: 200, maxWaitMs: 2_000 }, signal)
-      return {
-        active: false,
-        observation: await this.observeUnlocked(
-          session,
-          { tabId: tab.id, screenshot: 'viewport', includeSemanticSnapshot: true },
-          signal
-        )
-      }
+      return false
     })
   }
 

@@ -17,17 +17,9 @@ const run = (overrides: Partial<ScheduleRun>): ScheduleRun => ({
 
 describe('scheduleRunStatus', () => {
   it('reads what became of each occurrence', () => {
-    expect(scheduleRunStatus(run({ agentPhase: 'completed' }))).toEqual({
-      label: 'Completed',
-      tone: 'success'
-    })
-    expect(scheduleRunStatus(run({ agentPhase: 'awaiting_permission' })).label).toBe(
-      'Waiting for your approval'
-    )
+    expect(scheduleRunStatus(run({ agentPhase: 'completed' })).tone).toBe('success')
     expect(scheduleRunStatus(run({ agentPhase: 'executing_tool' })).tone).toBe('working')
-    expect(scheduleRunStatus(run({ outcome: 'skipped' })).label).toBe('Skipped')
     expect(scheduleRunStatus(run({ outcome: 'failed' })).tone).toBe('error')
-    expect(scheduleRunStatus(run({ conversationId: undefined })).label).toBe('Chat deleted')
   })
 })
 

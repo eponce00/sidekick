@@ -1,4 +1,5 @@
 import {
+  app,
   BrowserWindow,
   Menu,
   clipboard,
@@ -8,9 +9,17 @@ import {
   type OpenDialogOptions,
   type MenuItemConstructorOptions
 } from 'electron'
-import { basename, isAbsolute, join, relative } from 'path'
+import { basename, isAbsolute, join } from 'path'
 import { getStore } from './state'
-import { getStoredWorkspace, resolveKnownWorkspace, assertInsideWorkspace } from './workspaceUtils'
+import {
+  getStoredWorkspace,
+  resolveKnownWorkspace,
+  assertInsideWorkspace,
+  rememberPickedFolder,
+  setStoredWorkspace
+} from './workspaceUtils'
+import { chatIdForFolder } from '../services/chatFolders'
+import { saveUpload } from '../services/attachmentUploads'
 import { promises as fs } from 'fs'
 import { spawn } from 'child_process'
 import { randomUUID } from 'crypto'
@@ -24,7 +33,12 @@ import {
 import { workspacePermissionOperation } from '../../shared/permissions'
 import type { WorkspaceMutationAuthorization } from '../../shared/types'
 import { permissionBroker } from '../services/permissionBroker'
-import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
+import {
+  locateWorkspacePath,
+  projectPathForRealPath,
+  resolveSecureWorkspacePath,
+  workspaceFolders
+} from '../utils/workspacePaths'
 import { WorkspaceReadService } from '../services/workspaceReadService'
 import { listSavedPrompts } from '../services/savedPrompts'
 import { discoverExternalOpeners, fileManagerIcon } from '../services/externalOpeners'
@@ -32,8 +46,44 @@ import { workspaceWatchers } from '../services/workspaceWatchers'
 import type { ProjectContextAttachment } from '../../shared/messageContextAttachments'
 import { showAppMenu } from '../services/appMenus'
 import { showTrustedDialog } from '../services/trustedDialog'
+import { countPathItems } from '../services/pathItems'
+import { trashRefusal } from '../../shared/workspaceTrash'
 
 const workspaceReads = new WorkspaceReadService()
+
+/** Files matching a pattern in each of the project's folders, the primary first. */
+async function listEveryFolder(workspaceRoot: string, glob: string): Promise<string[]> {
+  const folders = ['', ...workspaceFolders(workspaceRoot).map(({ name }) => name)]
+  const listed = await Promise.all(
+    folders.map((subPath) =>
+      workspaceReads
+        .listFiles(workspaceRoot, { subPath, glob, maxResults: 50 })
+        .then((result) => result.files)
+        .catch(() => [] as string[])
+    )
+  )
+  return listed.flat()
+}
+
+/** A file or folder the user chose, as a reference into the project when it is inside it. */
+async function projectReference(
+  workspaceRoot: string,
+  chosenPath: string
+): Promise<ProjectContextAttachment | null> {
+  const canonicalPath = await fs.realpath(chosenPath)
+  // Any of the project's folders; the path then starts with that folder's name.
+  const relativePath = await projectPathForRealPath(workspaceRoot, canonicalPath)
+  if (!relativePath || locateWorkspacePath(workspaceRoot, relativePath).path === '') return null
+  const stat = await fs.stat(canonicalPath)
+  if (!stat.isFile() && !stat.isDirectory()) return null
+  return {
+    id: randomUUID(),
+    kind: stat.isDirectory() ? 'folder' : 'file',
+    name: basename(canonicalPath),
+    relativePath,
+    ...(stat.isFile() ? { size: stat.size } : {})
+  }
+}
 
 export function registerWorkspaceHandlers(): void {
   // Workspace: native folder picker
@@ -49,31 +99,35 @@ export function registerWorkspaceHandlers(): void {
     if (result.canceled || result.filePaths.length === 0) {
       return { canceled: true, path: null }
     }
+    rememberPickedFolder(result.filePaths[0])
     return { canceled: false, path: result.filePaths[0] }
   })
 
   ipcMain.handle('workspace:selectContextAttachments', async (event, passedRoot: string) => {
     try {
       const workspaceRoot = resolveKnownWorkspace(passedRoot)
-      const canonicalRoot = await fs.realpath(workspaceRoot)
       const win = BrowserWindow.fromWebContents(event.sender)
-      const choiceOptions = {
-        type: 'question' as const,
-        title: 'Attach project context',
-        message: 'Choose files or one folder from this project',
-        detail: 'SideKick stores project-relative references and reads them only when relevant.',
-        buttons: ['Choose files', 'Choose folder', 'Cancel'],
-        defaultId: 0,
-        cancelId: 2,
-        noLink: true
+      const inChatFolder = Boolean(chatIdForFolder(workspaceRoot))
+      // A chat with no project takes only files, as copies in its own folder.
+      let selectFolder = false
+      if (!inChatFolder) {
+        const choice = await showTrustedDialog(win, {
+          type: 'question' as const,
+          title: 'Attach files',
+          message: 'Choose files from anywhere, or one folder from this project',
+          detail:
+            'Project files and folders are read where they are. A file from elsewhere is copied into the project’s .sidekick/uploads folder, which git ignores.',
+          buttons: ['Choose files', 'Choose folder', 'Cancel'],
+          defaultId: 0,
+          cancelId: 2,
+          noLink: true
+        })
+        if (choice.response === 2) return { ok: true, canceled: true, attachments: [] }
+        selectFolder = choice.response === 1
       }
-      const choice = await showTrustedDialog(win, choiceOptions)
-      if (choice.response === 2) return { ok: true, canceled: true, attachments: [] }
-
-      const selectFolder = choice.response === 1
       const openOptions: OpenDialogOptions = {
-        title: selectFolder ? 'Attach a project folder' : 'Attach project files',
-        defaultPath: workspaceRoot,
+        title: selectFolder ? 'Attach a project folder' : 'Attach files',
+        defaultPath: inChatFolder ? app.getPath('documents') : workspaceRoot,
         buttonLabel: 'Attach',
         properties: selectFolder ? ['openDirectory'] : ['openFile', 'multiSelections']
       }
@@ -86,31 +140,49 @@ export function registerWorkspaceHandlers(): void {
 
       const attachments: ProjectContextAttachment[] = []
       for (const selectedPath of selection.filePaths.slice(0, 12)) {
-        const canonicalPath = await fs.realpath(selectedPath)
-        const relativePath = relative(canonicalRoot, canonicalPath)
-        if (
-          !relativePath ||
-          relativePath === '..' ||
-          relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) ||
-          isAbsolute(relativePath)
-        ) {
-          throw new Error('Choose files or folders inside the current project')
+        const reference = inChatFolder ? null : await projectReference(workspaceRoot, selectedPath)
+        if (reference) attachments.push(reference)
+        else if (selectFolder) throw new Error('Choose a folder inside the current project')
+        else {
+          const saved = await saveUpload(workspaceRoot, { path: selectedPath })
+          attachments.push({ id: randomUUID(), kind: 'file' as const, ...saved })
         }
-        const stat = await fs.stat(canonicalPath)
-        if (selectFolder ? !stat.isDirectory() : !stat.isFile()) {
-          throw new Error(selectFolder ? 'Choose a project folder' : 'Choose project files')
-        }
-        attachments.push({
-          id: randomUUID(),
-          kind: selectFolder ? ('folder' as const) : ('file' as const),
-          name: basename(canonicalPath),
-          relativePath: relativePath.replaceAll('\\', '/'),
-          ...(stat.isFile() ? { size: stat.size } : {})
-        })
       }
       return { ok: true, canceled: false, attachments }
     } catch (error) {
       return { ok: false, canceled: false, attachments: [], error: (error as Error).message }
+    }
+  })
+
+  // Files dropped or pasted on the message box. A project file is read where it is; anything else
+  // comes as its bytes and is saved as a copy, so a path from the window is never read as such.
+  ipcMain.handle('workspace:attachFiles', async (_event, passedRoot: string, files: unknown) => {
+    try {
+      const workspaceRoot = resolveKnownWorkspace(passedRoot)
+      if (!Array.isArray(files)) throw new Error('Invalid files')
+      const inChatFolder = Boolean(chatIdForFolder(workspaceRoot))
+      const attachments: ProjectContextAttachment[] = []
+      for (const file of files.slice(0, 12) as Array<Record<string, unknown>>) {
+        const name = typeof file?.name === 'string' ? file.name : 'File'
+        const reference =
+          !inChatFolder && typeof file?.path === 'string' && file.path
+            ? await projectReference(workspaceRoot, file.path).catch(() => null)
+            : null
+        if (reference) attachments.push(reference)
+        else if (file?.bytes instanceof Uint8Array) {
+          const saved = await saveUpload(workspaceRoot, { name, bytes: file.bytes })
+          attachments.push({ id: randomUUID(), kind: 'file' as const, ...saved })
+        } else {
+          throw new Error(
+            inChatFolder
+              ? `${name} is a folder; attach the files in it`
+              : `${name} is a folder outside the project; attach a folder from inside it`
+          )
+        }
+      }
+      return { ok: true, attachments }
+    } catch (error) {
+      return { ok: false, attachments: [], error: (error as Error).message }
     }
   })
 
@@ -184,8 +256,8 @@ export function registerWorkspaceHandlers(): void {
     return { ok: true }
   })
 
-  ipcMain.handle('workspace:setPath', async (_, folderPath: string | null) => {
-    getStore().set('workspacePath', folderPath)
+  ipcMain.handle('workspace:setPath', async (_, folderPath: unknown) => {
+    setStoredWorkspace(folderPath)
     return { success: true }
   })
 
@@ -253,6 +325,25 @@ export function registerWorkspaceHandlers(): void {
     }
   )
 
+  // Every folder of a project, each listed from its own root, for the Files panel and mentions.
+  ipcMain.handle('workspace:listProjectFiles', async (_, passedRoot: string) => {
+    try {
+      const workspaceRoot = resolveKnownWorkspace(passedRoot)
+      const folders = [...workspaceFolders(workspaceRoot)]
+      const listed = await Promise.all(
+        ['', ...folders.map(({ name }) => name)].map((subPath) =>
+          workspaceReads
+            .listFiles(workspaceRoot, { subPath })
+            .then((result) => result.files)
+            .catch(() => [] as string[])
+        )
+      )
+      return { ok: true, folders, files: listed.flat() }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message, folders: [], files: [] }
+    }
+  })
+
   // Saved prompts come from the open project and the user's home folder; nothing else is read.
   ipcMain.handle('workspace:listPrompts', async (_, passedRoot: string | null) => {
     try {
@@ -316,7 +407,7 @@ export function registerWorkspaceHandlers(): void {
     }
   )
 
-  // Workspace: move a user-selected file to the system Trash / Recycle Bin.
+  // Workspace: move a user-selected file or folder to the system Trash / Recycle Bin.
   ipcMain.handle(
     'workspace:trashFile',
     async (
@@ -336,8 +427,13 @@ export function registerWorkspaceHandlers(): void {
           )
         )
         const workspaceRoot = resolveKnownWorkspace(passedRoot)
-        const fullPath = join(workspaceRoot, filePath)
-        assertInsideWorkspace(fullPath, workspaceRoot)
+        if (typeof filePath !== 'string') throw new Error('Invalid file path')
+        const located = locateWorkspacePath(workspaceRoot, filePath)
+        const fullPath = join(located.root, located.path)
+        assertInsideWorkspace(fullPath, located.root)
+        // Each project folder is a root of its own, which never goes to the bin from here.
+        const refusal = trashRefusal(located.path)
+        if (refusal) throw new Error(refusal)
         await shell.trashItem(fullPath)
         return { ok: true }
       } catch (err) {
@@ -351,10 +447,6 @@ export function registerWorkspaceHandlers(): void {
     passedRoot?: string
   ): Promise<string> => {
     const workspaceRoot = passedRoot ? resolveKnownWorkspace(passedRoot) : getStoredWorkspace()
-    if (isAbsolute(requestedPath)) {
-      const relativeTarget = relative(workspaceRoot, requestedPath)
-      return resolveSecureWorkspacePath(workspaceRoot, relativeTarget)
-    }
     return resolveSecureWorkspacePath(workspaceRoot, requestedPath)
   }
 
@@ -394,14 +486,11 @@ export function registerWorkspaceHandlers(): void {
         }
         const fileName = basename(normalizedReference)
         if (!fileName) return { ok: false, matches: [] }
-        const listed = await workspaceReads.listFiles(workspaceRoot, {
-          glob: `**/${fileName}`,
-          maxResults: 50
-        })
+        const listed = await listEveryFolder(workspaceRoot, `**/${fileName}`)
         const comparable = (value: string): string =>
           process.platform === 'win32' ? value.toLowerCase() : value
         const wantedSuffix = comparable(normalizedReference)
-        const matches = listed.files
+        const matches = listed
           .map((candidate) => candidate.replace(/\\/g, '/'))
           .filter((candidate) => {
             const normalized = comparable(candidate)
@@ -441,14 +530,11 @@ export function registerWorkspaceHandlers(): void {
         }
         const normalizedReference = fileReference.replace(/\\/g, '/').replace(/^\.\//, '')
         const fileName = basename(normalizedReference)
-        const listed = await workspaceReads.listFiles(workspaceRoot, {
-          glob: `**/${fileName}`,
-          maxResults: 50
-        })
+        const listed = await listEveryFolder(workspaceRoot, `**/${fileName}`)
         const comparable = (value: string): string =>
           process.platform === 'win32' ? value.toLowerCase() : value
         const wantedSuffix = comparable(normalizedReference)
-        const matches = listed.files
+        const matches = listed
           .filter((candidate) => {
             const normalized = comparable(candidate.replace(/\\/g, '/'))
             return normalized === wantedSuffix || normalized.endsWith(`/${wantedSuffix}`)
@@ -485,15 +571,41 @@ export function registerWorkspaceHandlers(): void {
       }
     }
   )
+  // How much a folder holds, for the question before it goes to the Recycle Bin.
+  ipcMain.handle('workspace:countPathItems', async (_, passedRoot: string, folderPath: string) => {
+    const workspaceRoot = resolveKnownWorkspace(passedRoot)
+    return countPathItems(await resolveSecureWorkspacePath(workspaceRoot, folderPath))
+  })
+
   ipcMain.handle('workspace:revealFile', async (_, filePath: string, passedRoot?: string) => {
     shell.showItemInFolder(await resolveShellTarget(filePath, passedRoot))
   })
   ipcMain.handle(
     'workspace:showPathMenu',
-    async (event, requestedPath: string, passedRoot?: string, isDirectory = false) => {
+    async (
+      event,
+      requestedPath: string,
+      passedRoot?: string,
+      isDirectory = false,
+      offerTrash = false
+    ): Promise<'trash' | undefined> => {
       const workspaceRoot = passedRoot ? resolveKnownWorkspace(passedRoot) : getStoredWorkspace()
       const target = await resolveShellTarget(requestedPath, passedRoot)
-      const relativePath = relative(workspaceRoot, target).replace(/\\/g, '/')
+      const relativePath = locateWorkspacePath(workspaceRoot, target).path
+      // The window asks before it moves anything, so the menu only says which item was chosen.
+      let chose: (choice: 'trash' | undefined) => void = () => undefined
+      const chosen = new Promise<'trash' | undefined>((resolve) => (chose = resolve))
+      const closed = (): void => void setTimeout(() => chose(undefined), 50)
+      const trash: MenuItemConstructorOptions[] =
+        offerTrash && !trashRefusal(relativePath)
+          ? [
+              { type: 'separator' },
+              {
+                label: `Move to ${process.platform === 'win32' ? 'Recycle Bin' : 'Trash'}`,
+                click: () => chose('trash')
+              }
+            ]
+          : []
       const revealLabel = process.platform === 'win32' ? 'Show in File Explorer' : 'Show in Folder'
       const [openers, revealIcon] = await Promise.all([
         discoverExternalOpeners(),
@@ -582,12 +694,17 @@ export function registerWorkspaceHandlers(): void {
                 click: () => clipboard.writeText(relativePath)
               }
             ]
-          : [])
+          : []),
+        ...trash
       ]
-      if (!showAppMenu(event.sender, template)) {
+      if (!showAppMenu(event.sender, template, undefined, closed)) {
         const window = BrowserWindow.fromWebContents(event.sender)
-        Menu.buildFromTemplate(template).popup(window ? { window } : undefined)
+        Menu.buildFromTemplate(template).popup({
+          ...(window ? { window } : {}),
+          callback: closed
+        })
       }
+      return chosen
     }
   )
 }

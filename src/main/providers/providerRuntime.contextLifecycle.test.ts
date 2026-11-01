@@ -8,6 +8,7 @@ import { AgentMessageMaterializer } from '../services/agentMessageMaterializer'
 import { openApplicationDatabase } from '../bootstrap/database'
 import { resolveProviderContext } from './providerRuntime'
 import { ConversationGoalStore } from '../services/conversationGoalStore'
+import { ConversationModelStore } from '../services/conversationModelStore'
 import type { PreparedConversationAgentRun } from '../services/conversationRunPreparer'
 
 const provider = vi.hoisted(() => ({ type: 'openai-compatible', preset: 'generic' }))
@@ -71,6 +72,7 @@ function fixture() {
     store,
     messages: new AgentMessageMaterializer(db, store),
     preparations: new Map(),
+    idleCompactions: new Map(),
     activeConversations: new Map(),
     observers: new Map(),
     settings: () => ({}),
@@ -80,6 +82,7 @@ function fixture() {
     commands: { cancelAll: vi.fn() },
     mcp: { close: vi.fn(async () => {}) },
     goals: new ConversationGoalStore(db),
+    conversationModels: new ConversationModelStore(db),
     occupancy: new WorkspaceOccupancy(),
     runSlots: new RunSlots(() => 4),
     leases: new Map(),
@@ -118,6 +121,35 @@ function contextOnlyPreparation() {
       throw new Error('unexpected preparation continuation')
     })
 }
+
+describe('the model a chat keeps', () => {
+  it('is the one its latest run started with, whoever started it', async () => {
+    const { coordinator, db } = fixture()
+    db.exec(
+      `INSERT INTO conversations (id, title, created_at, updated_at, model_id)
+       VALUES ('other-thread', 'Other', 1, 1, 'lmstudio:fixture/other')`
+    )
+    const network = deferredFetch()
+    contextOnlyPreparation()
+    const pending = coordinator.startConversation({
+      ...conversationInput,
+      model: { ...conversationInput.model, id: 'lmstudio:fixture/fixture' }
+    })
+    await network.started
+    coordinator.stop('fixture-run')
+    await pending
+    network.release()
+
+    const modelOf = (id: string): unknown =>
+      (
+        db.prepare('SELECT model_id FROM conversations WHERE id = ?').get(id) as {
+          model_id: unknown
+        }
+      ).model_id
+    expect(modelOf('fixture-thread')).toBe('lmstudio:fixture/fixture')
+    expect(modelOf('other-thread')).toBe('lmstudio:fixture/other')
+  })
+})
 
 describe('provider context discovery before kernel registration', () => {
   it('materializes one cancelled conversation and rejects overlapping preparation', async () => {

@@ -1,4 +1,5 @@
 // Chat-related types for messages, content segments, and tool executions
+import type { HistoryPoint } from '../../../shared/workspaceHistory'
 
 import type { ConversationRunMode } from '../../../shared/agentRunApi'
 import type { MessageImageAttachment } from '../../../shared/messageImages'
@@ -63,11 +64,21 @@ export interface ContentSegment {
     title: string
     code: string
     isStreaming?: boolean // True while the LLM is still generating the artifact code
+    /** The create_artifact call that made it; it streams and is reviewed under this call. */
+    toolCallId?: string
+    /** The builder reviewing it, while it does. */
+    childRunId?: string
+    /** An edit_artifact call is changing it; the code is the version being changed, or empty. */
+    editing?: boolean
+    /** The identity of the place it shows in, kept as later versions replace it there. */
+    slotKey?: string
   }
   summary?: {
     originalTokens: number
     newTokens: number
     messagesCompacted: number
+    /** Tool results shortened instead of summarizing history. */
+    resultsCut?: number
     contextLength?: number
     contextReliable?: boolean
     /** The exact model-facing historical-context payload is stored in content. */
@@ -154,9 +165,10 @@ export interface Message {
   /** Durable execution profile used for this request/response. */
   runMode?: ConversationRunMode
   tokenUsage?: TokenUsage // Token usage and cost info for this response
-  checkpointHash?: string // Shadow-git checkpoint hash (set after workspace file writes)
-  checkpointWorkspaceRoot?: string // Workspace that owns checkpointHash; never inferred after a move
-  restoredFrom?: string // Set after a successful checkpoint restore (for 'Restored' badge)
+  /** The reply's History points, one for each project folder whose files it changed. */
+  checkpoints?: HistoryPoint[]
+  /** Set once the reply's file changes were undone. */
+  restored?: boolean
 }
 
 // Helper type for grouped segments (thinking + tools grouped together, text/artifacts separate)

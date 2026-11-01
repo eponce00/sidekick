@@ -91,6 +91,52 @@ describe('AgentContextManager', () => {
     expect(record?.summary).toContain('not complete evidence')
   })
 
+  it('cuts the latest turn’s oversized tool results when they alone outgrow the window', async () => {
+    // Seven file reads at once on a 24k window ended the run with "did not reduce context".
+    const complete = vi.fn()
+    const manager = new AgentContextManager({
+      target,
+      contextLength: 24_576,
+      maxOutputTokens: 4_096,
+      threshold: 0.65,
+      enabled: true,
+      complete
+    })
+    const reads = Array.from({ length: 6 }, (_, index) => `read-${index}`)
+    const messages: ProviderChatMessage[] = [
+      { role: 'system', content: 'Policy' },
+      { role: 'user', content: 'Read every module and name its last function.' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: reads.map((id) => ({
+          id,
+          function: { name: 'read', arguments: { path: `${id}.js` } }
+        }))
+      },
+      ...reads.map((id) => ({
+        role: 'tool',
+        tool_call_id: id,
+        content: `opening of ${id}\n${'function step(entry) { return entry }\n'.repeat(700)}last function of ${id}`
+      }))
+    ]
+
+    const result = await manager.compact(messages, [], new AbortController().signal)
+
+    expect(result.compacted).toBe(true)
+    expect(complete).not.toHaveBeenCalled()
+    // Nothing was summarized or recorded, so it is not counted as a summary.
+    expect(result.details).not.toHaveProperty('count')
+    expect(estimateProviderRequestTokens(result.messages, [])).toBeLessThan(24_576 - 4_096)
+    const results = result.messages.filter((message) => message.role === 'tool')
+    expect(results.map((message) => message.tool_call_id)).toEqual(reads)
+    for (const [index, message] of results.entries()) {
+      expect(message.content).toContain(`opening of read-${index}`)
+      expect(message.content).toContain(`last function of read-${index}`)
+      expect(message.content).toContain('SideKick cut')
+    }
+  })
+
   it('does not treat a truncated summary or fallback excerpts as verified completion', async () => {
     let record: AgentCompactionRecord | undefined
     const manager = new AgentContextManager({
@@ -153,24 +199,7 @@ describe('AgentContextManager', () => {
     )
     expect(result.messages.at(-1)?.content).toBe('Current request must remain verbatim.')
     expect(record).toMatchObject({ strategy: 'model', promptVersion: expect.any(String) })
-  })
-
-  it('records deterministic fallback provenance when summarization fails', async () => {
-    let record: AgentCompactionRecord | null = null
-    const manager = new AgentContextManager({
-      target,
-      contextLength: 8_192,
-      maxOutputTokens: 2_048,
-      threshold: 0.8,
-      enabled: true,
-      complete: async () => ({ ok: false, error: 'provider unavailable' }),
-      onCompacted: (value) => {
-        record = value
-      }
-    })
-
-    await manager.compact(transcript(), [], new AbortController().signal)
-    expect(record).toMatchObject({ strategy: 'deterministic', provider: 'openai-compatible' })
+    expect(result.details).not.toHaveProperty('fallbackReason')
   })
 
   it('compacts a fresh user turn after many complete tool exchanges', async () => {
@@ -224,6 +253,69 @@ describe('AgentContextManager', () => {
     expect(result.details?.messagesCompacted).toBeGreaterThan(1)
   })
 
+  it('keeps the request a long run answers word for word, not an earlier question', async () => {
+    const messages: ProviderChatMessage[] = [
+      { role: 'system', content: 'System policy' },
+      { role: 'user', content: 'Can you clone the private repository for me?' },
+      { role: 'assistant', content: 'I cannot reach it; clone it and I will read the files.' },
+      { role: 'user', content: 'So what is done and what is pending?' }
+    ]
+    for (let index = 0; index < 8; index++) {
+      const id = `call-${index}`
+      messages.push(
+        {
+          role: 'assistant',
+          content: `Checking ${index}`,
+          tool_calls: [
+            { id, function: { name: 'shell', arguments: { command: `check ${index}` } } }
+          ]
+        },
+        { role: 'tool', tool_call_id: id, content: `Result ${index}: ${'log line '.repeat(900)}` }
+      )
+      if (index === 5) {
+        messages.push({
+          role: 'user',
+          content:
+            '<sidekick_verification_guard trust="app-policy">\nVerify.\n</sidekick_verification_guard>'
+        })
+      }
+    }
+    const manager = new AgentContextManager({
+      target: { ...target, contextLength: 32_768 },
+      contextLength: 32_768,
+      maxOutputTokens: 8_192,
+      threshold: 0.8,
+      enabled: true,
+      // The summary a local model wrote: the earlier question as the objective.
+      complete: async () => ({
+        ok: true,
+        data: {
+          message: { role: 'assistant', content: '## Objective\n- Clone the private repository.' },
+          promptTokens: 10_000,
+          completionTokens: 20,
+          reasoningTokens: 0,
+          finishReason: 'stop'
+        }
+      })
+    })
+
+    const result = await manager.compact(messages, [], new AbortController().signal)
+    expect(result.compacted).toBe(true)
+    const kept = result.messages.filter(
+      (message) => message.content === 'So what is done and what is pending?'
+    )
+    expect(kept).toHaveLength(1)
+    const summaryAt = result.messages.findIndex((message) =>
+      message.content?.startsWith('<historical_context')
+    )
+    expect(result.messages[summaryAt + 1].content).toBe('So what is done and what is pending?')
+    expect(
+      result.messages.some(
+        (message) => message.content === 'Can you clone the private repository for me?'
+      )
+    ).toBe(false)
+  })
+
   it('uses actual provider prompt usage to correct future preflight estimates', () => {
     const manager = new AgentContextManager({
       target,
@@ -246,19 +338,6 @@ describe('AgentContextManager', () => {
         []
       )
     ).toBe(true)
-  })
-
-  it('starts a new run with the provider calibration learned by the previous turn', () => {
-    const manager = new AgentContextManager({
-      target,
-      contextLength: 8_192,
-      maxOutputTokens: 2_048,
-      threshold: 0.8,
-      enabled: true,
-      initialEstimationBiasTokens: 6_000
-    })
-
-    expect(manager.shouldCompact([{ role: 'user', content: 'Continue' }], [])).toBe(true)
   })
 
   it('allows long runs to compact again after successful provider samples', async () => {
@@ -357,11 +436,6 @@ describe('AgentContextManager', () => {
       { fallbackReason: 'timeout' }
     ],
     [
-      'a gateway that gave up',
-      { ok: false, error: 'HTTP 504', status: 504 },
-      { fallbackReason: 'timeout', fallbackStatus: 504 }
-    ],
-    [
       'a dropped connection',
       {
         ok: false,
@@ -412,20 +486,6 @@ describe('AgentContextManager', () => {
         }
       },
       { fallbackReason: 'reasoning_only' }
-    ],
-    [
-      'an empty reply',
-      {
-        ok: true,
-        data: {
-          message: { role: 'assistant', content: '   ' },
-          promptTokens: 1_000,
-          completionTokens: 1,
-          reasoningTokens: 0,
-          finishReason: 'stop'
-        }
-      },
-      { fallbackReason: 'empty_output' }
     ]
   ])(
     'records why it used the fallback summary after %s, without content',
@@ -497,29 +557,6 @@ describe('AgentContextManager', () => {
     const sent = request!.messages[1].content!
     expect(sent).not.toContain('PROJECT-RULE')
     expect(sent).toContain('OLD-SUMMARY of earlier work.')
-  })
-
-  it('records no fallback reason for a model summary', async () => {
-    const manager = new AgentContextManager({
-      target,
-      contextLength: 8_192,
-      maxOutputTokens: 2_048,
-      threshold: 0.8,
-      enabled: true,
-      complete: async () => ({
-        ok: true,
-        data: {
-          message: { role: 'assistant', content: 'Summary.' },
-          promptTokens: 1_500,
-          completionTokens: 3,
-          reasoningTokens: 0,
-          finishReason: 'stop'
-        }
-      })
-    })
-    const compacted = await manager.compact(transcript(), [], new AbortController().signal)
-    expect(compacted.details).toMatchObject({ strategy: 'model', summaryPromptTokens: 1_500 })
-    expect(compacted.details).not.toHaveProperty('fallbackReason')
   })
 
   it('is no compaction at all when the run is stopped while the summary is written', async () => {

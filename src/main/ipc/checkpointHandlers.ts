@@ -1,83 +1,56 @@
 import { ipcMain } from 'electron'
-import {
-  checkpointPermissionOperation,
-  type CheckpointMutationAction
-} from '../../shared/permissions'
+import { historyRestorePermissionOperation } from '../../shared/permissions'
 import type { CheckpointMutationAuthorization } from '../../shared/types'
+import type { HistoryMutationResult, HistoryRestoreTarget } from '../../shared/workspaceHistory'
 import { permissionBroker } from '../services/permissionBroker'
 import { appState } from './state'
-import { getDb } from './state'
 import { resolveKnownWorkspace } from './workspaceUtils'
-import { CheckpointTitleStore } from '../services/checkpointTitleStore'
-import {
-  isCheckpointTitleSource,
-  type CheckpointTitleIdentity,
-  type CompleteCheckpointTitleBackfillInput,
-  type FailCheckpointTitleBackfillInput
-} from '../../shared/checkpointTitles'
 import {
   createCheckpoint,
   beginCheckpointCapture,
   discardCheckpointCapture,
-  restoreCheckpoint,
-  hardResetCheckpoint,
-  rewindToBeforeCheckpoint,
-  listCheckpoints,
-  getCheckpointDiff,
-  getHistoryStatus
+  restoreWorkspaceHistory
 } from '../services/checkpoints'
 
-export function registerCheckpointHandlers(): void {
-  const db = getDb()
-  const checkpointTitles = new CheckpointTitleStore(db)
-  const validHash = (hash: unknown): hash is string =>
-    typeof hash === 'string' && /^[0-9a-f]{7,64}$/i.test(hash)
-  const resolveIdentity = (input: unknown): CheckpointTitleIdentity => {
-    if (!input || typeof input !== 'object') throw new Error('Invalid checkpoint title identity')
-    const candidate = input as Record<string, unknown>
-    const workspaceRoot = resolveKnownWorkspace(candidate.workspaceRoot)
+/** The renderer's restore targets, each checked; a folder must be one SideKick knows. */
+export function validHistoryTargets(raw: unknown): HistoryRestoreTarget[] {
+  if (!Array.isArray(raw) || !raw.length || raw.length > 50) {
+    throw new Error('Invalid history restore')
+  }
+  return raw.map((target) => {
+    const { workspaceRoot, hashes } = (target ?? {}) as Partial<HistoryRestoreTarget>
     if (
-      !validHash(candidate.hash) ||
-      typeof candidate.expectedTitle !== 'string' ||
-      candidate.expectedTitle.length > 500
+      !Array.isArray(hashes) ||
+      !hashes.length ||
+      hashes.length > 500 ||
+      hashes.some((hash) => typeof hash !== 'string' || !/^[0-9a-f]{7,64}$/i.test(hash))
     ) {
-      throw new Error('Invalid checkpoint title identity')
+      throw new Error('Invalid checkpoint hash')
     }
-    return {
-      workspaceRoot,
-      hash: candidate.hash,
-      expectedTitle: candidate.expectedTitle
-    }
-  }
-  const consumeCheckpointAuthorization = (
-    action: CheckpointMutationAction,
-    hash: string,
-    authorization: CheckpointMutationAuthorization | undefined
-  ): void => {
-    if (!/^[0-9a-f]{7,64}$/i.test(hash)) throw new Error('Invalid checkpoint hash')
-    permissionBroker.consume(
-      authorization?.authorizationToken,
-      checkpointPermissionOperation(action, hash, authorization?.requestedAccess ?? 'confirm')
-    )
-  }
+    return { workspaceRoot: resolveKnownWorkspace(workspaceRoot), hashes: [...hashes] }
+  })
+}
 
-  const mutationResponse = (
-    result: Awaited<ReturnType<typeof restoreCheckpoint>>
-  ): {
-    ok: boolean
-    changedFiles?: number
-    conflicts?: typeof result.conflicts
-    error?: string
-  } => {
-    if (result.ok) return { ok: true, changedFiles: result.changedFiles }
+/** Restores the folders together, after the approval the caller holds for exactly these targets. */
+export async function restoreApprovedHistory(
+  targets: HistoryRestoreTarget[]
+): Promise<HistoryMutationResult> {
+  const result = await restoreWorkspaceHistory(targets)
+  if (result.ok) {
     return {
-      ok: false,
-      conflicts: result.conflicts,
-      error:
-        'Nothing was restored because one or more affected files changed after SideKick saved this history point.'
+      ok: true,
+      changedFiles: result.workspaces.reduce((total, folder) => total + folder.changedFiles, 0)
     }
   }
+  return {
+    ok: false,
+    conflicts: result.conflicts,
+    error:
+      'Nothing was restored because one or more affected files changed after SideKick saved this history point.'
+  }
+}
 
+export function registerCheckpointHandlers(): void {
   ipcMain.handle(
     'workspace:beginHistoryCapture',
     async (_, passedRoot: string, conversationId: string, agentMessageId: string) => {
@@ -120,7 +93,6 @@ export function registerCheckpointHandlers(): void {
         const workspaceRoot = resolveKnownWorkspace(passedRoot)
         const checkpoint = await createCheckpoint(workspaceRoot, message, captureId)
         if (!checkpoint) return { ok: true, hash: null, changeCount: 0, captureVersion: 2 }
-        checkpointTitles.recordCreated(workspaceRoot, checkpoint.hash, message)
         return { ok: true, ...checkpoint }
       } catch (err) {
         return { ok: false, error: (err as Error).message, hash: null }
@@ -128,53 +100,25 @@ export function registerCheckpointHandlers(): void {
     }
   )
 
+  // Every folder of a reply's History goes back in one step, or none does.
   ipcMain.handle(
-    'workspace:restoreCheckpoint',
-    async (_, passedRoot: string, hash: string, authorization: CheckpointMutationAuthorization) => {
+    'workspace:restoreHistory',
+    async (
+      _,
+      rawTargets: unknown,
+      authorization: CheckpointMutationAuthorization
+    ): Promise<HistoryMutationResult> => {
       if (!appState.gitAvailable) return { ok: false, error: 'git not available' }
       try {
-        consumeCheckpointAuthorization('restore', hash, authorization)
-        const workspaceRoot = resolveKnownWorkspace(passedRoot)
-        return mutationResponse(await restoreCheckpoint(workspaceRoot, hash))
-      } catch (err) {
-        return { ok: false, error: (err as Error).message }
-      }
-    }
-  )
-
-  ipcMain.handle('workspace:listCheckpoints', async (_, passedRoot: string) => {
-    try {
-      const workspaceRoot = resolveKnownWorkspace(passedRoot)
-      const checkpoints = checkpointTitles.sync(workspaceRoot, await listCheckpoints(workspaceRoot))
-      return { ok: true, checkpoints, status: await getHistoryStatus(workspaceRoot) }
-    } catch (err) {
-      return { ok: false, checkpoints: [], error: (err as Error).message }
-    }
-  })
-
-  ipcMain.handle(
-    'workspace:rewindToBeforeCheckpoint',
-    async (_, passedRoot: string, hash: string, authorization: CheckpointMutationAuthorization) => {
-      if (!appState.gitAvailable) return { ok: false, error: 'git not available' }
-      try {
-        consumeCheckpointAuthorization('rewind', hash, authorization)
-        const workspaceRoot = resolveKnownWorkspace(passedRoot)
-        const result = await rewindToBeforeCheckpoint(workspaceRoot, hash)
-        return { ...mutationResponse(result), parentHash: result.parentHash }
-      } catch (err) {
-        return { ok: false, error: (err as Error).message }
-      }
-    }
-  )
-
-  ipcMain.handle(
-    'workspace:hardResetCheckpoint',
-    async (_, passedRoot: string, hash: string, authorization: CheckpointMutationAuthorization) => {
-      if (!appState.gitAvailable) return { ok: false, error: 'git not available' }
-      try {
-        consumeCheckpointAuthorization('hard-reset', hash, authorization)
-        const workspaceRoot = resolveKnownWorkspace(passedRoot)
-        return mutationResponse(await hardResetCheckpoint(workspaceRoot, hash))
+        const targets = validHistoryTargets(rawTargets)
+        permissionBroker.consume(
+          authorization?.authorizationToken,
+          historyRestorePermissionOperation(
+            rawTargets as HistoryRestoreTarget[],
+            authorization?.requestedAccess ?? 'confirm'
+          )
+        )
+        return await restoreApprovedHistory(targets)
       } catch (err) {
         return { ok: false, error: (err as Error).message }
       }
@@ -182,82 +126,4 @@ export function registerCheckpointHandlers(): void {
   )
 
   ipcMain.handle('workspace:gitAvailable', async () => appState.gitAvailable)
-
-  ipcMain.handle('workspace:getCheckpointDiff', async (_, passedRoot: string, hash: string) => {
-    try {
-      if (!validHash(hash)) throw new Error('Invalid checkpoint hash')
-      const workspaceRoot = resolveKnownWorkspace(passedRoot)
-      const diff = await getCheckpointDiff(workspaceRoot, hash)
-      return { ok: true, diff }
-    } catch (err) {
-      return { ok: false, diff: '', error: (err as Error).message }
-    }
-  })
-
-  ipcMain.handle(
-    'workspace:renameCheckpoint',
-    async (_, passedRoot: string, hash: string, newMessage: string, requestedSource?: unknown) => {
-      try {
-        const workspaceRoot = resolveKnownWorkspace(passedRoot)
-        if (
-          !validHash(hash) ||
-          typeof newMessage !== 'string' ||
-          !newMessage.trim() ||
-          newMessage.length > 500
-        ) {
-          throw new Error('Invalid checkpoint label')
-        }
-        const source = isCheckpointTitleSource(requestedSource) ? requestedSource : 'user'
-        let applied = checkpointTitles.updateLabel(workspaceRoot, hash, newMessage, source)
-        if (!applied) {
-          checkpointTitles.sync(workspaceRoot, await listCheckpoints(workspaceRoot))
-          applied = checkpointTitles.updateLabel(workspaceRoot, hash, newMessage, source)
-        }
-        return applied ? { ok: true } : { ok: false, error: 'Checkpoint not found' }
-      } catch (err) {
-        return { ok: false, error: (err as Error).message }
-      }
-    }
-  )
-
-  ipcMain.handle(
-    'workspace:claimCheckpointTitleBackfill',
-    async (_, input: CheckpointTitleIdentity) => {
-      const identity = resolveIdentity(input)
-      return { claimed: checkpointTitles.claim(identity) }
-    }
-  )
-
-  ipcMain.handle(
-    'workspace:completeCheckpointTitleBackfill',
-    async (_, input: CompleteCheckpointTitleBackfillInput) => {
-      const identity = resolveIdentity(input)
-      if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 500) {
-        throw new Error('Invalid completed checkpoint title')
-      }
-      return { applied: checkpointTitles.complete({ ...identity, title: input.title }) }
-    }
-  )
-
-  ipcMain.handle(
-    'workspace:failCheckpointTitleBackfill',
-    async (_, input: FailCheckpointTitleBackfillInput) => {
-      const identity = resolveIdentity(input)
-      if (typeof input.error !== 'string' || input.error.length > 2_000) {
-        throw new Error('Invalid failed checkpoint title')
-      }
-      return { recorded: checkpointTitles.fail({ ...identity, error: input.error }) }
-    }
-  )
-
-  ipcMain.handle(
-    'workspace:getCheckpointTitleContext',
-    async (_, passedRoot: string, hash: string, timestamp: number) => {
-      const workspaceRoot = resolveKnownWorkspace(passedRoot)
-      if (!validHash(hash) || !Number.isFinite(timestamp) || timestamp < 0) {
-        throw new Error('Invalid checkpoint title context request')
-      }
-      return checkpointTitles.findContext(workspaceRoot, hash, timestamp)
-    }
-  )
 }

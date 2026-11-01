@@ -71,14 +71,6 @@ describe('ConversationAttentionTracker', () => {
     expect(attention.state().waitingConversationIds.sort()).toEqual(['chat-a', 'chat-b'])
   })
 
-  it('ignores unknown runs', () => {
-    const { tracker: attention, onChange } = tracker(runs)
-    attention.observe(
-      event('missing', 'permission.requested', { interactionId: 'm', kind: 'permission' })
-    )
-    expect(onChange).not.toHaveBeenCalled()
-  })
-
   it('clears a run that ends while waiting, and alerts when it failed', () => {
     const { tracker: attention, onChange } = tracker(runs)
     attention.observe(

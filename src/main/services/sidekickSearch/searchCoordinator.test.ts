@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { SearchSource } from './source'
-import { createSearchCoordinator } from './searchCoordinator'
+import { createSearchCoordinator, RATE_LIMIT_COOLDOWN_MS } from './searchCoordinator'
+import { SearchHttpError } from './searchHttp'
 
 describe('Sidekick Search coordinator', () => {
   it('returns partial results with diagnostics and caches successful searches', async () => {
@@ -39,6 +40,30 @@ describe('Sidekick Search coordinator', () => {
     expect(duckduckgo.search).toHaveBeenCalledTimes(1)
     expect(brave.search).toHaveBeenCalledTimes(1)
     expect(bing.search).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves an engine that answered 429 alone until its cooldown passes', async () => {
+    let clock = 0
+    const limited: SearchSource = {
+      id: 'brave',
+      search: vi.fn(async () => {
+        throw new SearchHttpError(429)
+      })
+    }
+    const search = createSearchCoordinator([limited], undefined, () => clock)
+
+    const first = await search('first')
+    clock += RATE_LIMIT_COOLDOWN_MS - 1
+    const skipped = await search('second')
+    clock += 1
+    await search('third')
+
+    expect(first.diagnostics[0]).toMatchObject({
+      status: 'rate_limited',
+      retryAt: RATE_LIMIT_COOLDOWN_MS
+    })
+    expect(skipped.diagnostics[0].status).toBe('rate_limited')
+    expect(limited.search).toHaveBeenCalledTimes(2)
   })
 
   it('coalesces identical searches that are already in flight', async () => {

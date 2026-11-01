@@ -3,6 +3,7 @@ import {
   ProviderSetupError,
   providerConnectionFailureKind,
   providerImageLimitError,
+  providerQuotaExhausted,
   redactProviderCredentials
 } from '../../shared/providerErrors'
 
@@ -17,7 +18,9 @@ export class AgentToolLoopError extends Error {
 export class ProviderRequestError extends Error {
   constructor(
     message: string,
-    readonly status?: number
+    readonly status?: number,
+    /** The provider's own name for the error, such as `insufficient_quota`. */
+    readonly code?: string
   ) {
     super(message)
     this.name = 'ProviderRequestError'
@@ -67,6 +70,11 @@ function providerRefusal(error: ProviderRequestError): ProviderFailure | null {
     )
   if (status === 408)
     return unavailable('timeout', `The model server gave up waiting for the request (${http}).`)
+  if (status === 429 && providerQuotaExhausted({ error: error.message, code: error.code }))
+    return refused(
+      'permission_denied',
+      `The provider account has run out of quota or credit (${http}). Check its plan and billing, or choose another model.`
+    )
   if (status === 429)
     return unavailable(
       'transient',

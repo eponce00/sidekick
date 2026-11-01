@@ -8,6 +8,7 @@ import Database from 'better-sqlite3'
 export interface AppStore {
   get: (key: string, defaultValue?: unknown) => unknown
   set: (key: string, value: unknown) => void
+  delete: (key: string) => void
 }
 
 export const appState = {

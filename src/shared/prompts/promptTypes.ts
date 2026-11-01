@@ -1,7 +1,11 @@
 import type { PermissionMode } from '../permissions'
 import type { ModelProvider, PinnedModel } from '../models'
 import type { ProviderKind } from '../providerRegistry'
-import type { ConversationProjectTransition } from '../projects'
+import type {
+  ConversationProjectTransition,
+  ConversationWorktreeContext,
+  WorkspaceFolder
+} from '../projects'
 
 export const AGENT_PROMPT_VERSION = 'sidekick-agent-v10'
 
@@ -48,6 +52,8 @@ export interface PromptCapabilities {
 
 export interface PromptProjectContext {
   workspaceRoot: string | null
+  /** The project's other folders, which paths address by name. */
+  folders?: readonly WorkspaceFolder[]
   instructions: string
   instructionSources: readonly string[]
   memory: string
@@ -55,6 +61,10 @@ export interface PromptProjectContext {
   homeWorkspaceRoot?: string | null
   homeProjectName?: string | null
   isDetached?: boolean
+  /** Set when the workspace is the folder of a chat that has no project. */
+  chatFolder?: boolean
+  /** Set when the workspace is the chat's own Git worktree of its project. */
+  worktree?: ConversationWorktreeContext | null
 }
 
 export interface PromptLocation {

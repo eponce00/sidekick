@@ -74,7 +74,13 @@ export function recentRunDiagnostics(db: Database.Database): {
   /** Replies cut off while they wrote tool calls, counted by reply, not by refused call. */
   cutOffTurns: CutOffTurnSummary
   runawayTurns: RunawayTurnSummary
-  compactions: { model: number; deterministic: number; fallbackReasons: Record<string, number> }
+  compactions: {
+    model: number
+    deterministic: number
+    /** Tool results shortened to fit, with no summary written. */
+    cutToolResults: number
+    fallbackReasons: Record<string, number>
+  }
 } {
   const runLimit = 100
   const toolEventLimitPerRun = 10000
@@ -94,7 +100,12 @@ export function recentRunDiagnostics(db: Database.Database): {
     FROM agent_run_events WHERE run_id = ? AND type = 'compaction.completed'
       AND CASE WHEN json_valid(payload_json)
         THEN json_extract(payload_json, '$.compacted') = 1 ELSE 0 END`)
-  const compactions = { model: 0, deterministic: 0, fallbackReasons: {} as Record<string, number> }
+  const compactions = {
+    model: 0,
+    deterministic: 0,
+    cutToolResults: 0,
+    fallbackReasons: {} as Record<string, number>
+  }
   const reasons = new Set<string>(COMPACTION_FALLBACK_REASONS)
   const turns = toolCallTurnQuery(db)
   const counter = new ToolCallTurnCounter()
@@ -107,6 +118,10 @@ export function recentRunDiagnostics(db: Database.Database): {
       toolErrors[code] = (toolErrors[code] || 0) + 1
     }
     for (const event of compactionEvents.all(row.id) as { strategy: unknown; reason: unknown }[]) {
+      if (event.strategy === 'cut_tool_results') {
+        compactions.cutToolResults += 1
+        continue
+      }
       if (event.strategy !== 'deterministic') {
         compactions.model += 1
         continue

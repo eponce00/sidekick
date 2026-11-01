@@ -16,6 +16,7 @@ const { tmpdir } = require('node:os')
 const { basename, dirname, join, resolve, sep } = require('node:path')
 const { test } = require('node:test')
 const { _electron: electron } = require('playwright')
+const { openChatFromSidebar } = require('./open-chat-from-sidebar.cjs')
 const { startScriptedModel, text } = require('./scripted-model.cjs')
 
 const ROOT = resolve(__dirname, '..')
@@ -118,6 +119,10 @@ test(
         BrowserWindow.getAllWindows()[0]?.setSize(1400, 900)
       )
 
+      // SideKick makes a project only from a folder chosen in its folder picker.
+      await application.evaluate(({ dialog }, folder) => {
+        dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] })
+      }, workspace)
       const managerId = await page.evaluate(
         async ({ baseUrl, workspace, modelId }) => {
           await window.api.settings.save({
@@ -137,6 +142,7 @@ test(
             commandPermissionMode: 'full-access',
             notificationsEnabled: false
           })
+          await window.api.workspace.selectFolder()
           const project = await window.api.projects.create(workspace, 'family-fixture')
           const conversation = await window.api.conversations.create('Split the work', project.id)
           await window.api.conversations.saveMessage({
@@ -240,7 +246,7 @@ test(
 
       // The user sees the family without restarting: workers nested under the manager, reports as
       // received rows rather than raw messages typed by the user.
-      await page.getByText('Split the work', { exact: true }).first().click()
+      await openChatFromSidebar(page, 'Split the work')
       await page.getByText('Both chats reported back').first().waitFor({ timeout: 15_000 })
       for (const handle of ['alpha', 'beta'])
         await page.getByText(handle, { exact: true }).first().waitFor({ timeout: 15_000 })
@@ -407,7 +413,7 @@ test(
       )
       if (process.env.SIDEKICK_GROUP_UPGRADE_DEBUG)
         await page.screenshot({ path: resolve(process.env.SIDEKICK_GROUP_UPGRADE_DEBUG) })
-      await page.getByText('Desktop + API launch', { exact: true }).first().click()
+      await openChatFromSidebar(page, 'Desktop + API launch')
       await page
         .getByText('Agree on the contract for /v1/projects.')
         .first()

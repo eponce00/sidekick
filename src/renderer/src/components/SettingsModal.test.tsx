@@ -50,9 +50,7 @@ function button(name: string): HTMLButtonElement {
   return match!
 }
 
-const footer = (): string => container.querySelector('.settings-footer-status')?.textContent ?? ''
-
-it('says when there are unsaved changes and saves them', async () => {
+it('saves the changed settings along with the ones Settings opened with', async () => {
   const onSave = vi.fn(async () => ({ success: true }))
   const onClose = vi.fn()
   await act(async () =>
@@ -60,17 +58,13 @@ it('says when there are unsaved changes and saves them', async () => {
       <SettingsModal
         settings={SETTINGS}
         onSave={onSave}
+        onTextScaleChange={vi.fn()}
         onClose={onClose}
         initialSection="appearance"
       />
     )
   )
-  expect(footer()).toBe('Changes apply after you save.')
-
   await act(async () => button('Blue').click())
-  expect(footer()).toBe('Unsaved changes')
-  expect(button('Blue').getAttribute('aria-checked')).toBe('true')
-
   await act(async () => button('Save changes').click())
   // What Settings opened with goes along, so the save can name only what changed.
   expect(onSave).toHaveBeenCalledWith(
@@ -80,20 +74,50 @@ it('says when there are unsaved changes and saves them', async () => {
   expect(onClose).toHaveBeenCalledOnce()
 })
 
-it('keeps the window open and shows why when saving fails', async () => {
+it('applies a text size at once and follows one set by the zoom shortcuts', async () => {
+  // As the window does: the size is saved, and Settings is passed the stored value.
+  const onTextScaleChange = vi.fn((textScale: number) => render(textScale))
+  const render = (textScale?: number): void =>
+    root.render(
+      <SettingsModal
+        settings={{ ...SETTINGS, textScale }}
+        onSave={vi.fn(async () => ({ success: true }))}
+        onTextScaleChange={onTextScaleChange}
+        onClose={vi.fn()}
+        initialSection="appearance"
+      />
+    )
+  const shown = (): string => container.querySelector('.settings-stepper output')?.textContent ?? ''
+  await act(async () => render())
+  expect(shown()).toBe('100%')
+
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('[aria-label="Larger text"]')!.click()
+  )
+  expect(onTextScaleChange).toHaveBeenCalledWith(110)
+  expect(shown()).toBe('110%')
+
+  // Ctrl + saves the setting from the main process; the window passes the new value down.
+  await act(async () => render(120))
+  expect(shown()).toBe('120%')
+  await act(async () => button('Reset').click())
+  expect(onTextScaleChange).toHaveBeenLastCalledWith(100)
+})
+
+it('keeps the window open when saving fails', async () => {
   const onClose = vi.fn()
   await act(async () =>
     root.render(
       <SettingsModal
         settings={SETTINGS}
         onSave={async () => ({ success: false, error: 'Disk full' })}
+        onTextScaleChange={vi.fn()}
         onClose={onClose}
         initialSection="appearance"
       />
     )
   )
   await act(async () => button('Save changes').click())
-  expect(container.querySelector('.settings-footer [role="alert"]')?.textContent).toBe('Disk full')
   expect(onClose).not.toHaveBeenCalled()
 })
 
@@ -119,6 +143,7 @@ it('opens Integrations and explains an invalid enabled connector instead of savi
           } as ProviderSettings
         }
         onSave={onSave}
+        onTextScaleChange={vi.fn()}
         onClose={vi.fn()}
         initialSection="appearance"
       />
@@ -127,9 +152,4 @@ it('opens Integrations and explains an invalid enabled connector instead of savi
   await act(async () => button('Save changes').click())
   expect(onSave).not.toHaveBeenCalled()
   expect(container.querySelector('h2')?.textContent).toBe('Integrations')
-  expect(
-    Array.from(container.querySelectorAll('[role="alert"]')).some((alert) =>
-      alert.textContent?.includes('Enabled MCP connectors need a valid ID')
-    )
-  ).toBe(true)
 })

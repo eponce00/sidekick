@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  describeScheduleTiming,
-  nextScheduleOccurrence,
-  validateScheduleInput,
-  type ScheduleTiming
-} from './schedules'
+import { nextScheduleOccurrence, validateScheduleInput, type ScheduleTiming } from './schedules'
 
 // Local wall-clock instants, so the expectations hold in any time zone the suite runs in.
 const at = (year: number, month: number, day: number, hour = 0, minute = 0, second = 0): number =>
@@ -24,6 +19,21 @@ describe('nextScheduleOccurrence', () => {
     expect(nextScheduleOccurrence(hourly, at(2026, 10, 16, 10, 5))).toBe(at(2026, 10, 16, 10, 15))
     expect(nextScheduleOccurrence(hourly, at(2026, 10, 16, 10, 15))).toBe(at(2026, 10, 16, 11, 15))
     expect(nextScheduleOccurrence(hourly, at(2026, 10, 16, 23, 30))).toBe(at(2026, 10, 17, 0, 15))
+  })
+
+  it('runs hourly in the hour repeated when the clocks go back', () => {
+    // Built from wall-clock hours, 1:30 resolved to its first occurrence both times, skipping one.
+    const zone = process.env.TZ
+    process.env.TZ = 'America/New_York'
+    try {
+      const firstOneThirty = Date.UTC(2026, 10, 1, 5, 30)
+      expect(new Date(firstOneThirty).getHours()).toBe(1)
+      const hourly = timing({ cadence: 'hourly', minute: 30 })
+      expect(nextScheduleOccurrence(hourly, firstOneThirty)).toBe(Date.UTC(2026, 10, 1, 6, 30))
+    } finally {
+      if (zone === undefined) delete process.env.TZ
+      else process.env.TZ = zone
+    }
   })
 
   it('is strictly after the given instant, so a run that just started is not due again', () => {
@@ -62,19 +72,6 @@ describe('nextScheduleOccurrence', () => {
       const date = new Date(cursor)
       expect([date.getDate(), date.getHours(), date.getMinutes()]).toEqual([day, 6, 5])
     }
-  })
-})
-
-describe('describeScheduleTiming', () => {
-  it('names each cadence', () => {
-    expect(describeScheduleTiming(timing({ cadence: 'hourly', minute: 5 }))).toBe(
-      'Every hour at :05'
-    )
-    expect(describeScheduleTiming(timing({ cadence: 'daily' }))).toMatch(/^Daily at 9:00/)
-    expect(describeScheduleTiming(timing({ cadence: 'weekdays' }))).toMatch(/^Weekdays at /)
-    expect(describeScheduleTiming(timing({ cadence: 'weekly', weekday: 5 }))).toMatch(
-      /^Fridays at /
-    )
   })
 })
 

@@ -1,175 +1,289 @@
-/* ---- Artifact Container ---- */
-.artifact-container {
-  margin: var(--space-3) 0;
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  background-color: var(--surface-2);
-  max-width: 100%;
+/* An artifact is part of the reply: no card, frame or background of its own. The chat shows
+   through its transparent page, and it is as wide as the text and as tall as its content. */
+.artifact {
   width: 100%;
-  box-sizing: border-box;
+  min-width: 0;
+  margin: var(--space-3) 0 0;
 }
 
-/* ---- Streaming/Loading State ---- */
-.artifact-streaming {
-  box-shadow: inset 0 0 0 1px var(--accent);
-  animation: artifactPulse 2s ease-in-out infinite;
+/* ---- The running artifact ---- */
+.artifact-stage {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  transition: height var(--duration-layout) var(--ease-out);
 }
 
-@keyframes artifactPulse {
-  0%,
-  100% {
-    box-shadow: inset 0 0 0 1px var(--accent);
+.artifact-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  transition: opacity var(--duration-slow) ease;
+}
+
+.artifact-stage.is-shown .artifact-frame {
+  opacity: 1;
+}
+
+.artifact-stage.is-fill,
+.artifact-stage.is-fill .artifact-frame {
+  height: 100%;
+}
+
+.artifact-preview {
+  position: relative;
+  overflow: hidden;
+  transition: height var(--duration-layout) var(--ease-out);
+}
+
+.artifact-preview[hidden] {
+  display: none;
+}
+
+/* While it is written it grows in small steps, and the chat follows each at once; easing them
+   would leave it a step behind its content. */
+.artifact.is-writing .artifact-stage {
+  transition: none;
+}
+
+/* A new version loads unseen over the one showing, then takes its place as the old one fades. */
+.artifact-layer.is-incoming,
+.artifact-layer.is-leaving {
+  position: absolute;
+  inset: 0 0 auto;
+  pointer-events: none;
+}
+
+/* Transparent rather than hidden: a hidden frame stops laying out, so its height would be unknown
+   when it takes over. */
+.artifact-layer {
+  transition: opacity var(--duration-slow) ease;
+}
+
+.artifact-layer.is-incoming {
+  opacity: 0;
+}
+
+.artifact-layer.is-leaving {
+  animation: artifact-layer-out var(--duration-slow) ease forwards;
+}
+
+@keyframes artifact-layer-out {
+  to {
+    opacity: 0;
   }
-  50% {
-    box-shadow:
-      inset 0 0 0 1px var(--accent-strong),
-      0 0 8px 2px rgba(226, 160, 82, 0.15);
-  }
 }
 
-.artifact-icon-spinning {
-  display: inline-block;
-  animation: artifactSpin 1s linear infinite;
+/* While it first renders: one quiet line where it will be. */
+.artifact-pending {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  pointer-events: none;
 }
 
-@keyframes artifactSpin {
+.artifact-pending.is-alone {
+  position: static;
+}
+
+.artifact-pending-label {
+  background: linear-gradient(
+      90deg,
+      var(--text-muted) 0%,
+      var(--text-muted) 35%,
+      var(--text-primary) 50%,
+      var(--text-muted) 65%,
+      var(--text-muted) 100%
+    )
+    0 0 / 250% 100%;
+  background-clip: text;
+  color: transparent;
+  font-size: var(--content-text-secondary);
+  animation: artifact-pending-sweep 2.4s linear infinite;
+}
+
+@keyframes artifact-pending-sweep {
   from {
-    transform: rotate(0deg);
+    background-position: 100% 0;
   }
   to {
-    transform: rotate(360deg);
+    background-position: -150% 0;
   }
 }
 
-.artifact-loading-content {
-  padding: var(--space-4);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.artifact-loading-bar {
-  width: 100%;
-  height: 4px;
-  background-color: var(--surface-3);
-  border-radius: var(--radius-xs);
-  overflow: hidden;
-}
-
-.artifact-loading-progress {
-  width: 30%;
-  height: 100%;
-  background-color: var(--accent);
-  border-radius: var(--radius-xs);
-  animation: artifactLoadingSlide 1.5s ease-in-out infinite;
-}
-
-@keyframes artifactLoadingSlide {
-  0% {
-    transform: translateX(-100%);
-  }
-  50% {
-    transform: translateX(233%);
-  }
-  100% {
-    transform: translateX(-100%);
-  }
-}
-
-.artifact-loading-text {
-  font-size: var(--text-xs);
-  color: var(--text-muted);
-  font-style: italic;
-}
-
-/* ---- Artifact Header ---- */
-.artifact-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-2) var(--space-3);
-  background-color: var(--surface-1);
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-}
-
-.artifact-header-left {
+/* ---- What it is doing while it is written and checked ---- */
+.artifact-status {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-height: 28px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
 }
 
-.artifact-header-right {
+.artifact-status > svg {
+  flex: none;
+}
+
+/* While it is live, what it is doing stands where its name and controls would. */
+.artifact[aria-busy='true'] > .artifact-caption {
+  display: none;
+}
+
+/* ---- Name and controls, beneath it, on hover or focus ---- */
+.artifact-caption {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
-}
-
-.artifact-header-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: var(--space-1) var(--space-2);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-base);
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 28px;
   color: var(--text-muted);
-  transition:
-    background-color var(--duration-fast),
-    color var(--duration-fast);
-  line-height: 1;
-}
-
-.artifact-header-button:hover {
-  background-color: var(--surface-3);
-  color: var(--text-primary);
-}
-
-.artifact-icon {
-  font-size: var(--text-base);
-}
-
-.artifact-title {
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.artifact-type-badge {
-  padding: 2px var(--space-2);
-  background-color: var(--accent);
-  color: var(--on-accent);
-  border-radius: var(--radius-sm);
   font-size: var(--text-xs);
-  font-weight: 600;
-  text-transform: uppercase;
+  opacity: 0;
+  transition: opacity var(--duration-normal) ease;
 }
 
-.artifact-error-badge {
-  background-color: color-mix(in srgb, var(--color-error) 80%, transparent);
+.artifact:hover > .artifact-caption,
+.artifact.is-pointer-inside > .artifact-caption,
+.artifact:focus-within > .artifact-caption,
+.artifact.is-showing-code > .artifact-caption,
+.artifact.is-failed > .artifact-caption {
+  opacity: 1;
 }
 
-/* A failed artifact is one line, opened on request. The header is the button. */
-.artifact-error-header {
-  width: 100%;
+@media (hover: none) {
+  .artifact-caption {
+    opacity: 1;
+  }
+}
+
+.artifact-caption-name {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.artifact-caption-title {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-caption-type {
+  flex: none;
+}
+
+.artifact-caption-type::before {
+  content: '·';
+  margin-right: var(--space-2);
+}
+
+.artifact-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+.artifact-action {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0;
   border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--transition-ui);
+}
+
+.artifact-action svg {
+  stroke-width: 1.8;
+}
+
+.artifact-action:hover,
+.artifact-action.is-active {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.artifact-action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.artifact-action.is-done {
+  color: var(--color-success);
+}
+
+.artifact-action.is-done svg {
+  animation: copied-pop 0.42s var(--ease-out);
+}
+
+/* ---- Its code, in place of it ---- */
+.artifact-code {
+  max-height: min(480px, 60vh);
+  margin: 0;
+  padding: var(--space-4);
+  overflow: auto;
+  border: 1px solid var(--surface-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  white-space: pre;
+  tab-size: 2;
+}
+
+/* ---- Errors: one calm line, opened on request ---- */
+.artifact-failure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  min-height: 40px;
+}
+
+.artifact-failure-summary {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-1) 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
   font: inherit;
+  font-size: var(--content-text);
   text-align: left;
   cursor: pointer;
 }
 
-.artifact-error-header:hover {
-  background-color: var(--surface-2);
+.artifact-failure-summary > svg {
+  flex: none;
+  color: var(--color-error);
 }
 
-.artifact-error-header .artifact-header-left {
-  min-width: 0;
-  flex: 1;
+.artifact-failure-title {
+  flex: none;
+  color: var(--text-primary);
+  font-weight: 500;
 }
 
-.artifact-error-summary {
+.artifact-failure-reason {
   min-width: 0;
   overflow: hidden;
   color: var(--text-muted);
@@ -177,211 +291,158 @@
   white-space: nowrap;
 }
 
-.artifact-toggle-code {
+.artifact-text-button {
   display: inline-flex;
+  flex: none;
   align-items: center;
-  gap: 4px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: var(--space-1) var(--space-2);
+  gap: var(--space-2);
+  height: 26px;
+  padding: 0 var(--space-3);
+  border: 0;
   border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
   font-size: var(--text-xs);
-  color: var(--text-muted);
-  transition:
-    background-color var(--duration-fast),
-    color var(--duration-fast);
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition-ui);
 }
 
-.artifact-toggle-code:hover {
-  background-color: var(--surface-3);
+.artifact-text-button:hover {
+  background: var(--surface-3);
   color: var(--text-primary);
 }
 
-/* ---- Artifact Content ---- */
-.artifact-content {
-  padding: var(--space-4);
-  background-color: var(--surface-1);
-  max-width: 100%;
-  overflow: visible;
-  position: relative;
-  box-sizing: border-box;
+.artifact-failure-details {
+  width: 100%;
+  max-height: 240px;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  overflow: auto;
+  border-radius: var(--radius-md);
+  background: var(--color-error-subtle);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.artifact-content > * {
-  max-width: 100%;
-  box-sizing: border-box;
+/* A failure after it showed: the artifact stays, with this beneath it. */
+.artifact-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
 }
 
-.artifact-content canvas {
-  width: 100% !important;
-  height: auto !important;
+.artifact-note > svg {
+  flex: none;
+  color: var(--color-warning);
 }
 
-.artifact-react-content {
-  contain: layout style;
+.artifact-note > span {
+  min-width: 0;
   overflow: hidden;
-  min-height: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.artifact-react-content > * {
-  max-width: 100%;
+/* ---- Where it cannot run, as on the phone ---- */
+.artifact-elsewhere {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  min-height: 32px;
+  color: var(--text-muted);
+  font-size: var(--content-text-secondary);
+}
+
+.artifact-elsewhere-title {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+/* ---- Full screen ---- */
+.artifact-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4) clamp(var(--space-4), 3vw, var(--space-7)) var(--space-5);
+  background: var(--app-bg);
+  color: var(--text-primary);
+  animation: artifact-fullscreen-in var(--duration-normal) var(--ease-out);
+}
+
+@keyframes artifact-fullscreen-in {
+  from {
+    opacity: 0;
+    transform: scale(0.99);
+  }
+}
+
+.artifact-fullscreen-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: min(100%, 1180px);
+  min-height: 36px;
+  margin: 0 auto var(--space-4);
+}
+
+.artifact-fullscreen-title {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: var(--space-3);
   min-width: 0;
 }
 
-.artifact-html-content {
-  contain: layout style;
+.artifact-fullscreen-title strong {
   overflow: hidden;
-}
-
-.artifact-html-frame {
-  width: 100%;
-  max-width: 100%;
-  background: var(--panel-bg);
-  border: none;
-  display: block;
-}
-
-.artifact-preview-frame {
-  min-height: 160px;
-  max-height: min(560px, calc(100vh - 160px));
-  overflow: auto;
-}
-
-.artifact-svg-content {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  contain: layout style;
-  overflow: hidden;
-}
-
-.artifact-svg-content svg {
-  max-width: 100%;
-  height: auto;
-}
-
-/* ---- Artifact Error ---- */
-.artifact-error {
-  padding: var(--space-3);
-  background-color: color-mix(in srgb, var(--color-error) 10%, transparent);
-  border-radius: var(--radius-sm);
-  color: var(--color-error);
-  font-size: var(--text-sm);
-  margin: var(--space-3);
-  max-width: 100%;
-  box-sizing: border-box;
-  overflow-wrap: break-word;
-  word-break: break-word;
-}
-
-.artifact-error p {
-  margin: var(--space-2) 0 0 0;
-  font-size: var(--text-xs);
-  opacity: 0.8;
-}
-
-.artifact-error-collapsed {
-  padding: var(--space-2) var(--space-3);
-  margin: 0;
-  border: none;
-  border-radius: 0;
-  background-color: color-mix(in srgb, var(--color-error) 8%, transparent);
-  font-size: var(--text-xs);
-  display: block;
-  max-width: 100%;
-  box-sizing: border-box;
-}
-
-.artifact-error-summary {
-  opacity: 0.9;
-  display: block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
-
-.artifact-broken {
-  opacity: 0.6;
-}
-
-.artifact-broken .artifact-header {
-  background-color: color-mix(in srgb, var(--color-error) 10%, transparent);
-}
-
-.artifact-error-actions {
-  display: flex;
-  justify-content: flex-start;
-  padding: 0 var(--space-3) var(--space-3);
-}
-
-.artifact-error-button {
-  border: none;
-  background-color: color-mix(in srgb, var(--color-error) 12%, transparent);
-  color: var(--color-error);
-  font-size: var(--text-xs);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background-color var(--duration-fast) ease;
-}
-
-.artifact-error-button:hover {
-  background-color: color-mix(in srgb, var(--color-error) 20%, transparent);
-}
-
-.artifact-error strong {
+  font-size: var(--text-md);
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* ---- Code Details ---- */
-.artifact-code-details {
-  margin: 0;
-}
-
-.artifact-code-details summary {
-  padding: var(--space-2) var(--space-3);
-  cursor: pointer;
-  font-size: var(--text-xs);
+.artifact-fullscreen-title span {
   color: var(--text-muted);
-  background-color: var(--surface-2);
-  user-select: none;
-}
-
-.artifact-code-details summary:hover {
-  background-color: var(--surface-3);
-  color: var(--text-secondary);
-}
-
-.artifact-code {
-  margin: 0;
-  padding: var(--space-3);
-  background-color: var(--surface-2);
-  font-family: var(--font-mono);
   font-size: var(--text-xs);
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow-wrap: break-word;
-  color: var(--text-secondary);
-  overflow-y: visible;
-  overflow-x: hidden;
-  max-width: 100%;
-  box-sizing: border-box;
 }
 
-.artifact-code-view {
-  margin: 0;
-  padding: var(--space-3);
-  background-color: var(--surface-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  line-height: 1.5;
-  max-height: min(560px, calc(100vh - 160px));
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--text-secondary);
-  border-radius: var(--radius-sm);
+.artifact-fullscreen .artifact-action {
+  width: 30px;
+  height: 30px;
+}
+
+.artifact-fullscreen-body {
+  flex: 1;
+  width: min(100%, 1180px);
+  min-height: 0;
+  margin: 0 auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .artifact-stage,
+  .artifact-preview,
+  .artifact-frame,
+  .artifact-layer,
+  .artifact-caption,
+  .artifact-fullscreen {
+    transition: none;
+    animation: none;
+  }
+
+  .artifact-pending-label {
+    animation: none;
+    color: var(--text-muted);
+    background: none;
+  }
 }

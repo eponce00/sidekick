@@ -12,8 +12,12 @@ export function commandResultHeader(result: ShellCommandResult): string {
   if (result.truncated) {
     const kept = `${Math.round(COMMAND_CAPTURE_BYTES / 1024)} KB`
     lines.push(
-      `The command printed more than ${kept}; SideKick kept only the ${result.terminal ? 'last' : 'first'} ${kept}. ` +
-        'To keep all of a long output, write it to a file and read the file.'
+      (result.terminal
+        ? 'The command printed more than its terminal keeps; SideKick kept only its last lines. '
+        : `The command printed more than ${kept}; SideKick kept only the first ${kept}. `) +
+        (result.outputPath
+          ? `All of it is in ${result.outputPath}; search or read that file with a command.`
+          : 'To keep all of a long output, write it to a file and read the file.')
     )
   }
   return lines.join('\n')

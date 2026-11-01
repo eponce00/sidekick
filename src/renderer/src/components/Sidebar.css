@@ -1,20 +1,26 @@
 .sidebar {
-  width: 276px;
+  /* Every one-line tree row (project, chat, schedule, phone, New chat) is one 32px pitch. */
+  --sidebar-row-height: 32px;
+  width: var(--sidebar-width);
   height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent) 2%, transparent), transparent 160px),
-    var(--surface-0);
-  border-right: 1px solid var(--panel-border);
+  background: var(--surface-0);
+  border-right: 1px solid var(--rail-border);
   transition: width var(--duration-layout) var(--ease-out);
 }
 
 /* While it changes width, its content keeps its full width and is clipped or revealed, so text
    never re-wraps from frame to frame. */
-.sidebar:not(.collapsed) > * {
-  min-width: 275px;
+.sidebar:not(.collapsed) > :not(.sidebar-search, .sidebar-filter-chip) {
+  min-width: calc(var(--sidebar-width) - 1px);
+}
+
+/* The search field's side margins come out of the same width, so it ends inside the sidebar. The
+   filter chip keeps its own width. */
+.sidebar:not(.collapsed) > .sidebar-search {
+  min-width: calc(var(--sidebar-width) - 1px - 2 * 9px);
 }
 
 .sidebar.is-closing {
@@ -70,8 +76,8 @@
 }
 
 .sidebar-icon-btn {
-  width: 29px;
-  height: 29px;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
   padding: 0;
@@ -86,8 +92,9 @@
 }
 
 .sidebar-icon-btn:hover {
+  --badge-ring: var(--surface-2);
   color: var(--text-primary);
-  background: var(--surface-3);
+  background: var(--surface-2);
 }
 
 .sidebar button:disabled {
@@ -100,122 +107,57 @@
   background: var(--surface-3);
 }
 
-.sidebar-menu {
+/* The sidebar's menus are the app's menus (.app-menu in AppMenuHost.css), placed under the
+   button that opens them instead of at a point. */
+.sidebar .sidebar-menu,
+.sidebar .sidebar-overflow-menu,
+.sidebar .conversation-move-menu {
   position: absolute;
-  z-index: 80;
-  top: calc(100% + 6px);
+  z-index: 90;
   right: 0;
-  width: 232px;
-  padding: 5px;
-  border: 1px solid var(--panel-border);
-  border-radius: var(--radius-md);
-  background: var(--surface-1);
-  box-shadow: var(--shadow-panel);
+  min-width: 0;
+  transform-origin: top right;
 }
 
+.sidebar .sidebar-menu {
+  top: calc(100% + 6px);
+  width: 232px;
+}
+
+/* On the rail they open beside it. */
 .sidebar.collapsed .sidebar-menu {
   top: 0;
   right: auto;
   left: calc(100% + 7px);
+  transform-origin: top left;
 }
 
-.sidebar-menu > button {
-  width: 100%;
-  min-height: 34px;
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 7px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  background: transparent;
-  font: inherit;
-  text-align: left;
+.sidebar .sidebar-overflow-menu {
+  top: calc(100% + 4px);
+  width: 168px;
 }
 
-.sidebar-menu > button:hover {
-  color: var(--text-primary);
-  background: var(--surface-3);
+.sidebar .conversation-move-menu {
+  z-index: 50;
+  top: 32px;
+  right: 5px;
+  width: 196px;
+  max-height: 240px;
 }
 
-.sidebar-menu > button > svg {
-  justify-self: center;
-}
-
-.sidebar-menu > button span {
-  min-width: 0;
-  display: block;
-  overflow: hidden;
-  font-size: var(--text-sm);
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar-menu > button kbd {
-  color: var(--text-muted);
-  font-family: inherit;
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
-}
-
-.sidebar-menu > button.danger {
-  margin-top: 4px;
-  border-top: 1px solid var(--panel-border);
-  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
-  color: var(--text-muted);
-}
-
-.sidebar-menu > button.danger:hover {
-  color: var(--color-error);
-  background: color-mix(in srgb, var(--color-error) 9%, transparent);
-}
-
-.sidebar-filter-chip > button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.sidebar-filter-btn {
+.sidebar-filter-btn,
+.sidebar-toggle-btn {
   position: relative;
 }
 
 .sidebar-filter-btn.active {
+  --badge-ring: var(--surface-3);
   color: var(--text-primary);
   background: var(--surface-3);
 }
 
-/* Same hue as the waiting dot, so the count reads as "chats waiting on you". */
-.sidebar-filter-badge {
-  position: absolute;
-  top: 1px;
-  right: 0;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  border-radius: var(--radius-full);
-  background: var(--warning);
-  color: var(--surface-0);
-  font-size: var(--text-2xs);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  line-height: 14px;
-  pointer-events: none;
-}
-
-.sidebar-filter-menu {
+.sidebar .sidebar-filter-menu {
   width: 196px;
-}
-
-.sidebar-filter-menu > button > .conversation-run-indicator {
-  justify-self: center;
-}
-
-.sidebar-filter-menu > button.selected {
-  color: var(--text-primary);
-  background: var(--accent-subtle);
 }
 
 .sidebar-filter-chip {
@@ -224,6 +166,7 @@
   align-items: center;
   align-self: flex-start;
   gap: 6px;
+  flex-shrink: 0;
   margin: -1px 9px 7px;
   padding: 0 3px 0 9px;
   border: 1px solid var(--border-subtle);
@@ -232,6 +175,8 @@
   color: var(--text-secondary);
   font-size: var(--text-xs);
   font-weight: 500;
+  /* Its label stays on one line while the sidebar slides shut. */
+  white-space: nowrap;
 }
 
 .sidebar-filter-chip > button {
@@ -253,27 +198,10 @@
 }
 
 .sidebar-search {
-  height: 31px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
+  flex-shrink: 0;
   margin: 0 9px 7px;
-  padding: 0 9px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  color: var(--text-muted);
-  background: var(--surface-2);
-  transition:
-    border-color var(--duration-fast),
-    background var(--duration-fast);
 }
 
-.sidebar-search:focus-within {
-  border-color: var(--border-strong);
-  background: var(--surface-1);
-}
-
-.sidebar-search input,
 .conversation-rename-input,
 .project-rename-input {
   width: 100%;
@@ -370,13 +298,142 @@
   display: grid;
   flex-shrink: 0;
   justify-items: center;
+  gap: 4px;
   padding: 8px 0 10px;
 }
 
-.sidebar-rail-footer .sidebar-menu-btn {
+.sidebar-rail-footer .sidebar-menu-btn,
+.sidebar-rail-footer .sidebar-phone-btn {
   width: 38px;
   height: 38px;
   border-radius: var(--radius-md);
+}
+
+/* The foot under the list, set off by a hairline: the phone row on the list's own inline padding,
+   and the installed version in short at the right. */
+.sidebar-footer {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 7px;
+  padding: 6px 10px 8px 0;
+  border-top: 1px solid var(--border-color);
+}
+
+.sidebar-footer > .sidebar-phone-row,
+.sidebar-footer-spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-version {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The global New chat row above the tree: fixed while the list scrolls, inset like the list so
+   its glyph and label share the project rows' edges. */
+.sidebar-new-chat {
+  flex-shrink: 0;
+  padding: 0 17px 4px 7px;
+}
+
+/* A top-level row on the tree's grid ([chevron][icon][label][status]), so its glyph and label
+   share the project rows' edges; the connection dot takes the status slot as a chat's does. The
+   New chat row is drawn the same way. */
+.sidebar-phone-row,
+.sidebar-new-chat-row,
+.project-new-chat-empty {
+  width: 100%;
+  min-height: var(--sidebar-row-height);
+  display: grid;
+  grid-template-columns: 24px 23px minmax(0, 1fr) auto;
+  align-items: center;
+  padding: 0 8px 0 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  text-align: left;
+  transition:
+    color var(--duration-fast),
+    background var(--duration-fast);
+}
+
+.sidebar-phone-row > .sidebar-phone-glyph,
+.sidebar-new-chat-row > svg {
+  grid-column: 2;
+  margin-left: 3px;
+  color: var(--text-muted);
+}
+
+.sidebar-phone-label,
+.sidebar-new-chat-row > span {
+  grid-column: 3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-phone-row > .conversation-run-indicator {
+  grid-column: 4;
+  margin-left: 8px;
+}
+
+.sidebar-phone-row:hover,
+.sidebar-new-chat-row:hover {
+  color: var(--text-primary);
+  background: var(--surface-2);
+}
+
+.sidebar-phone-row.active {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.sidebar-phone-row:is(:hover, .active) > .sidebar-phone-glyph,
+.sidebar-new-chat-row:hover > svg {
+  color: var(--text-secondary);
+}
+
+.sidebar-phone-glyph {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.sidebar-phone-btn.active,
+.sidebar-icon-btn:active {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+/* On the rail the connection dot sits on the glyph's corner, cut out of it by a ring in the
+   button's surface, as the Terminal rail's state dots are. The phone's outline is narrower than
+   its 16px box, so the dot is centred on the outline's corner rather than the box's. */
+.sidebar-phone-dot {
+  position: absolute;
+  top: -2px;
+  right: 0;
+  box-shadow: 0 0 0 1.5px var(--surface-0);
+  pointer-events: none;
+}
+
+.sidebar-phone-btn:hover .sidebar-phone-dot {
+  box-shadow: 0 0 0 1.5px var(--surface-2);
+}
+
+.sidebar-phone-btn.active .sidebar-phone-dot,
+.sidebar-phone-btn:active .sidebar-phone-dot {
+  box-shadow: 0 0 0 1.5px var(--surface-3);
 }
 
 /* From the bottom of the rail the menu opens beside it and upward, so it stays on screen. */
@@ -385,37 +442,23 @@
   bottom: 0;
 }
 
-.collapsed-sidebar-nav button:hover {
-  color: var(--text-primary);
-  background: var(--surface-3);
-}
-
-.collapsed-sidebar-nav button.active {
-  color: var(--accent);
-  background: var(--accent-subtle);
-}
-
-.collapsed-sidebar-nav button > span {
-  position: absolute;
+/* The button is 38px, not the toggle's 28px, so the badge moves in to sit on the glyph's corner
+   as the toggle's does. */
+.collapsed-sidebar-nav .count-badge {
+  top: 2px;
   right: 2px;
-  bottom: 2px;
-  min-width: 14px;
-  height: 14px;
-  display: grid;
-  place-items: center;
-  padding: 0 3px;
-  border: 2px solid var(--surface-0);
-  border-radius: var(--radius-full);
-  color: var(--text-muted);
-  background: var(--surface-3);
-  font-size: var(--text-xs);
-  font-weight: 700;
-  line-height: 1;
 }
 
-.collapsed-sidebar-nav button.active > span {
-  color: var(--surface-0);
-  background: var(--accent);
+.collapsed-sidebar-nav button:hover {
+  --badge-ring: var(--surface-2);
+  color: var(--text-primary);
+  background: var(--surface-2);
+}
+
+/* The list holding the open chat: a brighter icon, with no resting tint, which would read as a
+   pressed or open control. */
+.collapsed-sidebar-nav button.active {
+  color: var(--text-primary);
 }
 
 .sidebar-section-label {
@@ -423,10 +466,6 @@
   display: flex;
   align-items: center;
   padding: 0 7px;
-  color: var(--text-muted);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  letter-spacing: 0;
 }
 
 .sidebar-section-label-with-action {
@@ -451,11 +490,6 @@
 
 .sidebar-section-toggle:hover {
   color: var(--text-primary);
-}
-
-.sidebar-section-toggle:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
 }
 
 .sidebar-section-chevron {
@@ -509,11 +543,6 @@
   color: var(--text-primary);
 }
 
-.sidebar-section-create:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
 @media (hover: none) {
   .sidebar-section-create {
     opacity: 1;
@@ -558,8 +587,8 @@
 }
 
 .project-empty-action:hover {
-  color: var(--accent);
-  background: transparent;
+  color: var(--text-primary);
+  background: var(--surface-2);
 }
 
 .project-group + .project-group {
@@ -576,21 +605,21 @@
 
 .project-group.drop-zone-active,
 .standalone-section.drop-zone-active {
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  background: var(--accent-subtle);
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .project-group.drop-zone-invalid,
 .standalone-section.drop-zone-invalid {
-  background: color-mix(in srgb, var(--color-error) 5%, transparent);
+  background: var(--color-error-subtle);
 }
 
 .project-row {
-  min-height: 34px;
+  min-height: var(--sidebar-row-height);
   display: flex;
   align-items: center;
   gap: 3px;
-  padding: 2px 3px;
+  padding: 2px 3px 2px 0;
   color: var(--text-secondary);
 }
 
@@ -600,7 +629,7 @@
 }
 
 .project-row.contains-active .project-folder-icon {
-  color: var(--accent);
+  color: var(--text-secondary);
 }
 
 .project-toggle {
@@ -659,40 +688,82 @@
   opacity: 1;
 }
 
-.project-actions .project-remove-button:hover {
-  color: var(--color-error);
-  background: color-mix(in srgb, var(--color-error) 11%, transparent);
-}
-
+/* A project's chats start on its name's edge, as Codex lists them, so every chat title in the
+   sidebar shares one left edge with the project names, New chat and Phone. */
 .project-conversations {
-  margin-left: 27px;
+  margin-left: 0;
   padding-left: 0;
 }
 
+/* The chevron column is the project's own, so a row inside it that opens keeps its chevron in the
+   icon column. A scheduled group shows its icon there, and the chevron on hover or while open. */
+.project-conversations .conversation-item > .session-family-toggle,
+.project-conversations .scheduled-run-group-row > svg:first-child {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: start;
+}
+
+.project-conversations .scheduled-run-group-row > .scheduled-run-group-icon {
+  grid-row: 1;
+}
+
+.project-conversations
+  .scheduled-run-group-row:not(:hover, :focus-visible, [aria-expanded='true'])
+  > svg:first-child,
+.project-conversations
+  .scheduled-run-group-row:is(:hover, :focus-visible, [aria-expanded='true'])
+  > .scheduled-run-group-icon {
+  visibility: hidden;
+}
+
+/* A chat's workers hang from its chevron in the icon column, one step in from its title's edge. */
+.project-conversations .session-family-workers {
+  margin-left: 35px;
+  padding-left: 0;
+}
+
+.project-conversations .session-family-workers .conversation-item {
+  grid-template-columns: 0 23px minmax(0, 1fr) auto auto;
+}
+
+/* An empty project's placeholder: on the tree's grid, so its title shares the chats' size and
+   left edge, with its icon in the icon column; muted, since it is an action and not a chat. */
+/* A project's empty New chat row: the shared row above, with no meta column and quieter text. */
 .project-new-chat-empty {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 8px;
-  border: 0;
-  background: transparent;
+  grid-template-columns: 24px 23px minmax(0, 1fr);
   color: var(--text-muted);
-  cursor: pointer;
-  font-size: var(--text-xs);
+}
+
+.project-new-chat-empty > svg {
+  grid-column: 2;
+  margin-left: 3px;
+}
+
+.project-new-chat-empty > span {
+  grid-column: 3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-new-chat-empty:hover {
-  color: var(--accent);
+  background: var(--surface-2);
+  color: var(--text-primary);
 }
 
+/* One grid for every row at every depth: [chevron][icon][title][meta]. The chevron and icon
+   columns match a project row's, so titles at one depth share one left edge whether or not the
+   row has a chevron or an icon; each level is indented by --tree-indent. Meta (a status dot, a
+   run count) takes room only on rows that have it, and the hover actions float over it. */
 .conversation-item {
   position: relative;
-  min-height: 34px;
-  display: flex;
+  /* One pitch for every one-line row; a manager's two-line row grows past it. */
+  min-height: var(--sidebar-row-height);
+  display: grid;
+  grid-template-columns: 24px 23px minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 4px;
-  margin: 1px 0;
-  padding: 5px 7px 5px 9px;
+  padding: 4px 8px 4px 0;
   border: 0;
   border-radius: var(--radius-sm);
   transition:
@@ -700,23 +771,63 @@
     border-color var(--duration-fast);
 }
 
-.conversation-item.nested {
-  min-height: 33px;
-  padding: 5px 7px;
+.conversation-item > :is(.session-family-toggle, svg:first-child) {
+  grid-column: 1;
+  justify-self: center;
+}
+
+.conversation-item > .scheduled-run-group-icon {
+  grid-column: 2;
+  margin-left: 3px;
+}
+
+.conversation-item > :is(.conversation-main, .conversation-title) {
+  grid-column: 3;
+}
+
+/* A worktree mark sits in the icon column, so the title after it keeps the shared edge. */
+.conversation-item:has(.conversation-worktree-icon) > .conversation-main {
+  grid-column: 2 / 4;
+  padding-left: 3px;
+}
+
+.conversation-item > .conversation-run-indicator {
+  grid-column: 4;
+  margin-left: 8px;
+}
+
+.conversation-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+/* A worker's project name wraps onto a hidden second line, and so disappears, when less than a
+   useful part of it fits beside the title. */
+.conversation-main:has(> .session-project-tag) {
+  flex-wrap: wrap;
+  height: 24px;
+  overflow: hidden;
 }
 
 .conversation-item:hover {
   background: var(--surface-2);
 }
 
-/* Weight is reserved for the selected row; a list where every title is
-   medium reads as a wall of semi-bold, especially in Inter on Windows. */
+/* Weight and full contrast are reserved for the selected row; a list where every title is
+   medium and bright reads as a wall. */
 .conversation-item.active .conversation-title {
+  color: var(--text-primary);
   font-weight: 500;
 }
 
+.conversation-item:hover .conversation-title {
+  color: var(--text-primary);
+}
+
 .conversation-item.active {
-  background: color-mix(in srgb, var(--surface-4) 68%, transparent);
+  background: var(--surface-3);
 }
 
 .conversation-item[draggable='true'] {
@@ -748,7 +859,7 @@
 }
 
 .conversation-item.drop-invalid {
-  background: color-mix(in srgb, var(--color-error) 7%, transparent);
+  background: var(--color-error-subtle);
 }
 
 /* The button fills the row so a click anywhere in the row's padding lands.
@@ -777,7 +888,7 @@
 
 .conversation-title {
   overflow: hidden;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   font-size: var(--text-sm);
   font-weight: 400;
   line-height: 1.45;
@@ -785,9 +896,9 @@
   white-space: nowrap;
 }
 
-/* A chat in its own worktree: a quiet mark before its title. */
+/* A chat in its own worktree: a quiet mark before its title, filling the icon column. */
 .conversation-worktree-icon {
-  margin-right: 5px;
+  margin-right: 8px;
   color: var(--text-muted);
   vertical-align: -2px;
 }
@@ -801,6 +912,8 @@
   white-space: nowrap;
 }
 
+/* Every state is one 6px dot (UI.md, Sidebar tree). Accent means live work only, and only the
+   live states (working, waiting) carry a halo. */
 .conversation-run-indicator {
   width: 6px;
   height: 6px;
@@ -810,21 +923,21 @@
 }
 
 .conversation-run-indicator.working {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: 0 0 0 3px var(--accent-muted);
   animation: conversation-run-pulse 1.8s ease-in-out infinite;
 }
 
+/* Done and not yet read: neutral, so it never reads as still working. */
 .conversation-run-indicator.unread {
+  background: var(--text-primary);
   animation: none;
 }
 
 /* Waiting on the user: steady and in the warning color, so it reads apart from
    the pulsing "working" dot. */
 .conversation-run-indicator.waiting {
-  width: 8px;
-  height: 8px;
-  background: var(--warning);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 22%, transparent);
+  background: var(--color-warning-mark);
+  box-shadow: 0 0 0 3px var(--color-warning-subtle);
 }
 
 @keyframes conversation-run-pulse {
@@ -834,38 +947,34 @@
 }
 
 .conversation-run-indicator.failed {
-  background: var(--color-error);
+  background: var(--color-error-mark);
 }
 
 /* Started, waiting for a run slot. */
 .conversation-run-indicator.queued {
-  width: 8px;
-  height: 8px;
   border: 1.5px dashed var(--accent);
   background: transparent;
 }
 
 .conversation-run-indicator.stopped {
-  width: 8px;
-  height: 8px;
   border: 1.5px solid var(--text-muted);
   background: transparent;
 }
 
-/* Chats a chat started hang under it on a thin guide line, as in Claude Code's sidebar. */
+/* Chats a chat started hang under it on a thin guide line, as in Claude Code's sidebar. The
+   line runs under the manager's chevron; line and padding make one --tree-indent. */
 .session-family-workers {
-  margin: 0 0 2px 15px;
-  padding-left: 6px;
+  margin: 0 0 2px 12px;
+  padding-left: calc(var(--tree-indent) - 13px);
   border-left: 1px solid var(--border-color);
 }
 
 .session-family-toggle {
-  width: 18px;
+  width: 22px;
   height: 22px;
   display: grid;
   flex-shrink: 0;
   place-items: center;
-  margin-left: -5px;
   padding: 0;
   border: 0;
   border-radius: var(--radius-xs);
@@ -900,22 +1009,26 @@
 
 /* The name claims its width first, so the project tag beside it shrinks before the name does. */
 .conversation-item.session-worker .conversation-content {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
 }
 
 .session-project-tag {
-  min-width: 28px;
+  min-width: 8ch;
   max-width: 96px;
   flex: 0 1000 auto;
   overflow: hidden;
-  padding: 1px 6px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-full);
   color: var(--text-muted);
   font-size: var(--text-xs);
   line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Inline tree meta, like a schedule's run count, not a filled chip; the row's 4px gap sits
+   before the separator. */
+.session-project-tag::before {
+  margin-right: 4px;
+  content: '·';
 }
 
 .conversation-rename-input {
@@ -926,17 +1039,30 @@
   font-size: var(--text-sm);
 }
 
+/* Floats over the row's end, so a title is not cut short for actions that only show on hover. */
 .conversation-actions {
+  position: absolute;
+  top: 50%;
+  right: 4px;
   display: flex;
   align-items: center;
-  flex-shrink: 0;
+  padding-left: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
   opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
   transition: opacity var(--duration-fast);
+}
+
+.conversation-item.active .conversation-actions {
+  background: var(--surface-3);
 }
 
 .conversation-item:hover .conversation-actions,
 .conversation-item:focus-within .conversation-actions {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .conversation-action-button {
@@ -968,114 +1094,9 @@
   align-items: center;
 }
 
-.sidebar-overflow-menu {
-  animation: motion-menu-in var(--duration-normal) var(--ease-out);
-  position: absolute;
-  z-index: 90;
-  top: calc(100% + 4px);
-  right: 0;
-  width: 158px;
-  padding: 4px;
-  border: 1px solid var(--panel-border);
-  border-radius: var(--radius-md);
-  background: var(--surface-1);
-  box-shadow: var(--shadow-panel);
-}
-
-.sidebar-overflow-menu > button {
-  width: 100%;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--text-sm);
-  text-align: left;
-  white-space: nowrap;
-}
-
-.sidebar-overflow-menu > button:hover {
-  color: var(--text-primary);
-  background: var(--surface-3);
-}
-
-.sidebar-overflow-menu > button.danger {
-  color: var(--text-muted);
-}
-
-.sidebar-overflow-menu > button.danger:hover {
-  color: var(--color-error);
-  background: color-mix(in srgb, var(--color-error) 9%, transparent);
-}
-
-.sidebar-overflow-menu > button:disabled {
-  cursor: default;
-  opacity: 0.42;
-}
-
 .conversation-delete-button:hover {
   color: var(--color-error);
-  background: color-mix(in srgb, var(--color-error) 11%, transparent);
-}
-
-.conversation-move-menu {
-  animation: motion-menu-in var(--duration-normal) var(--ease-out);
-  position: absolute;
-  z-index: 50;
-  top: 32px;
-  right: 5px;
-  width: 176px;
-  max-height: 230px;
-  overflow-y: auto;
-  padding: 5px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--surface-1);
-  box-shadow: var(--shadow-panel);
-}
-
-.conversation-move-heading {
-  display: block;
-  padding: 5px 7px 4px;
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.conversation-move-menu button {
-  width: 100%;
-  overflow: hidden;
-  padding: 6px 7px;
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: var(--text-xs);
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.conversation-move-menu button:hover,
-.conversation-move-menu button.selected {
-  color: var(--text-primary);
-  background: var(--surface-3);
-}
-
-.conversation-move-menu button.selected::after {
-  content: '✓';
-  float: right;
-  color: var(--accent);
+  background: var(--color-error-subtle);
 }
 
 .empty-conversations {
@@ -1092,4 +1113,16 @@
 .empty-conversations.compact {
   padding: 9px 7px;
   justify-content: flex-start;
+}
+
+/* A manager's roll-up keeps one line by dropping whole items off its end: each item wraps as a
+   unit onto a second line that is clipped away. */
+.conversation-metadata.session-roll-up {
+  height: 1.3em;
+  white-space: normal;
+}
+
+.session-roll-up-item {
+  display: inline-block;
+  white-space: nowrap;
 }

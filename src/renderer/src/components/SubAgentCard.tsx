@@ -10,12 +10,8 @@ import {
   type SubAgentState
 } from '../utils/subAgentActivity'
 import AgentInteractionCard from './AgentInteractionCard'
-import {
-  isArtifactBuild,
-  subAgentTarget,
-  subAgentTitle,
-  useOpenSubAgent
-} from './subAgentNavigation'
+import { StopGlyph } from './StopGlyph'
+import { subAgentTarget, subAgentTitle, useOpenSubAgent } from './subAgentNavigation'
 
 export function SubAgentStateIcon({ state }: { state: SubAgentState }): React.JSX.Element {
   if (state === 'working') return <Loader2 size={14} className="icon-spin" aria-hidden="true" />
@@ -44,7 +40,6 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
     tool.data && typeof tool.data === 'object' ? (tool.data as Record<string, unknown>) : null
   const childRunId = typeof data?.childRunId === 'string' ? data.childRunId : null
   const isRunning = tool.status === 'running' || tool.status === 'pending'
-  const builder = isArtifactBuild(tool)
   const openSubAgent = useOpenSubAgent()
   const [stopping, setStopping] = useState(false)
   const [now, setNow] = useState(Date.now)
@@ -108,48 +103,23 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
 
   let detail: React.ReactNode
   let stats = ''
-  // A build counts versions of the artifact rather than tools; the agent's own is the first.
-  const builds = snapshot.projection.segments.filter(
-    (segment) => segment.type === 'tool' && segment.tool.name === 'create_artifact'
-  )
-  const version = builds.length + 1
-  const rendering = builds.some(
-    (segment) =>
-      segment.type === 'tool' &&
-      (segment.tool.status === 'running' || segment.tool.status === 'pending')
-  )
 
   if (queued) {
     detail = 'Queued until another sub-agent finishes'
   } else if (childEnded) {
     detail =
-      (builder ? undefined : activity.report) ??
+      activity.report ??
       (state === 'stopped'
         ? 'Stopped before it reported'
         : state === 'failed'
           ? 'Failed'
-          : builder
-            ? 'Checking the final version'
-            : 'Finished')
+          : 'Finished')
     stats = subAgentStats(
-      builder ? undefined : activity.toolCalls,
+      activity.toolCalls,
       activity.startedAt !== undefined && activity.endedAt !== undefined
         ? activity.endedAt - activity.startedAt
         : undefined
     )
-  } else if (isRunning && builder) {
-    detail =
-      state === 'waiting'
-        ? 'Needs your answer below'
-        : rendering
-          ? `Rendering version ${version}`
-          : `Reviewing version ${version}`
-    stats = [
-      `${version} ${version === 1 ? 'version' : 'versions'}`,
-      activity.startedAt !== undefined ? subAgentStats(undefined, now - activity.startedAt) : ''
-    ]
-      .filter(Boolean)
-      .join(' · ')
   } else if (isRunning) {
     detail =
       state === 'waiting' ? (
@@ -181,9 +151,7 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
   }
 
   const title = subAgentTitle(tool)
-  const openLabel = builder
-    ? 'See each version the builder made'
-    : 'Open the sub-agent’s transcript'
+  const openLabel = 'Open the sub-agent’s transcript'
   const open =
     childRunId && openSubAgent ? () => openSubAgent(subAgentTarget(tool, childRunId)) : undefined
 
@@ -235,7 +203,7 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
             title="Stop this sub-agent; the chat continues with what it found"
             aria-label="Stop sub-agent"
           >
-            <Square size={10} fill="currentColor" aria-hidden="true" />
+            <StopGlyph />
           </button>
         )}
       </div>

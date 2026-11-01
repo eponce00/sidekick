@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Copy } from 'lucide-react'
 import type { ToolOutputReference } from '../../../shared/agentRuntime'
 import { COMMAND_CAPTURE_BYTES } from '../../../shared/terminalSessions'
@@ -7,6 +7,42 @@ import { copyText } from '../utils/clipboard'
 import { commandStreams } from '../../../shared/commandResults'
 import { commandCopyText } from '../utils/commandResult'
 import { AnsiTerminalOutput } from './StructuredToolOutput'
+
+/**
+ * The one Copy control of a command, output or diff box: icon-only, it turns to a check for a
+ * second once the text is on the clipboard. `text` may be a function, so a long text is built
+ * only when copied.
+ */
+export function CommandCopyButton({
+  text,
+  label = 'Copy'
+}: {
+  text: string | (() => string)
+  /** Its accessible name and tooltip. */
+  label?: string
+}): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+  const timerRef = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(timerRef.current), [])
+  return (
+    <button
+      type="button"
+      className="settings-ghost-action is-small is-icon rich-tool-command-copy"
+      onClick={() => {
+        void copyText(typeof text === 'function' ? text() : text).then((written) => {
+          if (!written) return
+          setCopied(true)
+          window.clearTimeout(timerRef.current)
+          timerRef.current = window.setTimeout(() => setCopied(false), 1_000)
+        })
+      }}
+      aria-label={copied ? 'Copied' : label}
+      title={copied ? 'Copied' : label}
+    >
+      {copied ? <Check size={13} /> : <Copy size={13} />}
+    </button>
+  )
+}
 
 function commandEnding(result: ShellCommandResult): string | undefined {
   if (result.stoppedByUser) return 'Stopped by you'
@@ -38,13 +74,15 @@ function summarized(text: string, all: boolean): { text: string; omitted: number
  */
 export function CommandResultOutput({
   result,
-  outputReference
+  outputReference,
+  header
 }: {
   result: ShellCommandResult
   outputReference?: ToolOutputReference
+  /** Draws the command line as the box's first section, with the given Copy button at its end. */
+  header?: (copy?: React.ReactNode) => React.ReactNode
 }): React.JSX.Element {
   const [showAll, setShowAll] = useState(false)
-  const [copied, setCopied] = useState(false)
   const streams = useMemo(
     () =>
       commandStreams(result).map((stream) => ({ ...stream, ...summarized(stream.text, showAll) })),
@@ -54,31 +92,21 @@ export function CommandResultOutput({
   const failed = result.exitCode !== 0 || result.success === false
   const kept = `${Math.round(COMMAND_CAPTURE_BYTES / 1024)} KB`
   const longest = streams.reduce((most, stream) => Math.max(most, stream.total), 0)
+  const copyButton =
+    streams.length > 0 ? <CommandCopyButton text={() => commandCopyText(result)} /> : undefined
+  // Without a command line to hold it, Copy stays on the exit-code row.
+  const headerRow = header?.(copyButton)
 
   return (
     <>
       <div className="rich-tool-output is-terminal command-result">
+        {headerRow}
         <div className="command-result-bar">
           <span className={`command-result-exit ${failed ? 'is-failed' : 'is-ok'}`}>
             Exit code {result.exitCode}
           </span>
           {ending && <span className="command-result-ending">{ending}</span>}
-          {streams.length > 0 && (
-            <button
-              type="button"
-              className="rich-tool-copy"
-              onClick={() => {
-                void copyText(commandCopyText(result)).then((written) => {
-                  if (!written) return
-                  setCopied(true)
-                  window.setTimeout(() => setCopied(false), 1_000)
-                })
-              }}
-            >
-              {copied ? <Check size={11} /> : <Copy size={11} />}
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-          )}
+          {!headerRow && copyButton}
         </div>
         {streams.map((stream) => (
           <section
@@ -105,8 +133,9 @@ export function CommandResultOutput({
       )}
       {result.truncated && (
         <div className="rich-tool-truncation">
-          The command printed more than {kept}; SideKick kept only the{' '}
-          {result.terminal ? 'last' : 'first'} {kept}.
+          {result.terminal
+            ? 'The command printed more than its terminal keeps; SideKick kept only its last lines.'
+            : `The command printed more than ${kept}; SideKick kept only the first ${kept}.`}
         </div>
       )}
       {outputReference?.truncated && (

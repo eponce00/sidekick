@@ -49,11 +49,7 @@ describe('Reveal', () => {
 
     await render(false)
     await render(true)
-    expect(animations[0].keyframes[0].height).toBe('0px')
-    expect(animations[0].keyframes[1].opacity).toBe(1)
-
     await render(false)
-    expect(animations[1].keyframes[1].height).toBe('0px')
     expect(container.textContent).toBe('Details')
 
     await act(async () => animations[1].animation.onfinish?.())

@@ -22,15 +22,24 @@ function row(overrides: Partial<MessageRow> = {}): MessageRow {
   }
 }
 
+/** A run ledger for conversation-1, one row per [run id, provider, model] in start order. */
+function ledger(...runs: Array<[id: string, provider: string, model: string]>) {
+  const db = new Database(':memory:')
+  db.exec(`
+    CREATE TABLE agent_runs (id TEXT, thread_id TEXT, provider TEXT, model TEXT, started_at INTEGER);
+    CREATE TABLE agent_run_events (run_id TEXT, sequence INTEGER, type TEXT, payload_json TEXT);
+  `)
+  runs.forEach(([id, provider, model], index) =>
+    db
+      .prepare('INSERT INTO agent_runs VALUES (?, ?, ?, ?, ?)')
+      .run(id, 'conversation-1', provider, model, index + 1)
+  )
+  return { db, add: db.prepare('INSERT INTO agent_run_events VALUES (?, ?, ?, ?)') }
+}
+
 describe('conversation provider history', () => {
   it('replays edit calls with their real argument names, including legacy byte-count records', () => {
-    const db = new Database(':memory:')
-    db.exec(`
-      CREATE TABLE agent_runs (id TEXT, thread_id TEXT, provider TEXT, model TEXT, started_at INTEGER);
-      CREATE TABLE agent_run_events (run_id TEXT, sequence INTEGER, type TEXT, payload_json TEXT);
-      INSERT INTO agent_runs VALUES ('run-1', 'conversation-1', 'openai-compatible', 'qwen', 1);
-    `)
-    const add = db.prepare('INSERT INTO agent_run_events VALUES (?, ?, ?, ?)')
+    const { db, add } = ledger(['run-1', 'openai-compatible', 'qwen'])
     add.run('run-1', 1, 'run.started', JSON.stringify({ outputMessageId: 'assistant-1' }))
     add.run(
       'run-1',
@@ -66,13 +75,7 @@ describe('conversation provider history', () => {
   })
 
   it('reads only the ledger events history is built from, not streamed deltas or snapshots', () => {
-    const db = new Database(':memory:')
-    db.exec(`
-      CREATE TABLE agent_runs (id TEXT, thread_id TEXT, provider TEXT, model TEXT, started_at INTEGER);
-      CREATE TABLE agent_run_events (run_id TEXT, sequence INTEGER, type TEXT, payload_json TEXT);
-      INSERT INTO agent_runs VALUES ('run-1', 'conversation-1', 'openai-compatible', 'qwen', 1);
-    `)
-    const add = db.prepare('INSERT INTO agent_run_events VALUES (?, ?, ?, ?)')
+    const { db, add } = ledger(['run-1', 'openai-compatible', 'qwen'])
     let sequence = 0
     add.run('run-1', ++sequence, 'run.started', JSON.stringify({ outputMessageId: 'assistant-1' }))
     // A long reply's ledger is mostly these; sending a message read and parsed every one of them.
@@ -143,12 +146,14 @@ describe('conversation provider history', () => {
     db.close()
   })
 
-  it('does not duplicate visible text or expose thinking as recorded activity', () => {
+  it('never serializes thinking or UI activity segments into provider history', () => {
     const message = providerMessage(
       row({
         segments: JSON.stringify([
           { type: 'thinking', content: 'private reasoning' },
           { type: 'text', content: 'Hello' },
+          { type: 'tool', tool: { name: 'read', output: 'configured' } },
+          { type: 'interaction', interaction: { status: 'resolved' } },
           {
             type: 'summary',
             summary: { originalTokens: 100, newTokens: 20, messagesCompacted: 4 }
@@ -158,25 +163,6 @@ describe('conversation provider history', () => {
     )
 
     expect(message).toEqual({ role: 'assistant', content: 'Hello' })
-    expect(message.content).not.toContain('Recorded activity:')
-    expect(message.content).not.toContain('private reasoning')
-  })
-
-  it('never serializes UI activity segments into provider history', () => {
-    const message = providerMessage(
-      row({
-        content: 'I checked the workspace.',
-        segments: JSON.stringify([
-          { type: 'text', content: 'I checked the workspace.' },
-          { type: 'tool', tool: { name: 'read', output: 'configured' } },
-          { type: 'interaction', interaction: { status: 'resolved' } }
-        ])
-      })
-    )
-
-    expect(message).toEqual({ role: 'assistant', content: 'I checked the workspace.' })
-    expect(message.content).not.toContain('Recorded activity')
-    expect(message.content).not.toContain('configured')
   })
 
   it('sends pasted text ahead of the typed message and project paths after it', () => {
@@ -213,6 +199,54 @@ describe('conversation provider history', () => {
     )
   })
 
+  it("sends marks on browser pages after the typed text, their pictures after the user's images", () => {
+    const png =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+    const mark = (number: number, image?: string) => ({
+      id: `mark-${number}`,
+      kind: 'browser',
+      name: `button “Save ${number}”`,
+      number,
+      note: `Fix ${number}`,
+      url: 'http://localhost:5173/settings',
+      target: 'element',
+      selector: `#save-${number}`,
+      role: 'button',
+      accessibleName: `Save ${number}`,
+      box: { x: 10, y: 20, width: 80, height: 30 },
+      viewport: { width: 1280, height: 800 },
+      ...(image
+        ? {
+            image: {
+              mimeType: 'image/png',
+              dataUrl: image,
+              width: 128,
+              height: 78,
+              mark: { x: 24, y: 24, width: 80, height: 30 }
+            }
+          }
+        : {})
+    })
+    const message = providerMessage(
+      row({
+        role: 'user',
+        content: 'Please fix these.',
+        images: JSON.stringify([
+          { id: 'shot', name: 'shot.png', mimeType: 'image/png', dataUrl: png }
+        ]),
+        attachments: JSON.stringify([mark(1, png), mark(2)])
+      })
+    )
+    const content = message.content as string
+    expect(content.startsWith('Please fix these.\n\n<sidekick_browser_annotations>')).toBe(true)
+    expect(message.images).toEqual([png, png])
+    // The user's own image is image 1, so the first mark's picture is image 2.
+    expect(content).toContain('picture: image 2 of this message')
+    expect(content).toContain('<annotation number="2" target="element">')
+    expect(content).toContain('picture: none was sent')
+    expect(content).toContain('selector: "#save-1"')
+  })
+
   it('sends comments on changed lines after the typed message', () => {
     const message = providerMessage(
       row({
@@ -245,66 +279,8 @@ describe('conversation provider history', () => {
     )
   })
 
-  it('passes durable user image attachments to multimodal providers', () => {
-    const message = providerMessage(
-      row({
-        role: 'user',
-        content: 'What is in this image?',
-        images: JSON.stringify([
-          {
-            id: 'image-1',
-            name: 'clipboard.png',
-            mimeType: 'image/png',
-            dataUrl: 'data:image/png;base64,AAAA'
-          }
-        ])
-      })
-    )
-
-    expect(message).toEqual({
-      role: 'user',
-      content: 'What is in this image?',
-      images: ['data:image/png;base64,AAAA']
-    })
-  })
-
-  it('adds durable project attachments as a model-facing manifest', () => {
-    const message = providerMessage(
-      row({
-        role: 'user',
-        content: 'Review these.',
-        attachments: JSON.stringify([
-          {
-            id: 'attachment-1',
-            kind: 'file',
-            name: 'main.ts',
-            relativePath: 'src/main.ts',
-            size: 42
-          },
-          {
-            id: 'attachment-2',
-            kind: 'folder',
-            name: 'components',
-            relativePath: 'src/components'
-          }
-        ])
-      })
-    )
-
-    expect(message.role).toBe('user')
-    expect(message.content).toContain('Review these.')
-    expect(message.content).toContain('file: "src/main.ts"')
-    expect(message.content).toContain('folder: "src/components"')
-  })
-
   it('rebuilds typed tool turns from the run ledger without renderer segments', () => {
-    const db = new Database(':memory:')
-    db.exec(`
-      CREATE TABLE agent_runs (id TEXT, thread_id TEXT, provider TEXT, model TEXT, started_at INTEGER);
-      CREATE TABLE agent_run_events (run_id TEXT, sequence INTEGER, type TEXT, payload_json TEXT);
-      INSERT INTO agent_runs VALUES ('run-1', 'conversation-1', 'anthropic', 'claude', 1);
-    `)
-    const add = db.prepare('INSERT INTO agent_run_events VALUES (?, ?, ?, ?)')
+    const { db, add } = ledger(['run-1', 'anthropic', 'claude'])
     add.run('run-1', 1, 'run.started', JSON.stringify({ outputMessageId: 'assistant-1' }))
     add.run(
       'run-1',
@@ -380,13 +356,7 @@ describe('conversation provider history', () => {
     // A PNG signature whose LF bytes a shell turned into CRLF; sent again, the provider rejects
     // every later request in the conversation.
     const broken = Buffer.from('89504e470d0d0a1a0d0a', 'hex').toString('base64')
-    const db = new Database(':memory:')
-    db.exec(`
-      CREATE TABLE agent_runs (id TEXT, thread_id TEXT, provider TEXT, model TEXT, started_at INTEGER);
-      CREATE TABLE agent_run_events (run_id TEXT, sequence INTEGER, type TEXT, payload_json TEXT);
-      INSERT INTO agent_runs VALUES ('run-1', 'conversation-1', 'openai', 'gpt', 1);
-    `)
-    const add = db.prepare('INSERT INTO agent_run_events VALUES (?, ?, ?, ?)')
+    const { db, add } = ledger(['run-1', 'openai', 'gpt'])
     add.run('run-1', 1, 'run.started', JSON.stringify({ outputMessageId: 'assistant-1' }))
     add.run(
       'run-1',
@@ -427,13 +397,7 @@ describe('conversation provider history', () => {
   })
 
   it('keeps a steered message where the run took it in', () => {
-    const db = new Database(':memory:')
-    db.exec(`
-      CREATE TABLE agent_runs (id TEXT, thread_id TEXT, provider TEXT, model TEXT, started_at INTEGER);
-      CREATE TABLE agent_run_events (run_id TEXT, sequence INTEGER, type TEXT, payload_json TEXT);
-      INSERT INTO agent_runs VALUES ('run-1', 'conversation-1', 'ollama', 'model', 1);
-    `)
-    const add = db.prepare('INSERT INTO agent_run_events VALUES (?, ?, ?, ?)')
+    const { db, add } = ledger(['run-1', 'ollama', 'model'])
     add.run('run-1', 1, 'run.started', JSON.stringify({ outputMessageId: 'assistant-1' }))
     add.run(
       'run-1',
@@ -484,14 +448,7 @@ describe('conversation provider history', () => {
   })
 
   it('replays an interrupted reply and the instruction that continued it, in order', () => {
-    const db = new Database(':memory:')
-    db.exec(`
-      CREATE TABLE agent_runs (id TEXT, thread_id TEXT, provider TEXT, model TEXT, started_at INTEGER);
-      CREATE TABLE agent_run_events (run_id TEXT, sequence INTEGER, type TEXT, payload_json TEXT);
-      INSERT INTO agent_runs VALUES ('run-1', 'conversation-1', 'ollama', 'model', 1);
-      INSERT INTO agent_runs VALUES ('run-2', 'conversation-1', 'ollama', 'model', 2);
-    `)
-    const add = db.prepare('INSERT INTO agent_run_events VALUES (?, ?, ?, ?)')
+    const { db, add } = ledger(['run-1', 'ollama', 'model'], ['run-2', 'ollama', 'model'])
     add.run('run-1', 1, 'run.started', JSON.stringify({ outputMessageId: 'assistant-1' }))
     add.run(
       'run-1',
@@ -541,13 +498,7 @@ describe('conversation provider history', () => {
   })
 
   it('compacts legacy verbose browser receipts before rebuilding model history', () => {
-    const db = new Database(':memory:')
-    db.exec(`
-      CREATE TABLE agent_runs (id TEXT, thread_id TEXT, provider TEXT, model TEXT, started_at INTEGER);
-      CREATE TABLE agent_run_events (run_id TEXT, sequence INTEGER, type TEXT, payload_json TEXT);
-      INSERT INTO agent_runs VALUES ('run-1', 'conversation-1', 'openai', 'local', 1);
-    `)
-    const add = db.prepare('INSERT INTO agent_run_events VALUES (?, ?, ?, ?)')
+    const { db, add } = ledger(['run-1', 'openai', 'local'])
     add.run('run-1', 1, 'run.started', JSON.stringify({ outputMessageId: 'assistant-1' }))
     add.run(
       'run-1',
@@ -605,14 +556,8 @@ describe('conversation provider history', () => {
   })
 
   it('removes legacy inline image bytes while rebuilding durable provider history', () => {
-    const db = new Database(':memory:')
-    db.exec(`
-      CREATE TABLE agent_runs (id TEXT, thread_id TEXT, provider TEXT, model TEXT, started_at INTEGER);
-      CREATE TABLE agent_run_events (run_id TEXT, sequence INTEGER, type TEXT, payload_json TEXT);
-      INSERT INTO agent_runs VALUES ('run-1', 'conversation-1', 'openai-compatible', 'local-loaded-model', 1);
-    `)
+    const { db, add } = ledger(['run-1', 'openai-compatible', 'local-loaded-model'])
     const inlineImage = 'QUFB'.repeat(30_000)
-    const add = db.prepare('INSERT INTO agent_run_events VALUES (?, ?, ?, ?)')
     add.run('run-1', 1, 'run.started', JSON.stringify({ outputMessageId: 'assistant-1' }))
     add.run(
       'run-1',
@@ -661,16 +606,12 @@ describe('conversation provider history', () => {
   it('gives the model the current artifact whole, not the preview the ledger keeps', () => {
     // Asked to add charts, the model copied its artifact from history, where the
     // code was cut at 2,000 characters, and the cut code failed to render.
-    const db = new Database(':memory:')
-    db.exec(`
-      CREATE TABLE agent_runs (id TEXT, thread_id TEXT, provider TEXT, model TEXT, started_at INTEGER);
-      CREATE TABLE agent_run_events (run_id TEXT, sequence INTEGER, type TEXT, payload_json TEXT);
-      INSERT INTO agent_runs VALUES ('run-1', 'conversation-1', 'openai-compatible', 'qwen', 1);
-      INSERT INTO agent_runs VALUES ('run-dropped', 'conversation-1', 'openai-compatible', 'qwen', 2);
-    `)
+    const { db, add } = ledger(
+      ['run-1', 'openai-compatible', 'qwen'],
+      ['run-dropped', 'openai-compatible', 'qwen']
+    )
     const version = (label: string) =>
       `export default function App() { /* ${label} */ }${'x'.repeat(3_000)}`
-    const add = db.prepare('INSERT INTO agent_run_events VALUES (?, ?, ?, ?)')
     let sequence = 0
     const artifactCall = (runId: string, callId: string, code: string) => {
       add.run(
@@ -751,13 +692,7 @@ describe('conversation provider history', () => {
   })
 
   it('shows no code for an artifact call that never ran, and no code echoed by an old failure', () => {
-    const db = new Database(':memory:')
-    db.exec(`
-      CREATE TABLE agent_runs (id TEXT, thread_id TEXT, provider TEXT, model TEXT, started_at INTEGER);
-      CREATE TABLE agent_run_events (run_id TEXT, sequence INTEGER, type TEXT, payload_json TEXT);
-      INSERT INTO agent_runs VALUES ('run-1', 'conversation-1', 'openai-compatible', 'qwen', 1);
-    `)
-    const add = db.prepare('INSERT INTO agent_run_events VALUES (?, ?, ?, ?)')
+    const { db, add } = ledger(['run-1', 'openai-compatible', 'qwen'])
     add.run('run-1', 1, 'run.started', JSON.stringify({ outputMessageId: 'assistant-1' }))
     add.run(
       'run-1',

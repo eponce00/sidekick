@@ -75,10 +75,14 @@ restoring and removal. The renderer only asks for those operations by identity; 
   `20261021_001_worktrees_belong_to_chats` moved their chats back to the source project and
   removed those projects. A fork in the current folder shares its source's worktree; a worker that
   works in its manager's folder shares the manager's.
-- **Base.** A worktree records the base it was created from and starts detached at it (Codex,
-  OpenCode), since the base branch is usually checked out in the project folder already; the agent
-  creates a branch when the work needs one, then merges or opens a pull request from the worktree.
-  Worktrees from before this keep the branch SideKick made for them.
+- **Base and branch.** A worktree records the base it was created from and starts on a new branch
+  of its own, `sidekick/<folder name>`, made from that base (Claude Code, Cline, Conductor; Codex
+  once "Create branch here" is pressed). The base branch itself is usually checked out in the
+  project folder, and Git checks a branch out in only one folder. Starting detached (Codex,
+  OpenCode) was tried first; the label then read "detached from main" and nothing told the agent
+  it was in a worktree. The system prompt now names the worktree, its branch and that rule, and
+  leaves branch work to the agent: renaming, creating and switching branches, merging or opening a
+  pull request. Worktrees made while they started detached keep no branch of their own.
 - **Work in.** A new project chat chooses "This folder" or "New worktree" before its first message.
   The choice is remembered as the default. A fresh chat (no messages yet) gets its new worktree;
   a chat with history forks into one instead, so its history never points at the wrong folder.
@@ -100,8 +104,9 @@ restoring and removal. The renderer only asks for those operations by identity; 
   unstaged. Housekeeping runs in the background after a worktree is created or used.
 - **Removal.** One confirmation, then `git worktree remove --force`, and the snapshot ref goes too.
   Running chats and folders SideKick cannot prove it created are refused. Chats that used the
-  worktree are detached, never deleted; branches stay in the repository. There is no
-  recursive-delete fallback.
+  worktree are detached, never deleted. Branches with commits stay in the repository; the branch
+  SideKick made goes only when its base already has everything on it (Cline deletes its generated
+  branch outright). There is no recursive-delete fallback.
 - **Automatic cleanup.** Deleting the last chat of a worktree removes it.
 
 ## Open work
@@ -112,9 +117,6 @@ last chat is deleted. Still open:
 
 - **Archive.** Chats can be archived in the main process but not yet from the interface. Archiving
   should set its worktree aside at once, as deleting the chat removes it.
-- **Setup on restore.** Restoring does not rerun the project's worktree setup hooks, which need
-  per-command approval, so ignored files such as installed dependencies come back only when the
-  agent reinstalls them.
 - **Git worktree locks** (Claude Code): `git worktree lock` while an agent runs, so tools outside
   SideKick cannot prune a worktree in use.
 - **Fresh base by default** (Claude Code, Conductor): optionally fetch the remote default branch,
@@ -126,7 +128,5 @@ last chat is deleted. Still open:
   to the user or the agent; a one-click flow would pair with the Git status bar.
 - **Settings.** The number kept on disk (15) and the worktree location are fixed. Claude Code and
   Codex make them configurable.
-- **Per-worktree environment** (Conductor): pass the worktree path, name and a free port range to
-  setup hooks so parallel dev servers do not collide.
 - **Concurrent writes inside one worktree.** "Work here anyway" relies on the transactional mutation
   service's per-workspace serialization and conflict checks; it does not merge two agents' intent.

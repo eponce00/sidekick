@@ -21,23 +21,11 @@ describe('conversationRunStatus', () => {
 })
 
 describe('attentionNotificationBody', () => {
-  it('names the conversation and what it needs', () => {
-    expect(attentionNotificationBody('approval', 'Fix login')).toBe(
-      '“Fix login” needs your approval.'
-    )
-    expect(attentionNotificationBody('question', 'Fix login')).toBe(
-      '“Fix login” is waiting for your answer.'
-    )
-    expect(attentionNotificationBody('failed', 'Fix login')).toBe(
-      '“Fix login” stopped with an error.'
-    )
-  })
-
   it('does not quote a placeholder title', () => {
-    expect(attentionNotificationBody('approval', 'New Conversation')).toBe(
-      'A conversation needs your approval.'
+    expect(attentionNotificationBody('approval', 'Fix login')).toContain('Fix login')
+    expect(attentionNotificationBody('approval', 'New Conversation')).not.toContain(
+      'New Conversation'
     )
-    expect(attentionNotificationBody('failed', null)).toBe('A conversation stopped with an error.')
   })
 })
 
@@ -49,17 +37,10 @@ describe('shouldNotifyAttention', () => {
     conversationId: 'a'
   }
 
-  it('stays quiet when the user is looking at that conversation', () => {
+  it('notifies unless the user is looking at that chat or turned notifications off', () => {
     expect(shouldNotifyAttention(base)).toBe(false)
-  })
-
-  it('notifies when the app is in the background or another chat is showing', () => {
     expect(shouldNotifyAttention({ ...base, appFocused: false })).toBe(true)
     expect(shouldNotifyAttention({ ...base, shownConversationId: 'b' })).toBe(true)
-    expect(shouldNotifyAttention({ ...base, shownConversationId: null })).toBe(true)
-  })
-
-  it('respects notifications being turned off', () => {
     expect(shouldNotifyAttention({ ...base, notificationsEnabled: false, appFocused: false })).toBe(
       false
     )

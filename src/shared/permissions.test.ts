@@ -3,8 +3,8 @@ import {
   effectivePermissionMode,
   permissionModeWithin,
   browserPermissionOperation,
-  checkpointPermissionOperation,
   commandPermissionOperation,
+  historyRestorePermissionOperation,
   normalizePermissionMode,
   resolvePermissionPolicy,
   workspacePermissionOperation
@@ -33,11 +33,6 @@ describe('command permission policy', () => {
     expect(resolvePermissionPolicy('full-access', 'confirm').effectiveAccess).toBe('auto')
   })
 
-  it('applies the same policy to every operation kind', () => {
-    expect(resolvePermissionPolicy('always-ask', 'auto').effectiveAccess).toBe('confirm')
-    expect(resolvePermissionPolicy('full-access', 'confirm').effectiveAccess).toBe('auto')
-  })
-
   it('binds authorization requests to exact operation details', () => {
     expect(
       commandPermissionOperation({
@@ -53,11 +48,20 @@ describe('command permission policy', () => {
     expect(workspacePermissionOperation('write', 'a.txt', 'one', 'confirm')).not.toEqual(
       workspacePermissionOperation('write', 'a.txt', 'two', 'confirm')
     )
-    expect(checkpointPermissionOperation('restore', 'abcdef123456')).not.toEqual(
-      checkpointPermissionOperation('hard-reset', 'abcdef123456')
+    const rewind = historyRestorePermissionOperation([
+      { workspaceRoot: 'C:/project', hashes: ['abcdef123456'] }
+    ])
+    expect(rewind).not.toEqual(
+      historyRestorePermissionOperation([
+        { workspaceRoot: 'C:/project', hashes: ['abcdef123456', 'fedcba654321'] }
+      ])
     )
-    expect(checkpointPermissionOperation('restore', 'abcdef123456').requestedAccess).toBe('confirm')
-    expect(checkpointPermissionOperation('restore', 'abcdef123456').kind).toBe('checkpoint')
+    // An approval for one folder's point does not cover another folder's.
+    expect(rewind).not.toEqual(
+      historyRestorePermissionOperation([{ workspaceRoot: 'C:/other', hashes: ['abcdef123456'] }])
+    )
+    expect(rewind.requestedAccess).toBe('confirm')
+    expect(rewind.kind).toBe('checkpoint')
     expect(workspacePermissionOperation('write', 'a.txt', 'one', 'confirm').kind).toBe('workspace')
     expect(browserPermissionOperation('navigate', 'https://example.com', 'confirm')).toMatchObject({
       kind: 'browser',

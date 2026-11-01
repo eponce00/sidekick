@@ -66,8 +66,13 @@ The exact release contract is in [Releases](../development/RELEASES.md).
 
 - Qualify the `sidekick` command on clean installs of every platform and close the other
   [configuration CLI](CONFIGURATION_CLI.md) gaps.
-- Let users store API keys and sign-ins that the agent uses by alias but never reads, with
-  per-entry scope, approvals, redaction of every output path, and an audit of each use. The design
+- Extend [browser annotations](../user-guide/BROWSER.md#pointing-at-the-page): marks inside frames
+  from other sites (today the whole frame is marked and covered), a mark on selected text, and
+  trying a style change on the page before sending it, as Codex's **Adjust** does.
+- Follow WebMCP as the specification and Electron's Chromium change: iframe tools, tool titles,
+  and confirming consequential tools in Full access. See [WebMCP](WEBMCP.md).
+- Let users store API keys and sign-ins that the agent uses by alias but never reads, under the
+  permission mode, with redaction of every output path and an audit of each use. The design
   and phases are in [Credentials](CREDENTIALS.md).
 
 ## Later work

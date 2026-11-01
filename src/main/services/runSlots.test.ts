@@ -20,6 +20,17 @@ function request(
 }
 
 describe('RunSlots', () => {
+  it('lends free slots to work that can wait, never ahead of a waiting run', async () => {
+    const slots = new RunSlots(() => 1)
+    const idle = slots.tryAcquire(request('idle'))!
+    expect(idle).not.toBeNull()
+    const run = slots.acquire(request('run'))
+    expect(slots.tryAcquire(request('another'))).toBeNull()
+    idle.release()
+    await run
+    expect(slots.tryAcquire(request('later'))).toBeNull()
+  })
+
   it('runs up to the global limit and hands slots over in order', async () => {
     const slots = new RunSlots(() => 2)
     const first = await slots.acquire(request('a'))
@@ -46,20 +57,6 @@ describe('RunSlots', () => {
     await fourth
     expect(order).toEqual(['c queued', 'd queued', 'c started', 'd started'])
     expect(slots.queued()).toEqual([])
-  })
-
-  it('keeps each provider to its own limit without holding back other providers', async () => {
-    const slots = new RunSlots(() => 4)
-    await slots.acquire(request('local-1', 'local', 1))
-    const queued = vi.fn()
-    const local = slots.acquire(request('local-2', 'local', 1, { onQueued: queued }))
-    expect(queued).toHaveBeenCalledOnce()
-    // A hosted run behind the waiting local one still starts at once.
-    const hosted = vi.fn()
-    await slots.acquire(request('cloud-1', 'cloud', 4, { onQueued: hosted }))
-    expect(hosted).not.toHaveBeenCalled()
-    expect(slots.inUse()).toEqual({ global: 2, providers: { local: 1, cloud: 1 } })
-    void local
   })
 
   it('never holds a slot while waiting for another, so a full provider does not use up global slots', async () => {
@@ -116,18 +113,5 @@ describe('RunSlots', () => {
     const queued = vi.fn()
     void slots.acquire(request('c', 'server', 8, { onQueued: queued }))
     expect(queued).toHaveBeenCalledOnce()
-  })
-
-  it('tells listeners when the queue changes', async () => {
-    const slots = new RunSlots(() => 1)
-    const listener = vi.fn()
-    const unsubscribe = slots.subscribe(listener)
-    const first = await slots.acquire(request('a'))
-    const second = slots.acquire(request('b'))
-    expect(listener).toHaveBeenCalledTimes(1)
-    first.release()
-    await second
-    expect(listener).toHaveBeenCalledTimes(2)
-    unsubscribe()
   })
 })

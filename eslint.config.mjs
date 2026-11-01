@@ -6,7 +6,18 @@ import eslintPluginReactHooks from 'eslint-plugin-react-hooks'
 import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
 
 export default defineConfig(
-  { ignores: ['**/node_modules', '**/dist', '**/out', '**/build', 'reference/**', 'resources/**'] },
+  {
+    ignores: [
+      '**/node_modules',
+      '**/dist',
+      '**/out',
+      '**/build',
+      'reference/**',
+      'resources/**',
+      'src/renderer/public/vendor/**',
+      'media/public/**'
+    ]
+  },
   tseslint.configs.recommended,
   eslintPluginReact.configs.flat.recommended,
   eslintPluginReact.configs.flat['jsx-runtime'],
@@ -98,6 +109,16 @@ export default defineConfig(
         }
       ]
     }
+  },
+  // The README media: Node scripts in plain JavaScript, and Remotion compositions that are rendered,
+  // never hot-reloaded.
+  {
+    files: ['media/**/*.mjs'],
+    rules: { '@typescript-eslint/explicit-function-return-type': 'off' }
+  },
+  {
+    files: ['media/**/*.{ts,tsx}'],
+    rules: { 'react-refresh/only-export-components': 'off' }
   },
   eslintConfigPrettier,
   {

@@ -20,6 +20,9 @@ jobs:
     name: Checks (Linux x64)
     runs-on: ubuntu-22.04
     timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/prepare
@@ -29,6 +32,23 @@ jobs:
       - run: npm run test:docs
       - run: npm run test:coverage
       - run: npm audit --omit=dev --audit-level=high
+      # The suite already holds the recorded budget to the source; this refuses a pull request
+      # that raises it. Labels are read when the step runs, so labelling and re-running is enough.
+      - name: Check the per-turn agent context did not grow
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PULL: repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}
+          BASE: ${{ github.base_ref }}
+        run: |
+          if gh api "$PULL" --jq '.labels[].name' | grep -qx agent-context-increase; then
+            echo "Labelled agent-context-increase; the growth is accepted."
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$BASE"
+          git show FETCH_HEAD:src/shared/agentContextBudget.json > "$RUNNER_TEMP/base.json" ||
+            rm -f "$RUNNER_TEMP/base.json"
+          node scripts/check-agent-context-budget.cjs "$RUNNER_TEMP/base.json" src/shared/agentContextBudget.json
 
   # The suite on the other platforms. Windows runs it on one worker (see scripts/run-vitest.cjs),
   # so it is split across two machines instead.
@@ -47,7 +67,7 @@ jobs:
             os: windows-latest
             shard: 2/2
           - name: macOS arm64
-            os: macos-14
+            os: macos-15
             shard: 1/1
     steps:
       - uses: actions/checkout@v7
@@ -67,7 +87,7 @@ jobs:
             smoke: windows
             executable: dist/win-unpacked/SideKick.exe
           - name: macOS arm64
-            os: macos-14
+            os: macos-15
             smoke: macos
             executable: dist/mac-arm64/SideKick.app/Contents/MacOS/SideKick
           - name: Linux x64

@@ -4,15 +4,18 @@ import type { AppUpdateState } from '../../../shared/appUpdates'
 import { SettingsRow } from './SettingsLayout'
 import './AppUpdateControls.css'
 
+/** Null when this window has no update API, as in tests that render the sidebar alone. */
 function useAppUpdateState(): AppUpdateState | null {
   const [state, setState] = useState<AppUpdateState | null>(null)
 
   useEffect(() => {
+    const api = window.api?.appUpdates
+    if (!api) return undefined
     let active = true
-    void window.api.appUpdates.getState().then((next) => {
+    void api.getState().then((next) => {
       if (active) setState(next)
     })
-    const unsubscribe = window.api.appUpdates.onState((next) => {
+    const unsubscribe = api.onState((next) => {
       if (active) setState(next)
     })
     return () => {
@@ -134,7 +137,7 @@ export function AppUpdateSettings(): React.JSX.Element {
       control={
         action ? (
           <button
-            className="settings-primary-action"
+            className="settings-secondary-action"
             type="button"
             onClick={() => void action.run()}
           >
@@ -158,6 +161,17 @@ export function AppUpdateSettings(): React.JSX.Element {
         )
       }
     />
+  )
+}
+
+/** The installed version in short, as the sidebar's foot shows it. */
+export function AppVersionLabel(): React.JSX.Element | null {
+  const state = useAppUpdateState()
+  if (!state) return null
+  return (
+    <span className="sidebar-version" title={`SideKick ${state.currentVersion}`}>
+      v{state.currentVersion}
+    </span>
   )
 }
 

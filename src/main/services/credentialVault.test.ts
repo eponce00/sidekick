@@ -54,9 +54,6 @@ function secretInput(overrides: Partial<CredentialSaveInput> = {}): CredentialSa
     alias: 'partner-center',
     kind: 'secret',
     description: 'Store submissions',
-    usernameVisible: false,
-    ask: 'once_per_chat',
-    scope: { projects: 'all', background: false },
     values: { secret: generated() },
     ...overrides
   }
@@ -98,33 +95,19 @@ describe('CredentialVault', () => {
       })
     )
     const everything = JSON.stringify({ list: vault.list(), events: vault.events() })
-    for (const value of [secret, username, password]) {
-      expect(everything).not.toContain(value)
-      expect(store.raw()).not.toContain(value)
-    }
+    for (const value of [secret, password]) expect(everything).not.toContain(value)
+    for (const value of [secret, username, password]) expect(store.raw()).not.toContain(value)
     expect(vault.list().map((entry) => entry.alias)).toEqual(['github-login', 'partner-center'])
   })
 
-  it('shows a username only when the entry lets the agent read it', () => {
+  it('shows a sign-in’s username, as a password manager does', () => {
     const { vault } = setup()
     const username = generated()
     const saved = vault.save(
-      secretInput({
-        alias: 'site',
-        kind: 'sign_in',
-        usernameVisible: true,
-        values: { username, password: generated() }
-      })
+      secretInput({ alias: 'site', kind: 'sign_in', values: { username, password: generated() } })
     )
     expect(saved.username).toBe(username)
-    const hidden = vault.save({
-      ...secretInput({ kind: 'sign_in' }),
-      id: saved.id,
-      alias: 'site',
-      usernameVisible: false,
-      values: {}
-    })
-    expect(hidden.username).toBeUndefined()
+    expect(vault.list()[0].username).toBe(username)
   })
 
   it('keeps stored values when an edit brings no new ones', () => {
@@ -159,8 +142,7 @@ describe('CredentialVault', () => {
       expect.objectContaining({
         id: saved.id,
         alias: 'partner-center',
-        needsValue: true,
-        scope: { projects: 'all', background: false }
+        needsValue: true
       })
     ])
     expect(reopened.resolve('partner-center')).toBeUndefined()
@@ -199,26 +181,11 @@ describe('CredentialVault', () => {
     expect(redactor.redact(second)).toBe('[secret: partner-center]')
   })
 
-  it('does not redact a username the agent may read', () => {
-    const { vault, redactor } = setup()
-    const username = generated()
-    const password = generated()
-    vault.save(
-      secretInput({
-        alias: 'site',
-        kind: 'sign_in',
-        usernameVisible: true,
-        values: { username, password }
-      })
-    )
-    expect(redactor.redact(`${username} ${password}`)).toBe(`${username} [secret: site]`)
-  })
-
   it('records lifecycle events without values', () => {
     const { vault } = setup()
     const saved = vault.save(secretInput())
     vault.save({ ...secretInput(), id: saved.id, values: { secret: generated() } })
-    vault.save({ ...secretInput({ ask: 'every_use' }), id: saved.id, values: {} })
+    vault.save({ ...secretInput({ description: 'Other' }), id: saved.id, values: {} })
     vault.delete(saved.id)
     expect(vault.events(saved.id).map((event) => event.kind)).toEqual([
       'deleted',
@@ -226,41 +193,6 @@ describe('CredentialVault', () => {
       'value_replaced',
       'created'
     ])
-    expect(vault.events(saved.id)[1].detail).toBe('Changed when to ask.')
-  })
-
-  it('reports every way an edit widens an entry', () => {
-    const { vault } = setup()
-    const saved = vault.save(
-      secretInput({
-        kind: 'sign_in',
-        ask: 'every_use',
-        scope: { projects: ['a'], background: false },
-        values: { username: generated(), password: generated() }
-      })
-    )
-    expect(
-      vault.widening({
-        ...secretInput({ kind: 'sign_in' }),
-        id: saved.id,
-        ask: 'never',
-        usernameVisible: true,
-        scope: { projects: 'all', background: true }
-      })
-    ).toEqual([
-      'Ask before use: Never, within its scope',
-      'Usable in every project',
-      'Usable by schedules and chats other chats start',
-      'The agent can read the username'
-    ])
-    expect(
-      vault.widening({
-        ...secretInput({ kind: 'sign_in' }),
-        id: saved.id,
-        ask: 'every_use',
-        scope: { projects: ['a'], background: false }
-      })
-    ).toEqual([])
   })
 
   it('retires every old value when the kind changes, and records the replacement', () => {
@@ -278,18 +210,11 @@ describe('CredentialVault', () => {
     expect(vault.events(saved.id).map((event) => event.kind)).toContain('value_replaced')
   })
 
-  it('never hides a username the agent may read, from the list or from output', () => {
+  it('hides the password but not the username the agent may read', () => {
     const { vault, redactor } = setup()
     const username = generated()
     const password = generated()
-    vault.save(
-      secretInput({
-        alias: 'site',
-        kind: 'sign_in',
-        usernameVisible: true,
-        values: { username, password }
-      })
-    )
+    vault.save(secretInput({ alias: 'site', kind: 'sign_in', values: { username, password } }))
     expect(redactor.redact(`${username} ${password}`)).toBe(`${username} [secret: site]`)
   })
 
@@ -319,13 +244,6 @@ describe('CredentialVault', () => {
     expect(vault.status()).toMatchObject({ available: false })
     expect(() => vault.save(secretInput())).toThrow(CredentialUnavailableError)
     expect(JSON.parse(store.raw()).file).toEqual(contents)
-  })
-
-  it('marks each sealed record with its layout', () => {
-    const { vault, store, cipher } = setup()
-    const saved = vault.save(secretInput())
-    const sealed = JSON.parse(store.raw()).file.entries[saved.id].sealed
-    expect(JSON.parse(cipher.open(sealed)).schema).toBe(1)
   })
 
   it('keeps the newest thousand events', () => {

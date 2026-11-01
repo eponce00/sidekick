@@ -13,6 +13,7 @@ const { tmpdir } = require('node:os')
 const { join, resolve, sep } = require('node:path')
 const { test } = require('node:test')
 const { _electron: electron } = require('playwright')
+const { openChatFromSidebar } = require('./open-chat-from-sidebar.cjs')
 const { startScriptedModel, text } = require('./scripted-model.cjs')
 
 const ROOT = resolve(__dirname, '..')
@@ -213,6 +214,10 @@ test(
         BrowserWindow.getAllWindows()[0]?.setSize(1400, 900)
       )
 
+      // SideKick makes a project only from a folder chosen in its folder picker.
+      await application.evaluate(({ dialog }, folder) => {
+        dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] })
+      }, workspace)
       const { projectId, pinned } = await page.evaluate(
         async ({ baseUrl, workspace, model, provider, ref, window: contextLength, replyLimit }) => {
           const limits = { contextLength, maxOutputTokens: replyLimit }
@@ -243,6 +248,7 @@ test(
             autoCompactThreshold: 0.8,
             notificationsEnabled: false
           })
+          await window.api.workspace.selectFolder()
           const project = await window.api.projects.create(workspace, 'behavior-fixture')
           return {
             projectId: project.id,
@@ -428,7 +434,7 @@ test(
       // list later than the test created it.
       await page.reload()
       await page.waitForFunction(() => Boolean(window.api?.sessions))
-      await page.getByText('COMPACTION-FIXTURE', { exact: true }).first().click()
+      await openChatFromSidebar(page, 'COMPACTION-FIXTURE')
       const card = await until(
         () =>
           page.evaluate(() => {
@@ -778,7 +784,7 @@ test(
       // The sidebar lists chats made through the API after a reload.
       await page.reload()
       await page.waitForFunction(() => Boolean(window.api?.sessions))
-      await page.getByText('Gateway checks', { exact: true }).first().click()
+      await openChatFromSidebar(page, 'Gateway checks')
       const failure = await until(
         () =>
           page.evaluate(() => {

@@ -60,8 +60,19 @@ export interface Schedule extends ScheduleInput {
   runCount: number
   /** The run still working or waiting for the user, if any. */
   activeRun?: { conversationId: string; agentRunId: string; phase: AgentRunPhase }
+  /**
+   * Set when SideKick's agent created the schedule, with the chat it was asked in. The chat is
+   * null once it was deleted.
+   */
+  createdBy?: ScheduleCreator
   createdAt: number
   updatedAt: number
+}
+
+export interface ScheduleCreator {
+  kind: 'agent'
+  conversationId: string | null
+  conversationTitle?: string
 }
 
 /** Phases in which a run still holds its schedule's one chat at a time. */
@@ -127,6 +138,11 @@ export interface SchedulesAPI {
 }
 
 export const SCHEDULE_NAME_MAX_LENGTH = 120
+/**
+ * Schedules the agent created that may be active at once. Each one starts chats on its own, so
+ * the agent cannot fill the computer with them; the user can always add more themselves.
+ */
+export const AGENT_ACTIVE_SCHEDULE_LIMIT = 10
 export const SCHEDULE_PROMPT_MAX_LENGTH = 20_000
 
 /**
@@ -155,24 +171,22 @@ function runsOnDay(timing: ScheduleTiming, day: number): boolean {
   return true
 }
 
+const MINUTE_MS = 60_000
+
 /**
  * The first matching local minute strictly after `after`. Built from local date parts, so a
  * daily run stays at its wall-clock time across daylight-saving changes. A time skipped by a
  * spring-forward change runs at the shifted time JavaScript gives it; a time repeated by a
- * fall-back change runs once.
+ * fall-back change runs once. An hourly run comes every hour of real time, the repeated hour too.
  */
 export function nextScheduleOccurrence(timing: ScheduleTiming, after: number): number {
   const from = new Date(after)
   if (timing.cadence === 'hourly') {
-    for (let hour = 0; hour <= 49; hour += 1) {
-      const candidate = new Date(
-        from.getFullYear(),
-        from.getMonth(),
-        from.getDate(),
-        from.getHours() + hour,
-        timing.minute
-      ).getTime()
-      if (candidate > after) return candidate
+    // Each minute in real time, not wall-clock hours: when the clocks go back, the repeated hour
+    // resolved to its first occurrence and that hour's run was skipped.
+    const start = Math.floor(after / MINUTE_MS) * MINUTE_MS + MINUTE_MS
+    for (let candidate = start; candidate <= start + 3 * 60 * MINUTE_MS; candidate += MINUTE_MS) {
+      if (new Date(candidate).getMinutes() === timing.minute) return candidate
     }
   } else {
     for (let day = 0; day <= 8; day += 1) {

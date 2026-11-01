@@ -127,6 +127,8 @@ describe('LM Studio details', () => {
       supportsVision: true,
       supportsTools: true,
       supportsReasoning: true,
+      reasoningLevels: ['off', 'on'],
+      reasoningDefault: 'on',
       metadataSource: 'provider'
     })
   })

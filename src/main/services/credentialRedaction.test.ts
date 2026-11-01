@@ -21,12 +21,6 @@ describe('CredentialRedactor', () => {
     expect(redactor.redactDeep(data)).toBe(data)
   })
 
-  it('replaces a stored value with its alias', () => {
-    const value = generated()
-    const redactor = redactorFor(value)
-    expect(redactor.redact(`token=${value}; done`)).toBe('token=[secret: entry-0]; done')
-  })
-
   it('catches the encodings a program is likely to print a value in', () => {
     const value = `p@ss w"rd'$&<${generated(12)}>`
     const redactor = redactorFor(value)
@@ -231,5 +225,78 @@ describe('CredentialRedactionStream', () => {
     expect(stream.push(`${value}\n`)).toBe(`${value}\n`)
     redactor.setSecrets([{ alias: 'late', value }])
     expect(stream.push(`${value}\n`)).toBe('[secret: late]\n')
+  })
+})
+
+describe('JSON forms other writers produce', () => {
+  const unicode = (text: string, characters: RegExp, upperCase = false): string =>
+    text.replace(characters, (character) => {
+      const hex = character.charCodeAt(0).toString(16).padStart(4, '0')
+      return `\\u${upperCase ? hex.toUpperCase() : hex}`
+    })
+
+  it('catches a value whose JSON escapes <, > and & as \\u escapes, in either case', () => {
+    const value = `a<b>c&d"e\\${generated(10)}`
+    const redactor = redactorFor(value)
+    const json = JSON.stringify(value).slice(1, -1)
+    for (const form of [
+      unicode(json, /[<>&]/g),
+      unicode(json, /[<>&]/g, true),
+      // SideKick's own page-content blocks write `<` this way around a page's JSON.
+      JSON.stringify({ token: value }).replace(/</g, '\\u003c')
+    ]) {
+      expect(redactor.redact(`before ${form} after`), form).not.toContain(form)
+      expect(redactor.redact(`before ${form} after`)).toContain('[secret: entry-0]')
+    }
+  })
+
+  it('catches a value escaped as ASCII, and JSON text quoted inside another JSON string', () => {
+    const value = `clé-ñ"${generated(10)}`
+    const redactor = redactorFor(value)
+    const json = JSON.stringify(value).slice(1, -1)
+    const ascii = unicode(json, /[\u0080-￿]/g)
+    const twice = JSON.stringify(JSON.stringify({ token: value }))
+    expect(redactor.redact(ascii)).toBe('[secret: entry-0]')
+    expect(redactor.redact(twice)).toContain('[secret: entry-0]')
+    expect(redactor.redact(twice)).not.toContain(value.slice(-10))
+  })
+
+  it('catches a value whose JSON escapes slashes, as PHP writes it by default', () => {
+    const value = `a/b/é${generated(10)}`
+    const redactor = redactorFor(value)
+    const json = JSON.stringify(value).slice(1, -1).replace(/\//g, '\\/')
+    for (const form of [json, unicode(json, /[\u0080-￿]/g)]) {
+      expect(redactor.redact(`{"token":"${form}"}`), form).toBe('{"token":"[secret: entry-0]"}')
+    }
+  })
+})
+
+describe('forms SideKick and common tools write', () => {
+  it('catches a value in a form or query field, encoded the way URLSearchParams writes it', () => {
+    const value = `it's (a) ~test!*${generated(10)}`
+    const redactor = redactorFor(value)
+    const field = new URLSearchParams({ token: value }).toString()
+    expect(redactor.redact(`POST ${field}&next=1`)).toBe('POST token=[secret: entry-0]&next=1')
+  })
+
+  it('catches Base64 wrapped at 76 or 64 columns, wherever the value starts', () => {
+    const value = generated(90)
+    const redactor = redactorFor(value)
+    for (const width of [76, 64]) {
+      for (const prefix of ['', 'user:', 'ab']) {
+        const encoded = Buffer.from(`${prefix}${value}`).toString('base64')
+        const wrapped = encoded.match(new RegExp(`.{1,${width}}`, 'g'))!.join('\r\n')
+        const output = redactor.redact(`${wrapped}\r\n`)
+        expect(output, `width ${width} prefix ${prefix}`).toContain('[secret: entry-0]')
+        // Only the few characters that also encode the prefix stay readable.
+        expect(output).not.toMatch(/[A-Za-z0-9+/]{12}/)
+      }
+    }
+  })
+
+  it('leaves ordinary lines that happen to be 76 characters long as they are', () => {
+    const redactor = redactorFor(generated(30))
+    const text = `${'a'.repeat(76)}\n${'b'.repeat(10)}\n`
+    expect(redactor.redact(text)).toBe(text)
   })
 })

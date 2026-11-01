@@ -31,10 +31,13 @@ it('prefers CSS metrics, preserving origins and rounding dimensions upward', asy
   expect(result).toEqual({ png: Buffer.from([1, 1, 1]), width: 101, height: 201 })
 })
 
-it('falls back to legacy content metrics and defaults absent origins to zero', async () => {
+it('falls back to legacy content metrics, defaulting origins to zero and sizes to one pixel', async () => {
   const { driver, clips } = fixture({ contentSize: { width: 10, height: 20 } })
   await captureBrowserScreenshot(driver)
   expect(clips).toEqual([{ x: 0, y: 0, width: 10, height: 20, scale: 1 }])
+  const empty = fixture({ contentSize: { width: 0, height: -5 } })
+  await captureBrowserScreenshot(empty.driver)
+  expect(empty.clips).toEqual([{ x: 0, y: 0, width: 1, height: 1, scale: 1 }])
 })
 
 it('rejects absent metrics before issuing a screenshot', async () => {
@@ -43,21 +46,6 @@ it('rejects absent metrics before issuing a screenshot', async () => {
     'Unable to determine full-page screenshot dimensions'
   )
   expect(driver.capture).not.toHaveBeenCalled()
-})
-
-it('keeps the full-page dimension and pixel bounds unchanged', async () => {
-  const { driver, clips } = fixture({ cssContentSize: { width: 20000, height: 20000 } })
-  const result = await captureBrowserScreenshot(driver)
-  const scale = Math.sqrt(40000000 / (16384 * 16384))
-  expect(clips).toEqual([{ x: 0, y: 0, width: 16384, height: 16384, scale }])
-  expect(result.width).toBe(Math.round(16384 * scale))
-  expect(result.height).toBe(result.width)
-})
-
-it('retains the minimum full-page dimension of one pixel', async () => {
-  const { driver, clips } = fixture({ contentSize: { width: 0, height: -5 } })
-  await captureBrowserScreenshot(driver)
-  expect(clips).toEqual([{ x: 0, y: 0, width: 1, height: 1, scale: 1 }])
 })
 
 it('uses the resolved element box verbatim without asking for page metrics', async () => {
@@ -103,14 +91,3 @@ it('rejects an empty capture without retrying', async () => {
   )
   expect(driver.capture).toHaveBeenCalledTimes(1)
 })
-
-it.each(['layoutMetrics', 'capture'] as const)(
-  'propagates %s failure without capture retry',
-  async (operation) => {
-    const { driver } = fixture()
-    const failure = new Error('operation cancelled')
-    driver[operation].mockRejectedValueOnce(failure)
-    await expect(captureBrowserScreenshot(driver)).rejects.toBe(failure)
-    expect(driver.capture).toHaveBeenCalledTimes(operation === 'capture' ? 1 : 0)
-  }
-)

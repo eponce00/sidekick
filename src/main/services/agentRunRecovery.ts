@@ -1,3 +1,4 @@
+import { parseHistoryPoints } from '../../shared/workspaceHistory'
 import type Database from 'better-sqlite3'
 import { AgentRunStore } from './agentRunStore'
 import { AgentMessageMaterializer } from './agentMessageMaterializer'
@@ -37,16 +38,9 @@ export function recoverAgentRunMaterializations(db: Database.Database, store: Ag
         Boolean(outputMessageId)
       if (persist) {
         const prior = db
-          .prepare(
-            'SELECT checkpoint_hash, checkpoint_workspace_root FROM messages WHERE id = ? AND conversation_id = ?'
-          )
-          .get(outputMessageId, run.threadId) as
-          | { checkpoint_hash: string | null; checkpoint_workspace_root: string | null }
-          | undefined
-        messages.materialize(run.id, {
-          checkpointHash: prior?.checkpoint_hash,
-          checkpointWorkspaceRoot: prior?.checkpoint_workspace_root
-        })
+          .prepare('SELECT checkpoints FROM messages WHERE id = ? AND conversation_id = ?')
+          .get(outputMessageId, run.threadId) as { checkpoints: string | null } | undefined
+        messages.materialize(run.id, { checkpoints: parseHistoryPoints(prior?.checkpoints) })
       }
       store.appendEvent({
         id: `${run.id}:finalized`,

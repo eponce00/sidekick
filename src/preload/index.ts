@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { desktopPlatform } from '../shared/platform'
 import { isAppCommand } from '../shared/appCommands'
 import type { DesktopApi } from './api'
@@ -62,6 +62,10 @@ const api = {
     choose: (token: string, itemId: string) => ipcRenderer.invoke('menus:choose', token, itemId),
     dismiss: (token: string) => ipcRenderer.invoke('menus:dismiss', token)
   },
+  computerUse: {
+    rememberedApps: () => ipcRenderer.invoke('computerUse:rememberedApps'),
+    forgetApp: (path: string) => ipcRenderer.invoke('computerUse:forgetApp', path)
+  },
   settings: {
     selectOfficeInterpreter: () => ipcRenderer.invoke('settings:selectOfficeInterpreter'),
     save: (settings: unknown) => ipcRenderer.invoke('settings:save', settings),
@@ -87,12 +91,31 @@ const api = {
   },
   conversations: {
     list: () => ipcRenderer.invoke('conversations:list'),
+    onListChanged: (callback: (change: { conversationId: string; removed: boolean }) => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        change: { conversationId: string; removed: boolean }
+      ): void => callback(change)
+      ipcRenderer.on('conversations:listChanged', listener)
+      return () => {
+        ipcRenderer.removeListener('conversations:listChanged', listener)
+      }
+    },
+    onMessagesChanged: (callback: (conversationId: string) => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        change: { conversationId: string }
+      ): void => callback(change.conversationId)
+      ipcRenderer.on('conversations:messagesChanged', listener)
+      return () => ipcRenderer.removeListener('conversations:messagesChanged', listener)
+    },
     search: (query: string) => ipcRenderer.invoke('conversations:search', query),
     create: (
       title: string,
       projectId?: string | null,
-      titleSource?: import('../shared/conversationTitles').ConversationTitleSource
-    ) => ipcRenderer.invoke('conversations:create', title, projectId, titleSource),
+      titleSource?: import('../shared/conversationTitles').ConversationTitleSource,
+      modelId?: string
+    ) => ipcRenderer.invoke('conversations:create', title, projectId, titleSource, modelId),
     fork: (input: import('../shared/projects').ForkConversationInput) =>
       ipcRenderer.invoke('conversations:fork', input),
     update: (
@@ -102,6 +125,8 @@ const api = {
     ) => ipcRenderer.invoke('conversations:update', id, title, options),
     setPinned: (id: string, pinned: boolean) =>
       ipcRenderer.invoke('conversations:setPinned', id, pinned),
+    setModel: (id: string, modelId: string) =>
+      ipcRenderer.invoke('conversations:setModel', id, modelId),
     listTitleBackfillCandidates: (limit?: number) =>
       ipcRenderer.invoke('conversations:listTitleBackfillCandidates', limit),
     claimTitleBackfill: (
@@ -144,6 +169,8 @@ const api = {
       ipcRenderer.invoke('projects:create', folderPath, name),
     update: (id: string, input: { name?: string; isPinned?: boolean }) =>
       ipcRenderer.invoke('projects:update', id, input),
+    updateFolders: (input: import('../shared/projects').UpdateProjectFoldersInput) =>
+      ipcRenderer.invoke('projects:updateFolders', input),
     remove: (id: string) => ipcRenderer.invoke('projects:remove', id),
     getConversationContext: (conversationId: string) =>
       ipcRenderer.invoke('projects:getConversationContext', conversationId),
@@ -161,6 +188,25 @@ const api = {
   agentRuns: {
     browserWorkspace: (input: import('../shared/browserWorkspace').BrowserWorkspaceRequest) =>
       ipcRenderer.invoke('agentRuns:browserWorkspace', input),
+    browserAnnotations: (
+      input:
+        | { conversationId: string; action: 'list' }
+        | {
+            conversationId: string
+            action: 'take'
+            ids: string[]
+          }
+    ) => ipcRenderer.invoke('agentRuns:browserAnnotations', input),
+    onBrowserAnnotationsChanged: (
+      callback: (change: import('../shared/browserWorkspace').BrowserAnnotationsChange) => void
+    ) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        change: import('../shared/browserWorkspace').BrowserAnnotationsChange
+      ): void => callback(change)
+      ipcRenderer.on('agentRuns:browserAnnotationsChanged', listener)
+      return () => ipcRenderer.removeListener('agentRuns:browserAnnotationsChanged', listener)
+    },
     startConversation: (input: import('../shared/agentRunApi').StartConversationAgentRunInput) =>
       ipcRenderer.invoke('agentRuns:startConversation', input),
     stop: (runId: string) => ipcRenderer.invoke('agentRuns:stop', runId),
@@ -169,10 +215,6 @@ const api = {
     events: (runId: string, afterSequence?: number) =>
       ipcRenderer.invoke('agentRuns:events', runId, afterSequence),
     latest: (threadId: string) => ipcRenderer.invoke('agentRuns:latest', threadId),
-    beginBrowserHumanTakeover: (interactionId: string) =>
-      ipcRenderer.invoke('agentRuns:browserTakeoverBegin', interactionId),
-    completeBrowserHumanTakeover: (interactionId: string) =>
-      ipcRenderer.invoke('agentRuns:browserTakeoverComplete', interactionId),
     resolveInteraction: (input: import('../shared/agentRunApi').ResolveAgentInteractionInput) =>
       ipcRenderer.invoke('agentRuns:resolveInteraction', input),
     steer: (input: import('../shared/agentRunApi').SteerConversationRunInput) =>
@@ -183,6 +225,14 @@ const api = {
       ipcRenderer.invoke('agentRuns:admissionsReplace', input),
     admissionsTakeNext: (conversationId: string) =>
       ipcRenderer.invoke('agentRuns:admissionsTakeNext', conversationId),
+    onAdmissionsChanged: (callback: (conversationId: string) => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        change: { conversationId: string }
+      ): void => callback(change.conversationId)
+      ipcRenderer.on('agentRuns:admissionsChanged', listener)
+      return () => ipcRenderer.removeListener('agentRuns:admissionsChanged', listener)
+    },
     onEvent: (callback: (change: import('../shared/agentRunApi').AgentRunChangedEvent) => void) => {
       const listener = (
         _event: Electron.IpcRendererEvent,
@@ -190,6 +240,16 @@ const api = {
       ): void => callback(change)
       ipcRenderer.on('agentRuns:event', listener)
       return () => ipcRenderer.removeListener('agentRuns:event', listener)
+    },
+    onArtifactDraft: (
+      callback: (draft: import('../shared/agentRunApi').AgentArtifactDraft) => void
+    ) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        draft: import('../shared/agentRunApi').AgentArtifactDraft
+      ): void => callback(draft)
+      ipcRenderer.on('agentRuns:artifactDraft', listener)
+      return () => ipcRenderer.removeListener('agentRuns:artifactDraft', listener)
     }
   },
   terminal: {
@@ -207,6 +267,24 @@ const api = {
       ): void => callback(event)
       ipcRenderer.on('terminal:event', listener)
       return () => ipcRenderer.removeListener('terminal:event', listener)
+    }
+  },
+  userTerminal: {
+    list: () => ipcRenderer.invoke('userTerminal:list'),
+    create: (input: { conversationId: string | null; cols: number; rows: number }) =>
+      ipcRenderer.invoke('userTerminal:create', input),
+    read: (id: string, offset?: number) => ipcRenderer.invoke('userTerminal:read', id, offset),
+    write: (id: string, data: string) => ipcRenderer.invoke('userTerminal:write', id, data),
+    resize: (id: string, cols: number, rows: number) =>
+      ipcRenderer.invoke('userTerminal:resize', id, cols, rows),
+    close: (id: string) => ipcRenderer.invoke('userTerminal:close', id),
+    onEvent: (callback: (event: import('../shared/userTerminals').UserTerminalEvent) => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        event: import('../shared/userTerminals').UserTerminalEvent
+      ): void => callback(event)
+      ipcRenderer.on('userTerminal:event', listener)
+      return () => ipcRenderer.removeListener('userTerminal:event', listener)
     }
   },
   conversationGoals: {
@@ -250,6 +328,20 @@ const api = {
       ): void => callback(change)
       ipcRenderer.on('schedules:changed', listener)
       return () => ipcRenderer.removeListener('schedules:changed', listener)
+    }
+  },
+  companion: {
+    status: () => ipcRenderer.invoke('companion:status'),
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke('companion:setEnabled', enabled),
+    newCode: () => ipcRenderer.invoke('companion:newCode'),
+    removeDevice: (deviceId: string) => ipcRenderer.invoke('companion:removeDevice', deviceId),
+    onChanged: (callback: (status: import('../shared/companion').CompanionStatus) => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        status: import('../shared/companion').CompanionStatus
+      ): void => callback(status)
+      ipcRenderer.on('companion:changed', listener)
+      return () => ipcRenderer.removeListener('companion:changed', listener)
     }
   },
   sessions: {
@@ -298,12 +390,27 @@ const api = {
   },
   permissions: {
     authorize: (operation: import('../shared/permissions').PermissionOperation) =>
-      ipcRenderer.invoke('permissions:authorize', operation),
-    listAudit: () => ipcRenderer.invoke('permissions:listAudit')
+      ipcRenderer.invoke('permissions:authorize', operation)
   },
   browserNetwork: {
     list: () => ipcRenderer.invoke('browserNetwork:list'),
-    revoke: (origin: string) => ipcRenderer.invoke('browserNetwork:revoke', origin)
+    revoke: (origin: string) => ipcRenderer.invoke('browserNetwork:revoke', origin),
+    certificates: () => ipcRenderer.invoke('browserNetwork:certificates'),
+    revokeCertificate: (origin: string) =>
+      ipcRenderer.invoke('browserNetwork:revokeCertificate', origin)
+  },
+  // Names a browser and a profile it was shown; never a path, and nothing secret comes back.
+  browserLibrary: {
+    importSources: () => ipcRenderer.invoke('browserLibrary:importSources'),
+    browserIcon: (browser: string) => ipcRenderer.invoke('browserLibrary:browserIcon', browser),
+    previewImport: (browser: string, profileId: string) =>
+      ipcRenderer.invoke('browserLibrary:previewImport', browser, profileId),
+    runImport: (request: import('../shared/browserLibrary').BrowserImportRequest) =>
+      ipcRenderer.invoke('browserLibrary:runImport', request),
+    importBookmarksFile: () => ipcRenderer.invoke('browserLibrary:importBookmarksFile'),
+    sources: () => ipcRenderer.invoke('browserLibrary:sources'),
+    suggest: (query: string) => ipcRenderer.invoke('browserLibrary:suggest', query),
+    remove: (sourceId?: string) => ipcRenderer.invoke('browserLibrary:remove', sourceId)
   },
   // Set and replace only: no call returns a stored value.
   credentials: {
@@ -344,6 +451,27 @@ const api = {
       return () => ipcRenderer.removeListener('window:fullscreen-changed', listener)
     }
   },
+  panelWindows: {
+    open: (entry) => ipcRenderer.invoke('panelWindows:open', entry),
+    list: () => ipcRenderer.invoke('panelWindows:list'),
+    focus: (entry) => ipcRenderer.invoke('panelWindows:focus', entry),
+    dock: () => ipcRenderer.send('panelWindows:dock'),
+    onChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, entries: unknown): void => {
+        if (Array.isArray(entries)) callback(entries)
+      }
+      ipcRenderer.on('panelWindows:changed', listener)
+      return () => ipcRenderer.removeListener('panelWindows:changed', listener)
+    },
+    onDocked: (callback) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        entry: import('../shared/panelWindows').PanelWindowEntry
+      ): void => callback(entry)
+      ipcRenderer.on('panelWindows:docked', listener)
+      return () => ipcRenderer.removeListener('panelWindows:docked', listener)
+    }
+  } satisfies import('../shared/panelWindows').PanelWindowsAPI,
   notification: {
     show: (request: import('../shared/desktopNotifications').DesktopNotificationRequest) =>
       ipcRenderer.invoke('notification:show', request)
@@ -416,6 +544,11 @@ const api = {
     selectFolder: () => ipcRenderer.invoke('workspace:selectFolder'),
     selectContextAttachments: (workspaceRoot: string) =>
       ipcRenderer.invoke('workspace:selectContextAttachments', workspaceRoot),
+    attachFiles: (
+      workspaceRoot: string,
+      files: Array<{ name: string; path?: string; bytes?: Uint8Array }>
+    ) => ipcRenderer.invoke('workspace:attachFiles', workspaceRoot, files),
+    pathForFile: (file: File) => webUtils.getPathForFile(file),
     getPath: () => ipcRenderer.invoke('workspace:getPath'),
     getRules: (workspaceRoot?: string, scopeId?: string) =>
       ipcRenderer.invoke('workspace:getRules', workspaceRoot, scopeId),
@@ -439,6 +572,8 @@ const api = {
     setPath: (folderPath: string | null) => ipcRenderer.invoke('workspace:setPath', folderPath),
     listFiles: (workspaceRoot: string, subPath?: string, glob?: string) =>
       ipcRenderer.invoke('workspace:listFiles', workspaceRoot, subPath, glob),
+    listProjectFiles: (workspaceRoot: string) =>
+      ipcRenderer.invoke('workspace:listProjectFiles', workspaceRoot),
     listPrompts: (workspaceRoot: string | null) =>
       ipcRenderer.invoke('workspace:listPrompts', workspaceRoot),
     readFile: (workspaceRoot: string, filePath: string, startLine?: number, endLine?: number) =>
@@ -479,43 +614,10 @@ const api = {
       ipcRenderer.invoke('workspace:discardHistoryCapture', captureId),
     createCheckpoint: (workspaceRoot: string, message: string, captureId?: string) =>
       ipcRenderer.invoke('workspace:createCheckpoint', workspaceRoot, message, captureId),
-    restoreCheckpoint: (
-      workspaceRoot: string,
-      hash: string,
+    restoreHistory: (
+      targets: import('../shared/workspaceHistory').HistoryRestoreTarget[],
       authorization: import('../shared/types').CheckpointMutationAuthorization
-    ) => ipcRenderer.invoke('workspace:restoreCheckpoint', workspaceRoot, hash, authorization),
-    hardResetCheckpoint: (
-      workspaceRoot: string,
-      hash: string,
-      authorization: import('../shared/types').CheckpointMutationAuthorization
-    ) => ipcRenderer.invoke('workspace:hardResetCheckpoint', workspaceRoot, hash, authorization),
-    rewindToBeforeCheckpoint: (
-      workspaceRoot: string,
-      hash: string,
-      authorization: import('../shared/types').CheckpointMutationAuthorization
-    ) =>
-      ipcRenderer.invoke('workspace:rewindToBeforeCheckpoint', workspaceRoot, hash, authorization),
-    listCheckpoints: (workspaceRoot: string) =>
-      ipcRenderer.invoke('workspace:listCheckpoints', workspaceRoot),
-    getCheckpointDiff: (workspaceRoot: string, hash: string) =>
-      ipcRenderer.invoke('workspace:getCheckpointDiff', workspaceRoot, hash),
-    renameCheckpoint: (
-      workspaceRoot: string,
-      hash: string,
-      newMessage: string,
-      source?: import('../shared/checkpointTitles').CheckpointTitleSource
-    ) => ipcRenderer.invoke('workspace:renameCheckpoint', workspaceRoot, hash, newMessage, source),
-    claimCheckpointTitleBackfill: (
-      input: import('../shared/checkpointTitles').CheckpointTitleIdentity
-    ) => ipcRenderer.invoke('workspace:claimCheckpointTitleBackfill', input),
-    completeCheckpointTitleBackfill: (
-      input: import('../shared/checkpointTitles').CompleteCheckpointTitleBackfillInput
-    ) => ipcRenderer.invoke('workspace:completeCheckpointTitleBackfill', input),
-    failCheckpointTitleBackfill: (
-      input: import('../shared/checkpointTitles').FailCheckpointTitleBackfillInput
-    ) => ipcRenderer.invoke('workspace:failCheckpointTitleBackfill', input),
-    getCheckpointTitleContext: (workspaceRoot: string, hash: string, timestamp: number) =>
-      ipcRenderer.invoke('workspace:getCheckpointTitleContext', workspaceRoot, hash, timestamp),
+    ) => ipcRenderer.invoke('workspace:restoreHistory', targets, authorization),
     openFolder: (folderPath: string, workspaceRoot?: string) =>
       ipcRenderer.invoke('workspace:openFolder', folderPath, workspaceRoot),
     openFile: (filePath: string, workspaceRoot?: string) =>
@@ -524,8 +626,21 @@ const api = {
       ipcRenderer.invoke('workspace:openFileReference', fileReference, workspaceRoot),
     revealFile: (filePath: string, workspaceRoot?: string) =>
       ipcRenderer.invoke('workspace:revealFile', filePath, workspaceRoot),
-    showPathMenu: (filePath: string, workspaceRoot?: string, isDirectory?: boolean) =>
-      ipcRenderer.invoke('workspace:showPathMenu', filePath, workspaceRoot, isDirectory),
+    showPathMenu: (
+      filePath: string,
+      workspaceRoot?: string,
+      isDirectory?: boolean,
+      offerTrash?: boolean
+    ) =>
+      ipcRenderer.invoke(
+        'workspace:showPathMenu',
+        filePath,
+        workspaceRoot,
+        isDirectory,
+        offerTrash
+      ),
+    countPathItems: (workspaceRoot: string, folderPath: string) =>
+      ipcRenderer.invoke('workspace:countPathItems', workspaceRoot, folderPath),
     watchFiles: (workspaceRoot: string, callback: () => void) => {
       let subscriptionId: string | null = null
       let stopped = false

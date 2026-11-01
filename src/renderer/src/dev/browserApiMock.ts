@@ -1,13 +1,15 @@
-import { previewTerminalApi } from './terminalPreview'
+import { previewTerminalApi, previewUserTerminalApi } from './terminalPreview'
 import { previewPullRequestsApi } from './pullRequestPreview'
 import { previewCredentialsApi } from './credentialsPreview'
+import { previewBrowserLibraryApi } from './browserLibraryPreview'
+import { previewCompanionApi } from './companionPreview'
 import {
   previewSessionConversations,
   previewSessionsApi,
   previewSessionTranscripts,
   previewSessionWorktrees
 } from './sessionsPreview'
-import type { ProjectConversation } from '../../../shared/projects'
+import type { Project, ProjectConversation, WorkspaceFolder } from '../../../shared/projects'
 import type { ProviderInstance, ProviderInstanceModel } from '../../../shared/settings'
 import type { CommandLineToolStatus } from '../../../shared/commandLineTool'
 import type { ManagedWorktreeSummary, WorktreesAPI } from '../../../shared/worktrees'
@@ -21,6 +23,10 @@ import {
   type ScheduleRun,
   type SchedulesChangedEvent
 } from '../../../shared/schedules'
+
+/** The capture script's own state for the dictation model mid-download. */
+const previewDictationDownloading =
+  new URLSearchParams(window.location.search).get('dictation') === 'downloading'
 
 const previewCommandLineStatus: CommandLineToolStatus = {
   mode: 'shell-script',
@@ -65,32 +71,11 @@ let previewBrowserNetwork = [
   { origin: 'http://rno-l-024:8080', approvedAt: Date.now() - 3_600_000 }
 ]
 
-const previewPermissionAudit = [
+let previewBrowserCertificates = [
   {
-    id: 'preview-audit-1',
-    timestamp: Date.now() - 120_000,
-    event: 'authorization' as const,
-    operationKind: 'workspace' as const,
-    title: 'Edit renderer settings layout and responsive styles',
-    requestedAccess: 'auto' as const,
-    effectiveAccess: 'auto' as const,
-    mode: 'sensitive-only' as const,
-    fingerprint: 'a16e436d5507c0209be6',
-    outcome: 'auto-approved' as const,
-    reason: 'The requested edit stays inside the active project workspace.'
-  },
-  {
-    id: 'preview-audit-2',
-    timestamp: Date.now() - 3_600_000,
-    event: 'authorization' as const,
-    operationKind: 'command' as const,
-    title: 'Install a system-level package with a deliberately long descriptive title',
-    requestedAccess: 'confirm' as const,
-    effectiveAccess: 'confirm' as const,
-    mode: 'always-ask' as const,
-    fingerprint: 'c7ff19767ad9bec4f14c',
-    outcome: 'denied' as const,
-    reason: 'The user declined this operation.'
+    origin: 'https://10.50.161.1:3001',
+    fingerprint: 'sha256/q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQq83vEjRWeJA=',
+    approvedAt: Date.now() - 7_200_000
   }
 ]
 
@@ -233,7 +218,8 @@ const previewConversations: ProjectConversation[] = [
     sidebar_order: 0,
     project_context_version: 0,
     home_workspace_root: 'C:\\Projects\\sidekick-demo',
-    home_project_name: 'sidekick-demo'
+    home_project_name: 'sidekick-demo',
+    model_id: 'openrouter:openrouter/anthropic/claude-sonnet-4'
   },
   {
     id: 'preview-2',
@@ -244,7 +230,8 @@ const previewConversations: ProjectConversation[] = [
     sidebar_order: 0,
     project_context_version: 0,
     home_workspace_root: null,
-    home_project_name: null
+    home_project_name: null,
+    model_id: 'ollama:ollama-local/qwen3:8b'
   },
   {
     id: 'preview-3',
@@ -255,7 +242,9 @@ const previewConversations: ProjectConversation[] = [
     sidebar_order: 1,
     project_context_version: 0,
     home_workspace_root: 'C:\\Projects\\sidekick-demo',
-    home_project_name: 'sidekick-demo'
+    home_project_name: 'sidekick-demo',
+    // Its provider was removed since, so the chat asks for another model.
+    model_id: 'lmstudio:lm-studio/qwen2.5-coder-14b'
   },
   ...[2, 1].map(
     (run): ProjectConversation => ({
@@ -298,6 +287,34 @@ const previewSchedules: Schedule[] = [
     runCount: 2,
     createdAt: Date.now() - 3 * 86_400_000,
     updatedAt: Date.now() - 86_400_000
+  },
+  {
+    id: 'preview-schedule-2',
+    name: 'Weekly dependency check',
+    prompt:
+      'Check this repository for outdated or vulnerable npm dependencies and list what to update. Do not change any files.',
+    projectId: 'preview-project-1',
+    modelId: 'ollama:ollama-local/qwen3:8b',
+    cadence: 'weekly',
+    hour: 10,
+    minute: 30,
+    weekday: 1,
+    catchUp: true,
+    chatMode: 'new',
+    permissionCeiling: 'always-ask',
+    enabled: true,
+    nextRunAt: nextScheduleOccurrence(
+      { cadence: 'weekly', hour: 10, minute: 30, weekday: 1 },
+      Date.now()
+    ),
+    runCount: 0,
+    createdBy: {
+      kind: 'agent',
+      conversationId: 'preview-3',
+      conversationTitle: 'Build release checklist'
+    },
+    createdAt: Date.now() - 3_600_000,
+    updatedAt: Date.now() - 3_600_000
   }
 ]
 
@@ -358,12 +375,14 @@ function changePreviewSchedule(id: string, change: Partial<Schedule>): Schedule 
 }
 
 const previewCreatedConversations: ProjectConversation[] = []
+let previewFolderPicks = 0
 
-const previewProjects = [
+const previewProjects: Project[] = [
   {
     id: 'preview-project-1',
     name: 'sidekick-demo',
     folder_path: 'C:\\Projects\\sidekick-demo',
+    folders: [{ name: 'design-system', path: 'C:\\Projects\\design-system' }],
     is_pinned: 0,
     created_at: Date.now() - 172_800_000,
     updated_at: Date.now() - 120_000,
@@ -374,6 +393,7 @@ const previewProjects = [
     id: 'preview-project-2',
     name: 'sidekick-api',
     folder_path: 'C:\\Projects\\sidekick-api',
+    folders: [],
     is_pinned: 0,
     created_at: Date.now() - 120_000_000,
     updated_at: Date.now() - 90_000,
@@ -466,13 +486,13 @@ const previewWorktreesApi: WorktreesAPI = {
       worktreeRoot: folder,
       sourceProjectId: 'preview-project-1',
       sourceProjectName: 'sidekick-demo',
-      branch: null,
+      branch: 'sidekick/new-chat-5e1d0a',
       baseRef: base,
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
       owners: [{ kind: 'chat', id: conversation.id, title: conversation.title, running: false }],
       setAsideAt: null,
-      status: { currentBranch: null, ahead: 0, changedFiles: 0 }
+      status: { currentBranch: 'sidekick/new-chat-5e1d0a', ahead: 0, changedFiles: 0 }
     }
     previewWorktrees.unshift(worktree)
     return { conversation, worktree }
@@ -854,6 +874,10 @@ export function installBrowserApiMock(): void {
       getGenerationStats: async () => ({ ok: false, error: 'UI preview' }),
       onHealthChanged: () => () => undefined
     },
+    computerUse: {
+      rememberedApps: async () => [],
+      forgetApp: async () => undefined
+    },
     settings: {
       selectOfficeInterpreter: async () => ({ canceled: true }),
       save: async () => ({ success: true }),
@@ -874,11 +898,14 @@ export function installBrowserApiMock(): void {
     },
     conversations: {
       list: async () => [...previewCreatedConversations, ...previewConversations],
+      // No phone adds messages in the preview.
+      onMessagesChanged: () => () => undefined,
+      onListChanged: () => () => undefined,
       search: async (query) =>
         [...previewCreatedConversations, ...previewConversations].filter((item) =>
           item.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())
         ),
-      create: async (title, projectId, titleSource = 'placeholder') => {
+      create: async (title, projectId, titleSource = 'placeholder', modelId) => {
         const project = previewProjects.find(({ id }) => id === projectId)
         const created = {
           id: `preview-${Date.now()}`,
@@ -892,7 +919,8 @@ export function installBrowserApiMock(): void {
           sidebar_order: -1,
           project_context_version: 0,
           home_workspace_root: project?.folder_path ?? null,
-          home_project_name: project?.name ?? null
+          home_project_name: project?.name ?? null,
+          model_id: modelId ?? null
         }
         previewCreatedConversations.unshift(created)
         return created
@@ -915,6 +943,13 @@ export function installBrowserApiMock(): void {
           (candidate) => candidate.id === id
         )
         if (conversation) conversation.is_pinned = pinned ? 1 : 0
+        return { success: Boolean(conversation) }
+      },
+      setModel: async (id, modelId) => {
+        const conversation = [...previewCreatedConversations, ...previewConversations].find(
+          (candidate) => candidate.id === id
+        )
+        if (conversation) conversation.model_id = modelId
         return { success: Boolean(conversation) }
       },
       listTitleBackfillCandidates: async () => [],
@@ -982,17 +1017,47 @@ export function installBrowserApiMock(): void {
         is_pinned: input.isPinned ? 1 : 0,
         updated_at: Date.now()
       }),
+      updateFolders: async (input) => {
+        const project = previewProjects.find(({ id }) => id === input.projectId)
+        if (!project) throw new Error('Project not found')
+        const folders: WorkspaceFolder[] = (project.folders ?? []).filter(
+          ({ name }) => !input.remove?.includes(name)
+        )
+        for (const path of input.add ?? []) {
+          if (path === project.folder_path || folders.some((folder) => folder.path === path))
+            continue
+          const base = path.split(/[\\/]/).filter(Boolean).at(-1) || 'folder'
+          let name = base
+          for (let n = 2; folders.some((folder) => folder.name === name); n++) name = `${base}-${n}`
+          folders.push({ name, path })
+        }
+        const chosen = folders.find(({ name }) => name === input.makePrimary)
+        if (chosen) {
+          const former = project.folder_path.split(/[\\/]/).filter(Boolean).at(-1) || 'main'
+          folders.splice(folders.indexOf(chosen), 1, { name: former, path: project.folder_path })
+          project.folder_path = chosen.path
+        }
+        project.folders = folders
+        project.updated_at = Date.now()
+        return { ...project }
+      },
       remove: async () => ({ success: true }),
       getConversationContext: async (conversationId) => {
         const conversation = [...previewCreatedConversations, ...previewConversations].find(
           ({ id }) => id === conversationId
         )
         const project = previewProjects.find(({ id }) => id === conversation?.project_id)
+        const projectRoot = conversation?.worktree_folder ?? project?.folder_path ?? null
+        const chatFolder = !projectRoot
         return {
           conversationId,
           projectId: conversation?.project_id ?? null,
           projectName: project?.name ?? null,
-          workspaceRoot: conversation?.worktree_folder ?? project?.folder_path ?? null,
+          workspaceRoot: chatFolder
+            ? `C:\\Users\\preview\\AppData\\Roaming\\SideKick\\chat-folders\\${conversationId}`
+            : projectRoot,
+          folders: chatFolder ? [] : (project?.folders ?? []),
+          ...(chatFolder ? { chatFolder: true } : {}),
           worktreeId: conversation?.worktree_id ?? null,
           homeWorkspaceRoot: conversation?.home_workspace_root ?? null,
           homeProjectName: conversation?.home_project_name ?? null,
@@ -1041,6 +1106,8 @@ export function installBrowserApiMock(): void {
           : []
       },
       browserWorkspace: async () => null,
+      browserAnnotations: async () => [],
+      onBrowserAnnotationsChanged: () => () => undefined,
       startConversation: async (input) => ({
         run: {
           id: input.id,
@@ -1147,29 +1214,16 @@ export function installBrowserApiMock(): void {
         }
       },
       latest: async () => ({ run: null, events: [], pendingInteractions: [] }),
-      beginBrowserHumanTakeover: async (conversationId) => ({
-        active: true,
-        conversationId,
-        sessionId: 'preview-browser-session',
-        pageTitle: 'Preview browser',
-        url: 'https://example.com/',
-        humanVerificationRequired: true
-      }),
-      completeBrowserHumanTakeover: async (conversationId) => ({
-        active: false,
-        conversationId,
-        sessionId: 'preview-browser-session',
-        pageTitle: 'Preview browser',
-        url: 'https://example.com/',
-        humanVerificationRequired: false
-      }),
       resolveInteraction: async () => ({ success: true }),
       admissionsList: async () => ({ queued: [], pivot: null }),
       admissionsReplace: async () => ({ queued: [], pivot: null }),
       admissionsTakeNext: async () => null,
-      onEvent: () => () => undefined
+      onAdmissionsChanged: () => () => undefined,
+      onEvent: () => () => undefined,
+      onArtifactDraft: () => () => undefined
     },
     terminal: previewTerminalApi(),
+    userTerminal: previewUserTerminalApi(),
     sessions: previewSessionsApi(),
     schedules: {
       list: async () => [...previewSchedules],
@@ -1277,17 +1331,25 @@ export function installBrowserApiMock(): void {
         approved: true,
         token: 'ui-preview',
         effectiveAccess: operation.requestedAccess
-      }),
-      listAudit: async () => previewPermissionAudit
+      })
     },
     browserNetwork: {
       list: async () => [...previewBrowserNetwork],
       revoke: async (origin) => {
         previewBrowserNetwork = previewBrowserNetwork.filter((entry) => entry.origin !== origin)
         return [...previewBrowserNetwork]
+      },
+      certificates: async () => [...previewBrowserCertificates],
+      revokeCertificate: async (origin) => {
+        previewBrowserCertificates = previewBrowserCertificates.filter(
+          (entry) => entry.origin !== origin
+        )
+        return [...previewBrowserCertificates]
       }
     },
     credentials: previewCredentialsApi(),
+    browserLibrary: previewBrowserLibraryApi(),
+    companion: previewCompanionApi(),
     pullRequests: previewPullRequestsApi(),
     window: {
       minimize: () => {},
@@ -1297,6 +1359,14 @@ export function installBrowserApiMock(): void {
       isFullScreen: async () => false,
       onMaximizedChange: () => () => undefined,
       onFullScreenChange: () => () => undefined
+    },
+    panelWindows: {
+      open: async () => false,
+      list: async () => [],
+      focus: async () => false,
+      dock: () => {},
+      onChanged: () => () => undefined,
+      onDocked: () => () => undefined
     },
     notification: { show: async () => ({ ok: true }) },
     siteIcons: { get: async () => ({ dataUrl: null }) },
@@ -1327,20 +1397,30 @@ export function installBrowserApiMock(): void {
       onState: () => () => undefined
     },
     voice: {
+      // Dictation is ready by default; `&dictation=downloading` previews the model mid-download.
       getState: async () => ({
         enabled: true,
         models: {
-          dictation: { status: 'downloading' as const, receivedBytes: 280e6, totalBytes: 671e6 },
+          dictation: previewDictationDownloading
+            ? { status: 'downloading' as const, receivedBytes: 280e6, totalBytes: 671e6 }
+            : { status: 'ready' as const, receivedBytes: 671e6, totalBytes: 671e6 },
           speech: { status: 'ready' as const, receivedBytes: 361e6, totalBytes: 361e6 }
         }
       }),
       onState: () => () => undefined,
       prioritize: async () => undefined,
-      startDictation: async () => ({
-        ok: false as const,
-        reason: 'downloading' as const,
-        message: 'Dictation is still being set up (41%).'
-      }),
+      startDictation: async () =>
+        previewDictationDownloading
+          ? {
+              ok: false as const,
+              reason: 'downloading' as const,
+              message: 'Dictation is still being set up (41%).'
+            }
+          : {
+              ok: false as const,
+              reason: 'unavailable' as const,
+              message: 'Dictation needs the desktop app.'
+            },
       pushDictationAudio: () => undefined,
       stopDictation: async () => undefined,
       cancelDictation: async () => undefined,
@@ -1357,8 +1437,24 @@ export function installBrowserApiMock(): void {
     support: { export: async () => ({ success: true }) },
     clipboard: { writeText: async () => ({ success: true }) },
     workspace: {
-      selectFolder: async () => ({ canceled: false, path: 'C:\\Projects\\sidekick-demo' }),
+      // Each pick is another folder, so a preview can add folders to a project.
+      selectFolder: async () => {
+        const picks = ['C:\\Projects\\shared-ui', 'C:\\Projects\\docs-site', 'C:\\Projects\\infra']
+        previewFolderPicks += 1
+        return { canceled: false, path: picks[(previewFolderPicks - 1) % picks.length] }
+      },
       selectContextAttachments: async () => ({ ok: true, canceled: true, attachments: [] }),
+      attachFiles: async (_root: string, files: Array<{ name: string; bytes?: Uint8Array }>) => ({
+        ok: true,
+        attachments: files.map((file) => ({
+          id: crypto.randomUUID(),
+          kind: 'file' as const,
+          name: file.name,
+          relativePath: `.sidekick/uploads/${file.name}`,
+          size: file.bytes?.byteLength
+        }))
+      }),
+      pathForFile: () => '',
       getPath: async () => 'C:\\Projects\\sidekick-demo',
       getRules: async () => ({
         ok: true,
@@ -1382,6 +1478,29 @@ export function installBrowserApiMock(): void {
         ok: true,
         files: ['README.md', 'package.json', 'src/', 'src/main/', 'src/renderer/']
       }),
+      listProjectFiles: async (workspaceRoot) => {
+        const folders =
+          previewProjects.find(({ folder_path }) => folder_path === workspaceRoot)?.folders ?? []
+        return {
+          ok: true,
+          folders,
+          files: [
+            'README.md',
+            'package.json',
+            'src/',
+            'src/main/',
+            'src/main/index.ts',
+            'src/renderer/',
+            'src/renderer/App.tsx',
+            ...folders.flatMap(({ name }) => [
+              `${name}/README.md`,
+              `${name}/tokens.css`,
+              `${name}/src/`,
+              `${name}/src/Button.tsx`
+            ])
+          ]
+        }
+      },
       listPrompts: async () => ({
         ok: true,
         prompts: [
@@ -1467,20 +1586,7 @@ export function installBrowserApiMock(): void {
       beginHistoryCapture: async () => ({ ok: true, captureId: crypto.randomUUID() }),
       discardHistoryCapture: async () => ({ ok: true }),
       createCheckpoint: async () => ({ ok: true, hash: 'abcdef123456' }),
-      restoreCheckpoint: async () => ({ ok: true }),
-      hardResetCheckpoint: async () => ({ ok: true }),
-      rewindToBeforeCheckpoint: async () => ({ ok: true, parentHash: null }),
-      listCheckpoints: async () => ({
-        ok: true,
-        checkpoints: [],
-        status: { storage: 'private-app-data', realRepository: false, appliedHash: null }
-      }),
-      getCheckpointDiff: async () => ({ ok: true, diff: '' }),
-      renameCheckpoint: async () => ({ ok: true }),
-      claimCheckpointTitleBackfill: async () => ({ claimed: false }),
-      completeCheckpointTitleBackfill: async () => ({ applied: false }),
-      failCheckpointTitleBackfill: async () => ({ recorded: false }),
-      getCheckpointTitleContext: async () => null,
+      restoreHistory: async () => ({ ok: true }),
       openFolder: async () => {},
       openFile: async () => {},
       openFileReference: async (fileReference) => ({
@@ -1489,7 +1595,8 @@ export function installBrowserApiMock(): void {
         path: fileReference
       }),
       revealFile: async () => {},
-      showPathMenu: async () => {},
+      showPathMenu: async () => undefined,
+      countPathItems: async () => ({ count: 12, more: false }),
       watchFiles: () => () => {}
     }
   }

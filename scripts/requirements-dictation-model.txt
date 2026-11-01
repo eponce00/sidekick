@@ -6,5 +6,5 @@ onnxruntime==1.30.0
 onnxscript==0.7.2
 safetensors==0.8.0
 tokenizers==0.23.3
-torch==2.8.0
+torch==2.13.0
 transformers==5.19.0
