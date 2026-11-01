@@ -72,8 +72,9 @@ show in what the agent sees.
 
 Some apps ignore background input for some steps. WhatsApp scrolls in the background, for example,
 but needs a real click to type. Some web-based apps, such as Docker Desktop, ignore background clicks:
-the agent can still press a named control, which brings the app forward for a moment before what you
-had in front goes back, but anything else takes real input. The agent then chooses: it can tell you what it needs, or wait until
+the agent can still press a named control, which brings the app forward for about half a second so it
+can draw before what you had in front goes back, but anything else takes real input. A covered web-based
+app can stop drawing, so the picture in the chat may lag behind until it is uncovered. The agent then chooses: it can tell you what it needs, or wait until
 you have stepped away for 10 seconds, bring the app to the front, and use your real mouse and keyboard.
 SideKick's pointer stays the one to watch. Your real one goes to the spot only for as long as a step
 needs it and then goes back where you left it, and if you touch the mouse or keyboard the agent waits again.

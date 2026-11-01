@@ -738,6 +738,50 @@ describe('what the agent may reach', () => {
     expect(call.mock.calls.filter(([tool]) => tool === 'press_key')).toHaveLength(2)
   })
 
+  it('counts changed controls as a change when a covered app does not redraw', async () => {
+    const { service, call } = harness([app('notes')])
+    let rows = '- [0] Button "One"'
+    call.mockImplementation(async () => ({
+      isError: false,
+      images: [{ mimeType: 'image/png', data: 'c2FtZQ==' }],
+      structured: undefined as unknown,
+      text: `window_id=77 pid=10 snapshot_id=s1\n${rows}`
+    }))
+    await service.requestApp('chat', 'notes', signal)
+    await service.look('chat', 'notes', true, signal)
+    rows = '- [0] Button "Two"'
+    const seen = await service.look('chat', 'notes', true, signal)
+    expect(seen.changed).toBe(true)
+    expect(seen.text).toContain('behind the controls')
+    expect((await service.look('chat', 'notes', true, signal)).changed).toBe(false)
+  })
+
+  it('waits for an app too busy to answer, and says the step may still land', async () => {
+    const { service, call } = harness([app('notes')])
+    const answer = call.getMockImplementation()!
+    let busyLooks = 1
+    call.mockImplementation(async (tool, args) => {
+      if (tool !== 'get_window_state' || busyLooks-- <= 0) return answer(tool, args)
+      return {
+        isError: false,
+        images: [] as Array<{ mimeType: string; data: string }>,
+        structured: { truncated: true } as unknown,
+        text: 'window_id=77 pid=10 elements=0 snapshot_id=s1'
+      }
+    })
+    await service.requestApp('chat', 'notes', signal)
+    const seen = await service.lookAfterAction('chat', 'notes', signal)
+    expect(seen.text).toContain('Button "OK"')
+    expect(seen.note).toBe('')
+    busyLooks = Number.POSITIVE_INFINITY
+    vi.spyOn(Date, 'now')
+      .mockReturnValueOnce(0)
+      .mockReturnValue(10 ** 12)
+    const late = await service.lookAfterAction('chat', 'notes', signal)
+    vi.restoreAllMocks()
+    expect(late.note).toContain('may still land')
+  })
+
   it('keeps the numbers of rows a long list leaves out, and can read them back', async () => {
     const { service, call } = harness([app('notes')])
     const rows = Array.from({ length: 150 }, (_, row) => `    - [${row}] Button "B${row}"`)
