@@ -484,6 +484,14 @@
   object-fit: contain;
 }
 
+/* The switch alone doesn't make it work, so this can't read like one more quiet row. */
+.settings-row.settings-chrome-needed {
+  padding: var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  border-radius: 10px;
+  background: var(--accent-subtle);
+}
+
 .settings-chrome-status {
   display: inline-flex;
   flex-wrap: wrap;
@@ -499,7 +507,7 @@
   place-items: center;
   border-radius: 50%;
   background: var(--accent);
-  color: var(--text-on-accent, #ffffff);
+  color: var(--on-accent);
   font-size: 9px;
   font-weight: 600;
   object-fit: cover;

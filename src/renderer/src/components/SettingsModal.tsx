@@ -335,7 +335,9 @@ function SettingsModal({
                 checked={settings.chromeUseEnabled ?? false}
                 onChange={(chromeUseEnabled) => setSettings({ ...settings, chromeUseEnabled })}
               />
-              {settings.chromeUseEnabled && <ChromeUseSetup />}
+              {settings.chromeUseEnabled && (
+                <ChromeUseSetup saved={initialSettings.chromeUseEnabled === true} />
+              )}
             </SettingsSection>
           )}
           <SettingsSection
