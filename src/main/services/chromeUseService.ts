@@ -55,7 +55,15 @@ interface PageRead {
     onScreen: boolean
   }>
   total: number
+  /** How many controls matched a search; all of them without one. */
+  matching: number
   text: string
+  textFrom: number
+  textTotal: number
+  excerpts: Array<{ at: number; text: string }>
+  matches: number
+  images: Array<{ description: string; url: string; onScreen: boolean }>
+  imagesTotal: number
   scrolled: number
   pageHeight: number
   viewHeight: number
@@ -305,11 +313,22 @@ export class ChromeUseService {
     return tab
   }
 
-  async read(id: string, signal: AbortSignal, wanted?: number): Promise<string> {
+  async read(
+    id: string,
+    signal: AbortSignal,
+    wanted?: number,
+    options: { find?: string; textFrom?: number } = {}
+  ): Promise<string> {
     const tab = await this.tab(id, signal, wanted)
     const page = await this.deps.bridge.send<PageRead | null>(
       'read',
-      { tabId: tab.id, maxElements: MAX_ROWS, maxText: MAX_PAGE_TEXT },
+      {
+        tabId: tab.id,
+        maxElements: MAX_ROWS,
+        maxText: MAX_PAGE_TEXT,
+        find: options.find,
+        textFrom: options.textFrom
+      },
       signal
     )
     if (!page) throw new ComputerUseRefusal('That page could not be read. Try again shortly.', true)
@@ -324,16 +343,41 @@ export class ChromeUseService {
       if (!row.onScreen) parts.push('off screen')
       return parts.filter(Boolean).join(' ')
     })
+    const images = page.images.map(
+      (image) =>
+        `- ${image.description || '(no description)'}: ${image.url}${image.onScreen ? '' : ' (off screen)'}`
+    )
+    const shownText = page.text.length
+      ? `Text, characters ${page.textFrom} to ${page.textFrom + page.text.length} of ${page.textTotal}${
+          page.textFrom + page.text.length < page.textTotal
+            ? '. Read with text_from for more, or with find to search it'
+            : ''
+        }:`
+      : `No text there: this page has ${page.textTotal} characters.`
     return [
       UNTRUSTED,
       `Tab ${tab.id}: ${page.title} (${page.url})`,
       `Scrolled to ${page.scrolled} of ${page.pageHeight}, showing ${page.viewHeight} at a time.`,
-      page.total > page.rows.length
-        ? `Controls, the first ${page.rows.length} of ${page.total}:`
-        : 'Controls:',
+      options.find
+        ? `Controls matching "${options.find}", ${page.rows.length} of ${page.matching}:`
+        : page.total > page.rows.length
+          ? `Controls, ${page.rows.length} of ${page.total}, what is on screen first. Read with find to search the rest:`
+          : 'Controls:',
       ...rows,
-      'Text:',
-      page.text
+      ...(page.imagesTotal
+        ? [
+            page.imagesTotal > images.length
+              ? `Images, ${images.length} of ${page.imagesTotal}:`
+              : 'Images:',
+            ...images
+          ]
+        : []),
+      ...(options.find
+        ? [
+            `Text matching "${options.find}", ${page.excerpts.length} of ${page.matches} places:`,
+            ...page.excerpts.map((excerpt) => `- at ${excerpt.at}: ${excerpt.text}`)
+          ]
+        : [shownText, page.text])
     ].join('\n')
   }
 
