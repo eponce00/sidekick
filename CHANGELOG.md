@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.26.0 — 2026-11-01
+
+- Let the agent operate other apps on Windows. Turn it on in **Settings › Computer use**, which is off
+  by default, and approve each app when it asks. It reads an app's controls and a picture of its window,
+  and works in the background where the app allows it, without moving your mouse or taking focus. Where
+  an app needs real input, it waits until you have stepped away. A soft glow marks the app, and Esc
+  stops it from anywhere. Password managers, Windows security prompts and SideKick itself are never
+  available, and a control named something like Send, Delete or Pay is refused unless you asked for it.
+- Let the agent work in your own Chrome, with your sign-ins. Turn it on in **Settings › Chrome**, also
+  off by default, and one yes sets it up. It has all the same browser tools as SideKick's own browser,
+  and works in a tab group of its own without taking you off your tab. Sites for email, money and
+  accounts ask first, it can't type passwords or card details, and web vaults of saved passwords are
+  refused.
+- Let the agent upload through Upload buttons and drop zones, in SideKick's browser and in Chrome, where
+  a button used to open a file picker it couldn't use. Fields in same-site frames now work too.
+- Let you drag, resize or close the picture of what the agent sees. It remembers where you left it.
+- Keep following a reply until you scroll away, and pick it up again when you come back. Following
+  used to stop for good after any reply longer than a screen.
+
 ## 0.25.5 — 2026-10-31
 
 - Open local-network devices that use their own HTTPS certificate, such as a TwinCAT HMI server at
