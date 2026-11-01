@@ -12,7 +12,6 @@ const REQUEST_TIMEOUT_MS = 10_000
 // WebView2 apps drawn through a composition host are the other way round: wheel, but no keys.
 const HELPER_SCRIPT = `
 $ErrorActionPreference = 'Stop'
-[Console]::InputEncoding = New-Object Text.UTF8Encoding $false
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase
 Add-Type -TypeDefinition @'
@@ -40,6 +39,8 @@ public static class SideKickWindows {
   [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint c);
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int c);
+  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int t, uint f);
   [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] static extern bool GetCursorPos(out Point p);
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int a, out int v, int n);
@@ -161,6 +162,29 @@ public static class SideKickWindows {
     }, IntPtr.Zero);
     return all.ToString();
   }
+  // A minimized app can't be read or clicked. This brings its largest window back behind everything
+  // else, without focus, so nothing changes for whoever is using the computer. 0 if it has none.
+  public static long RestoreBehind(uint pid) {
+    IntPtr found = IntPtr.Zero;
+    EnumWindows(delegate(IntPtr h, IntPtr l) {
+      uint owner;
+      GetWindowThreadProcessId(h, out owner);
+      if (owner == pid && found == IntPtr.Zero && IsWindowVisible(h) && IsIconic(h)) {
+        StringBuilder title = new StringBuilder(2);
+        GetWindowText(h, title, 2);
+        if (title.Length > 0) found = h;
+      }
+      return true;
+    }, IntPtr.Zero);
+    if (found == IntPtr.Zero) return 0;
+    IntPtr bottom = new IntPtr(1);
+    // No move, no resize, no activate.
+    SetWindowPos(found, bottom, 0, 0, 0, 0, 0x13);
+    ShowWindow(found, 4);
+    SetWindowPos(found, bottom, 0, 0, 0, 0, 0x13);
+    return found.ToInt64();
+  }
+  public static bool MinimizeAgain(long window) { return ShowWindow(new IntPtr(window), 7); }
   // The real pointer travels, so it never jumps and the app sees it arrive before anything is pressed.
   public static bool Glide(int x, int y) {
     Point from;
@@ -216,6 +240,8 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       'apps' { $answer = [SideKickWindows]::Apps() }
       'windows' { $answer = [SideKickWindows]::WindowsOf([uint32]$c.pid) }
       'glide' { $answer = [SideKickWindows]::Glide([int]$c.x, [int]$c.y) }
+      'restoreBehind' { $answer = [SideKickWindows]::RestoreBehind([uint32]$c.pid) }
+      'minimizeAgain' { $answer = [SideKickWindows]::MinimizeAgain([long]$c.window) }
       'start' {
         $info = New-Object System.Diagnostics.ProcessStartInfo ([string]$c.path)
         $info.UseShellExecute = $true
@@ -235,6 +261,12 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
   [Console]::Out.WriteLine($(if ($answer -is [bool]) { if ($answer) { 'yes' } else { 'no' } } else { [string]$answer }))
 }
 `
+
+// The script comes in as the first line of input: on the command line, Windows' limit of 32,767
+// characters stopped it starting at all. Setting the encoding later would drop what is already read.
+const HELPER_START =
+  '[Console]::InputEncoding = New-Object Text.UTF8Encoding $false;' +
+  '& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadLine()))))'
 
 const VIRTUAL_KEYS: Readonly<Record<string, number>> = {
   backspace: 0x08,
@@ -310,10 +342,11 @@ export class ComputerUseWindows {
         '-ExecutionPolicy',
         'Bypass',
         '-EncodedCommand',
-        Buffer.from(HELPER_SCRIPT, 'utf16le').toString('base64')
+        Buffer.from(HELPER_START, 'utf16le').toString('base64')
       ],
       { windowsHide: true, stdio: 'pipe' }
     )
+    child.stdin.write(`${Buffer.from(HELPER_SCRIPT, 'utf8').toString('base64')}\n`)
     createInterface({ input: child.stdout }).on('line', (line) => {
       this.waiting.shift()?.(line.trim())
     })
@@ -380,6 +413,15 @@ export class ComputerUseWindows {
 
   async windowsOf(pid: number): Promise<ComputerAppWindow[]> {
     return parseComputerWindows(await this.ask({ op: 'windows', pid }))
+  }
+
+  /** Brings an app's minimized window back behind everything else. Its id, or 0 if it has none. */
+  async restoreBehind(pid: number): Promise<number> {
+    return Number(await this.ask({ op: 'restoreBehind', pid })) || 0
+  }
+
+  minimizeAgain(window: number): Promise<boolean> {
+    return this.confirm({ op: 'minimizeAgain', window })
   }
 
   /** Moves the real pointer to a screen point. Only for real input, once the user has stepped away. */

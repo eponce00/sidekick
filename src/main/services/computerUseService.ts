@@ -55,6 +55,8 @@ export interface ComputerUseDependencies {
     | 'ignoresBackgroundDrags'
     | 'windowsOf'
     | 'glide'
+    | 'restoreBehind'
+    | 'minimizeAgain'
   >
   /** Starts an approved executable, with no arguments. */
   startApp: (path: string) => void
@@ -118,6 +120,8 @@ const POLL_MS = 500
 // is doing, so this waits until they have stepped away. It stops short of the tool's two minutes.
 const TAKEOVER_IDLE_SECONDS = 10
 const TAKEOVER_WAIT_MS = 75_000
+// A window just brought back from minimized takes a moment to be there.
+const RESTORE_SETTLE_MS = 400
 // Windows counts idle time in whole seconds, so input just after the agent's can't be told from it.
 const OWN_INPUT_SLACK_SECONDS = 2
 // Real input is queued: going back at once could send it to the window going back to the front.
@@ -272,6 +276,8 @@ export class ComputerUseService {
   /** What was in front before real input took it, to give back when the reply ends. */
   private handBack: { previous: number; app: number } | null = null
   private lastRealInput = 0
+  /** Minimized windows brought back for the agent, to minimize again when it is done. */
+  private readonly restored = new Set<number>()
 
   constructor(private readonly deps: ComputerUseDependencies) {}
 
@@ -435,10 +441,20 @@ export class ComputerUseService {
       throw new ComputerUseRefusal(`${app.name} is not approved. Use request_app first.`)
     }
     const driver = await this.driverFor_(chat)
-    const listed = await this.deps.appWindows.windowsOf(app.pid)
+    let listed = await this.deps.appWindows.windowsOf(app.pid)
+    if (listed.length === 0) {
+      const restored = await this.deps.appWindows.restoreBehind(app.pid)
+      if (restored) {
+        this.restored.add(restored)
+        await new Promise((resolve) => setTimeout(resolve, RESTORE_SETTLE_MS))
+        listed = await this.deps.appWindows.windowsOf(app.pid)
+      }
+    }
     const ids = listed.map((window) => window.id)
     if (ids.length === 0) {
-      throw new ComputerUseRefusal(`${app.name} has no window SideKick can reach right now.`, true)
+      throw new ComputerUseRefusal(
+        `${app.name} has no window open: it may be running in the system tray. Ask the user to open it.`
+      )
     }
     if (chosenWindow !== undefined && !ids.includes(chosenWindow)) {
       throw new ComputerUseRefusal(`${app.name} has no window ${chosenWindow}. Use look.`, true)
@@ -505,6 +521,17 @@ export class ComputerUseService {
     this.activeChat = null
     await this.closeDriver()
     await this.giveTheFrontBack()
+    await this.minimizeWhatWasMinimized()
+  }
+
+  /** Unless the user has since gone to it themselves. */
+  private async minimizeWhatWasMinimized(): Promise<void> {
+    const windows = [...this.restored]
+    this.restored.clear()
+    const front = await this.deps.appWindows.front().catch(() => 0)
+    for (const window of windows) {
+      if (window !== front) await this.deps.appWindows.minimizeAgain(window).catch(() => false)
+    }
   }
 
   /**

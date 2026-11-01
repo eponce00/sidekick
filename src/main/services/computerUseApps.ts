@@ -61,7 +61,10 @@ const BLOCKED: ReadonlyArray<readonly [string, readonly string[]]> = [
     'it is a Windows security prompt, which only you may answer',
     ['consent', 'credentialuibroker', 'lockapp', 'logonui']
   ],
-  ['the agent may not operate SideKick itself', ['sidekick', 'electron']],
+  [
+    'the agent may not operate SideKick itself',
+    ['sidekick', 'electron', 'cua-driver', 'cua-driver-uia']
+  ],
   [
     'it is part of Windows or a background host, not an app to operate',
     [

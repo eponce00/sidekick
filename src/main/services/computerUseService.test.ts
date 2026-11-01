@@ -64,7 +64,9 @@ function harness(apps: ComputerApp[], confirm = true) {
         { id: 77, title: 'Window', bounds: null }
       ]
     ),
-    glide: vi.fn(async (_point: { x: number; y: number }) => true)
+    glide: vi.fn(async (_point: { x: number; y: number }) => true),
+    restoreBehind: vi.fn(async (_pid: number) => 0),
+    minimizeAgain: vi.fn(async (_window: number) => true)
   }
   const hideActive = vi.fn()
   const moveCursor = vi.fn()
@@ -124,17 +126,23 @@ function needsForeground(call: ReturnType<typeof harness>['call'], tool: string)
 }
 
 describe('what the agent may reach', () => {
-  it.each(['KeePass', 'Bitwarden', 'consent', 'LogonUI', 'LockApp', 'SideKick', 'electron'])(
-    'never offers %s, however it is spelled',
-    async (name) => {
-      for (const spelled of [name, name.toUpperCase(), `${name}.exe`]) {
-        const { service, confirmApp } = harness([app(name)])
-        await expect(service.requestApp('chat', spelled, signal)).rejects.toThrow('cannot be used')
-        expect(confirmApp).not.toHaveBeenCalled()
-      }
-      expect(await harness([app(name)]).service.apps(signal)).not.toContain(name)
+  it.each([
+    'KeePass',
+    'Bitwarden',
+    'consent',
+    'LogonUI',
+    'LockApp',
+    'SideKick',
+    'electron',
+    'cua-driver'
+  ])('never offers %s, however it is spelled', async (name) => {
+    for (const spelled of [name, name.toUpperCase(), `${name}.exe`]) {
+      const { service, confirmApp } = harness([app(name)])
+      await expect(service.requestApp('chat', spelled, signal)).rejects.toThrow('cannot be used')
+      expect(confirmApp).not.toHaveBeenCalled()
     }
-  )
+    expect(await harness([app(name)]).service.apps(signal)).not.toContain(name)
+  })
 
   it('judges an app by its real path, not a friendly name', () => {
     expect(computerAppAccess('C:\\Windows\\System32\\consent.exe').kind).toBe('blocked')
@@ -388,6 +396,18 @@ describe('what the agent may reach', () => {
       expect.objectContaining({ modifiers: ['ctrl'], delivery_mode: 'foreground' }),
       signal
     )
+  })
+
+  it('works in a minimized app, and leaves it minimized as it found it', async () => {
+    const { service, appWindows } = harness([app('notes')])
+    await service.requestApp('chat', 'notes', signal)
+    appWindows.windowsOf.mockResolvedValueOnce([])
+    appWindows.restoreBehind.mockResolvedValueOnce(77)
+    await service.look('chat', 'notes', false, signal)
+    expect(appWindows.restoreBehind).toHaveBeenCalledWith(10)
+    expect(appWindows.minimizeAgain).not.toHaveBeenCalled()
+    service.runEnded('chat')
+    await vi.waitFor(() => expect(appWindows.minimizeAgain).toHaveBeenCalledWith(77))
   })
 
   it('holds a key combination written as one key to the same limits', async () => {
