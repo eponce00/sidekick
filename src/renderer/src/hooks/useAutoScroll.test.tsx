@@ -189,6 +189,28 @@ describe('auto-scroll positioning', () => {
       vi.useRealTimers()
     }
   })
+
+  it('catches up with a reply that streamed on while the reader closed a section', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    try {
+      await act(async () => root.render(<Harness ready />))
+      const timeline = host.firstElementChild as HTMLDivElement
+      let height = 1_800
+      const view = layOut(timeline, { height: () => height, client: 500, top: 1_300 })
+      runFrames()
+
+      timeline.dispatchEvent(
+        new CustomEvent(SECTION_REVEAL_EVENT, { detail: { ms: 260, opening: false } })
+      )
+      height = 2_100
+      await act(async () => vi.advanceTimersByTimeAsync(400))
+      runFrames()
+      expect(view.top()).toBe(1_600)
+      expect(controller.showScrollToBottom).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 function Following({ messages, chat }: { messages: string[]; chat: string }): React.JSX.Element {

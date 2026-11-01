@@ -1,4 +1,4 @@
-import type { ComputerRememberedApp } from '../shared/computerUse'
+import type { ChromeUseStatus, ComputerRememberedApp } from '../shared/computerUse'
 import type { PinnedModel } from '../shared/models'
 import type { ProviderSettings, PublicProviderSettings } from '../shared/settings'
 import type {
@@ -11,6 +11,12 @@ import type {
   ProviderHealthChangedEvent,
   ProviderTarget
 } from '../shared/providerRuntime'
+
+interface ChromeUseAPI {
+  status: () => Promise<ChromeUseStatus>
+  setUp: () => Promise<boolean>
+  disconnect: () => Promise<void>
+}
 
 interface ComputerUseAPI {
   rememberedApps: () => Promise<ComputerRememberedApp[]>
@@ -418,6 +424,7 @@ interface WorkspaceAPI {
 
 export interface DesktopApi {
   providers: ProvidersAPI
+  chromeUse: ChromeUseAPI
   computerUse: ComputerUseAPI
   settings: SettingsAPI
   commandLine: CommandLineAPI

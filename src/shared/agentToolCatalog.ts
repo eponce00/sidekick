@@ -44,6 +44,8 @@ export interface AgentToolCatalogOptions {
   browserEnabled?: boolean
   /** Operating other apps on this computer. Off unless the user turned it on in Settings. */
   computerEnabled?: boolean
+  /** Working in the user's own Chrome. Off unless the user turned it on in Settings. */
+  chromeEnabled?: boolean
   workspaceRoot?: string | null
   activeSkillIds?: readonly string[]
   officeHelpersAvailable?: boolean
@@ -963,6 +965,35 @@ const browserOpen = definition(
   }
 )
 
+const CHROME_STEP_TIMEOUT_MS = 120_000
+
+/** browser_open where the user has turned on working in their own Chrome. */
+const browserOpenWithChrome: AgentToolDefinition = {
+  ...browserOpen,
+  function: {
+    ...browserOpen.function,
+    description: `${browserOpen.function.description} The user's own Chrome is also available, with their sign-ins and saved details, while they keep using their computer: pass browser "chrome" when a task needs their real accounts. Every browser_ tool then works there, in a tab group of your own, until you pick the other browser or close it. In Chrome, sites for email, money or accounts ask the user first, and so does pressing something that sends, buys or deletes. Password and payment fields can't be typed into: Chrome fills saved passwords itself, or ask the user. A browser_evaluate that only reads the page runs without asking, unless it reads cookies, storage or a filled-in secret field. One that could change something or send data asks the user, as do downloads and uploads, so write it to only read.`,
+    parameters: {
+      ...browserOpen.function.parameters,
+      properties: {
+        ...browserOpen.function.parameters.properties,
+        browser: {
+          type: 'string',
+          enum: ['built_in', 'chrome'],
+          description:
+            "built_in is SideKick's isolated browser, signed in to nothing. chrome is the user's own. Leave it out to stay in the one this chat is using."
+        }
+      }
+    }
+  }
+}
+
+const browserUseMyTab = definition(
+  'browser_use_my_tab',
+  "For when the user says to continue in the tab they have open in Chrome. Asks them to share the tab they're on, and every browser_ tool then works in it, with their sign-ins there. Returns the page as browser_open does.",
+  { type: 'object', properties: {} }
+)
+
 const browserObserve = definition(
   'browser_observe',
   'Inspect the current browser state. Returns the screenshot as real vision input plus URL, title, viewport, semantic interactive elements, accessibility information, console errors, failed requests, screenshot hash, and whether the visual state changed. Use after UI changes and before claiming visual verification.',
@@ -1755,6 +1786,27 @@ const coreEntries: AgentToolCatalogEntry[] = [
   )
 ]
 
+/** In Chrome a step can wait on a question to the user, who should have time to read it. */
+function inChromeToo(candidate: AgentToolCatalogEntry): AgentToolCatalogEntry {
+  if (candidate.capability !== 'browser') return candidate
+  return {
+    ...candidate,
+    timeoutMs: Math.max(candidate.timeoutMs ?? 0, CHROME_STEP_TIMEOUT_MS),
+    ...(candidate.definition.function.name === 'browser_open'
+      ? { definition: browserOpenWithChrome }
+      : {})
+  }
+}
+
+const chromeEntries: AgentToolCatalogEntry[] = [
+  // Execute risk: on top of the question to the user, like the tools that act on a page.
+  entry(browserUseMyTab, 'browser', 'execute', {
+    host: 'main',
+    timeoutMs: CHROME_STEP_TIMEOUT_MS,
+    concurrency: 'exclusive'
+  })
+]
+
 const goalEntries: AgentToolCatalogEntry[] = [entry(updateGoal, 'goal', 'write')]
 
 // The schedules handler asks the user before every change itself, whatever the permission mode,
@@ -1943,6 +1995,7 @@ export function getAgentToolCatalog(options: AgentToolCatalogOptions): AgentTool
       ? [entry(codeIntelligence, 'code.intelligence', options.codeIntelligenceRisk ?? 'read')]
       : []),
     ...(options.goalEnabled ? goalEntries : []),
+    ...(options.chromeEnabled ? chromeEntries : []),
     ...(planStage === 'kept' ? [] : planEntries[planStage]),
     ...workspaceEntries(options),
     ...(options.officeHelpersAvailable &&
@@ -2007,7 +2060,7 @@ export function getAgentToolCatalog(options: AgentToolCatalogOptions): AgentTool
     if (!allowed.has(candidate.capability)) continue
     const name = candidate.definition.function.name
     if (byName.has(name)) throw new Error(`Duplicate agent tool definition: ${name}`)
-    byName.set(name, candidate)
+    byName.set(name, options.chromeEnabled ? inChromeToo(candidate) : candidate)
   }
   return [...byName.values()]
 }
@@ -2040,9 +2093,12 @@ export function toolCapabilityForName(name: string): AgentCapability | undefined
   if (workspaceReadToolDefinitions().some((tool) => tool.function.name === name)) {
     return 'workspace.read'
   }
-  return [...coreEntries, ...scheduleEntries, ...Object.values(planEntries).flat()].find(
-    ({ definition: tool }) => tool.function.name === name
-  )?.capability
+  return [
+    ...coreEntries,
+    ...chromeEntries,
+    ...scheduleEntries,
+    ...Object.values(planEntries).flat()
+  ].find(({ definition: tool }) => tool.function.name === name)?.capability
 }
 
 export function toolRiskForName(name: string): ToolRisk | undefined {
@@ -2050,7 +2106,10 @@ export function toolRiskForName(name: string): ToolRisk | undefined {
   if (isWorkspaceMutationTool(name)) return 'write'
   if (name === 'code_intelligence') return 'read'
   if (workspaceReadToolDefinitions().some((tool) => tool.function.name === name)) return 'read'
-  return [...coreEntries, ...scheduleEntries, ...Object.values(planEntries).flat()].find(
-    ({ definition: tool }) => tool.function.name === name
-  )?.risk
+  return [
+    ...coreEntries,
+    ...chromeEntries,
+    ...scheduleEntries,
+    ...Object.values(planEntries).flat()
+  ].find(({ definition: tool }) => tool.function.name === name)?.risk
 }

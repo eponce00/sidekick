@@ -907,6 +907,14 @@ export class ConversationRunPreparer {
       !conversation.permission_ceiling
         ? (await import('./computerUseHost')).computerUseService()
         : null
+    // Never in a scheduled chat, for the same reason.
+    const chromeUse =
+      process.platform === 'win32' &&
+      surface === 'conversation' &&
+      currentSettings.chromeUseEnabled === true &&
+      !conversation.permission_ceiling
+        ? (await import('./chromeUseHost')).chromeBrowser()
+        : null
     const toolSession = await this.tools.createSession({
       permissionMode,
       runId: input.id,
@@ -920,6 +928,7 @@ export class ConversationRunPreparer {
       ...(computerUse
         ? { computer: { service: computerUse, vision: input.model.supportsVision !== false } }
         : {}),
+      ...(chromeUse ? { chrome: chromeUse } : {}),
       pageImages:
         input.model.supportsVision !== false
           ? providerImageProfile(executionTarget.providerKind).maxImages

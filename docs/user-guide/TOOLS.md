@@ -105,6 +105,44 @@ For gestures that a drag can't make, it can keep a real mouse button down and mo
 key for up to 10 seconds. A held button lets go by itself when you move the mouse, press Esc, the reply
 ends or 30 seconds pass. A held key lets go as soon as the app stops being in front.
 
+## Your own Chrome
+
+On Windows, the agent can also work in your own Chrome, with your sign-ins and saved details, while you
+keep using your computer. Turn this on in **Settings › Chrome**, which is off by default. It uses the same
+browser tools as SideKick's built-in browser, so it can do the same things there, and a chat stays in the
+browser it picked until it picks the other. It needs a model that can see images, as the built-in browser
+does. A PDF opens in Chrome's own viewer, where the agent sees it as a picture and can download it to read
+the text.
+
+- **One yes sets it up.** The first time, SideKick asks, then opens a Chrome window, turns on Developer
+  mode and loads its extension from your computer. There's no store and nothing to maintain, and it updates by itself along with SideKick. It takes about 10 seconds, with the same glow and pointer as when the agent works in an app, and Esc stops it. Work profiles aren't offered. If it can't
+  finish, SideKick shows you the steps. **Disconnect** in Settings removes the extension from Chrome,
+  or the next time Chrome is open if it's closed. Developer mode stays on, in case you use it yourself.
+- **It works in a tab group named 🤖 SideKick,** in your Chrome window, without taking you off your tab. Say
+  "continue in the tab I have open" and SideKick shows you which tab that is and asks you to share it. The
+  agent then picks up from what you've done there, and your tab stays where it is.
+- **It asks where it matters.** Turning this on covers ordinary sites. Sites for your email, money or account
+  ask you once per chat, and you can choose to be asked about every site. Names can't catch everything,
+  so a page could still try to steer the agent to another site you're signed in to. Sharing a tab of yours
+  always asks. It can't see your other tabs, or Chrome's own pages, where saved passwords live.
+- **It can't type passwords or card details.** Chrome can still fill in what it has saved, and you can
+  fill in the rest.
+- **It asks you before pressing things like Buy, Send or Delete,** in SideKick's own dialog. Names can't
+  catch everything, and a page can label a button anything. Pressing Enter in a form counts as pressing its
+  button.
+- **It asks you each time before it downloads or uploads, or runs code that could change something.** Code
+  that only looks at the page runs without asking, because Chrome itself stops it at any change or network
+  call. Code that reads cookies, saved site data, or a page with a password or card filled in always asks, and
+  is shown to you in full. A determined page could still get a look at some of what a site's own scripts hold.
+- **It doesn't use the sign-ins stored in SideKick.** Chrome fills in your saved passwords itself.
+- **You can see it driving, and press Esc to stop it.** Its tab has a soft glow and SideKick's pointer, and a
+  small window in the corner of your screen shows what it last saw. You can move it, resize it, or close it
+  with its ×, and the agent keeps working. It comes back with the next reply, and stays out of the way while
+  you're in SideKick. Esc works from anywhere, and ends what the chat was allowed. For up to a minute after
+  each step, other apps don't receive Esc, even with that window closed.
+- **What it reads goes to your selected model.** Chrome shows a banner while the agent is working, until
+  its reply ends.
+
 Before a click, SideKick checks what is being pressed where it can tell. A control named something
 like Send, Delete or Pay is refused until the agent confirms that you asked for it. Names can't catch
 everything: web-based apps may not name their controls, and a covered app can't be checked.

@@ -62,6 +62,11 @@ const api = {
     choose: (token: string, itemId: string) => ipcRenderer.invoke('menus:choose', token, itemId),
     dismiss: (token: string) => ipcRenderer.invoke('menus:dismiss', token)
   },
+  chromeUse: {
+    status: () => ipcRenderer.invoke('chromeUse:status'),
+    setUp: () => ipcRenderer.invoke('chromeUse:setUp'),
+    disconnect: () => ipcRenderer.invoke('chromeUse:disconnect')
+  },
   computerUse: {
     rememberedApps: () => ipcRenderer.invoke('computerUse:rememberedApps'),
     forgetApp: (path: string) => ipcRenderer.invoke('computerUse:forgetApp', path)

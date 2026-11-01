@@ -150,6 +150,27 @@ describe('SideKick-styled trusted dialog', () => {
     expect(page).toContain('&lt;img src=x')
   })
 
+  it("shows a choice's name and picture only as what they are", () => {
+    const page = trustedDialogPage(
+      {
+        ...settingsOptions,
+        choices: [
+          {
+            index: 1,
+            label: '<img src=x onerror=alert(1)>',
+            detail: '<b>x</b>',
+            pictureDataUrl: 'https://evil.example/track.png',
+            color: 'red;background:url(https://evil.example/)'
+          }
+        ]
+      },
+      darkLook
+    )
+    expect(page).not.toContain('<img')
+    expect(page).not.toContain('<b>x</b>')
+    expect(page).not.toContain('evil.example')
+  })
+
   it('allows only its own script', () => {
     const page = trustedDialogPage(settingsOptions, lightLook)
     const script = page.match(/<script>([\s\S]*?)<\/script>/)![1]

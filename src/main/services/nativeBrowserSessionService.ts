@@ -594,6 +594,7 @@ export interface NativeBrowserSessionServiceOptions {
   defaultViewport?: BrowserViewport
   now?: () => number
   runtime?: NativeBrowserRuntime
+  policy?: NativeBrowserPolicy
 }
 
 export interface NativeBrowserSurfaceConsoleMessage {
@@ -657,7 +658,71 @@ export interface NativeBrowserSurface {
   onDebuggerMessage(listener: (method: string, params: Record<string, unknown>) => void): () => void
   onDestroyed(listener: () => void): () => void
   onOpenUrl(listener: (url: string) => void): () => void
+  /** For a browser that has already opened the tab itself, and it has to be taken as it is. */
+  onOpenSurface?(listener: (surface: NativeBrowserSurface) => void): () => void
 }
+
+/**
+ * Extra rules for a browser that isn't SideKick's isolated one, such as the user's own, signed in to
+ * everything. Each one throws to refuse.
+ */
+export interface NativeBrowserPolicy {
+  /** Before anything is done on a page, including only reading it. */
+  beforeStep(surface: NativeBrowserSurface, signal?: AbortSignal): Promise<void>
+  beforeNavigate(url: string, signal?: AbortSignal): Promise<void>
+  /** Before a click, or an Enter that would press the button of a form. */
+  beforePress(name: string, pageUrl: string, signal?: AbortSignal): Promise<void>
+  /** Before text goes into a field. */
+  beforeTyping(field: { secret: boolean }): void
+  /** Whether a script can go ahead without asking, as long as Chromium finds it only looks. */
+  mayRunQuietly(expression: string): boolean
+  beforeEvaluate(expression: string, pageUrl: string, signal?: AbortSignal): Promise<void>
+  beforeDownload(url: string, signal?: AbortSignal): Promise<void>
+  beforeUpload(files: readonly string[], pageUrl: string, signal?: AbortSignal): Promise<void>
+  /** Why SideKick's stored credentials can't be used here, if they can't. */
+  readonly signInRefusal?: string
+}
+
+/** What a control is, for the policy: read from the page, so a name can't be avoided by clicking by pixel. */
+const POLICY_CONTROL_SCRIPT = `function () {
+  const SECRET = /password|passwd|passcode|one-time-code|cc-|card.?(num|number)|cvv|cvc|security.?code|ssn/i
+  const secret = (element) =>
+    element?.type === 'password' ||
+    SECRET.test([element?.autocomplete, element?.name, element?.id, element?.getAttribute?.('aria-label')].join(' '))
+  const clean = (text) => String(text ?? '').replace(/\\s+/g, ' ').trim().slice(0, 120)
+  const control = this.closest?.('button, a, input, [role=button], [role=link], [role=menuitem]') ?? this
+  const form = this.form ?? this.closest?.('form')
+  const submit = form?.querySelector('[type=submit], button:not([type=button])')
+  return {
+    name: clean(control.getAttribute?.('aria-label') || control.innerText || control.value || control.title),
+    submit: clean(submit?.innerText || submit?.value),
+    secret: secret(this) || this.tagName === 'IFRAME'
+  }
+}`
+
+const QUIET_SCRIPT_TIMEOUT_MS = 5_000
+
+/** Whether a filled-in secret field is on the page, and what a script reading cookies would find. */
+const PAGE_SECRETS_SCRIPT = `(() => {
+  const SECRET = /password|passwd|passcode|one-time-code|cc-|card.?(num|number)|cvv|cvc|security.?code|ssn/i
+  const secret = (element) =>
+    element.type === 'password' ||
+    SECRET.test([element.autocomplete, element.name, element.id, element.getAttribute('aria-label')].join(' '))
+  const documents = [document]
+  for (const frame of document.querySelectorAll('iframe')) {
+    try {
+      if (frame.contentDocument) documents.push(frame.contentDocument)
+    } catch {}
+  }
+  const fields = documents.some((each) =>
+    [...each.querySelectorAll('input, textarea')].some((field) => field.value && secret(field))
+  )
+  const cookies = document.cookie
+    .split(';')
+    .map((cookie) => cookie.slice(cookie.indexOf('=') + 1).trim())
+    .filter((value) => value.length >= 6)
+  return { fields, cookies }
+})()`
 
 /** How a fixed viewport presents itself: a phone or tablet is mobile, touch, and says so. */
 export interface BrowserEmulationOptions {
@@ -666,6 +731,8 @@ export interface BrowserEmulationOptions {
 }
 
 export interface NativeBrowserRuntime {
+  /** A browser with its own PDF viewer, which can't show SideKick's. */
+  readonly showsPdfsItself?: boolean
   createSurface(options: {
     partition: string
     viewport: BrowserViewport
@@ -2284,7 +2351,18 @@ export class NativeBrowserSessionService {
             message: `Blocked popup: ${error instanceof Error ? error.message : String(error)}`
           })
         })
-      })
+      }),
+      surface.onOpenSurface?.((opened) => {
+        void this.lockSession(session, {}, async (signal) => {
+          const added = await this.registerSurface(session, opened, signal)
+          session.activeTabId = added.id
+        }).catch((error) => {
+          this.recordConsole(session, tab, {
+            level: 'error',
+            message: `Could not use a new tab: ${error instanceof Error ? error.message : String(error)}`
+          })
+        })
+      }) ?? (() => undefined)
     )
     if (!surface.attached) await this.enableWebMcp(tab, signal)
     return tab
@@ -2541,6 +2619,28 @@ export class NativeBrowserSessionService {
       : new Error('Chromium failed to commit the browser bootstrap document')
   }
 
+  /** Takes on a tab that is already open, in a session that already exists. Its id in this browser. */
+  async adoptTab(
+    sessionId: string,
+    webContentsId: number,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserObservation> {
+    const session = this.getSession(sessionId)
+    await this.withSessionLock(session, operation, async (signal) => {
+      const existing = [...session.tabs.values()].find(
+        (tab) => tab.surface.webContentsId === webContentsId
+      )
+      if (existing) {
+        session.activeTabId = existing.id
+        return
+      }
+      const surface = await abortable(this.runtime.attachSurface(webContentsId), signal)
+      const tab = await this.registerSurface(session, surface, signal)
+      session.activeTabId = tab.id
+    })
+    return this.observe(sessionId, {}, operation)
+  }
+
   private async openPopup(session: SessionState, inputUrl: string): Promise<void> {
     const url = await this.normalizeNavigationUrl(inputUrl, session.allowedFileRoots)
     await this.withSessionLock(session, {}, async (signal) => {
@@ -2571,6 +2671,19 @@ export class NativeBrowserSessionService {
   }
 
   private async withSessionLock<T>(
+    session: SessionState,
+    operation: BrowserOperationOptions,
+    body: (signal: AbortSignal | undefined) => Promise<T>
+  ): Promise<T> {
+    return this.lockSession(session, operation, async (signal) => {
+      const active = session.tabs.get(session.activeTabId)
+      if (active) await this.options.policy?.beforeStep(active.surface, signal)
+      return body(signal)
+    })
+  }
+
+  /** For what the session does by itself, which isn't a step anyone's rules apply to. */
+  private async lockSession<T>(
     session: SessionState,
     operation: BrowserOperationOptions,
     body: (signal: AbortSignal | undefined) => Promise<T>
@@ -2717,6 +2830,7 @@ export class NativeBrowserSessionService {
     url: string,
     signal?: AbortSignal
   ): Promise<BrowserQuiescenceResult> {
+    await this.options.policy?.beforeNavigate(url, signal)
     tab.lastPointer = undefined
     this.invalidateSemanticRefs(tab)
     let navigationUrl = url
@@ -2732,7 +2846,7 @@ export class NativeBrowserSessionService {
       newPdfToken = pdfSession.token
       tab.pdfSessionTokens.add(pdfSession.token)
       navigationUrl = browserPdfViewerUrl(pdfSession)
-    } else if (isRemotePdfUrl(url)) {
+    } else if (isRemotePdfUrl(url) && !this.runtime.showsPdfsItself) {
       const remotePdf = await this.downloadRemotePdf(session, tab, url, signal).catch((error) => {
         throw this.certificateRefusal(tab, url, error)
       })
@@ -2900,6 +3014,7 @@ export class NativeBrowserSessionService {
           throw new Error(
             'Downloads require HTTPS, or plain HTTP on this computer or an allowed local-network address'
           )
+        await this.options.policy?.beforeDownload(url, signal)
         response = await abortable(
           tab.surface.fetch(url, { redirect: 'manual', credentials: 'include', signal }),
           signal
@@ -3852,6 +3967,10 @@ export class NativeBrowserSessionService {
       await this.ensureBaselineHash(session, tab, signal)
       await this.assertAutomatedMutationAllowed(tab, signal)
       const target = await this.resolveTarget(tab, input.target, true, signal)
+      if (this.options.policy) {
+        const control = await this.controlFacts(tab, target, signal)
+        await this.options.policy.beforePress(control.name, tab.surface.getURL(), signal)
+      }
       const startedAt = this.now()
       this.setPointer(tab, target, 'click', startedAt)
       tab.surface.focus()
@@ -3896,6 +4015,10 @@ export class NativeBrowserSessionService {
       await this.ensureBaselineHash(session, tab, signal)
       await this.assertAutomatedMutationAllowed(tab, signal)
       const target = await this.resolveTarget(tab, input.target, true, signal)
+      if (this.options.policy) {
+        const control = await this.controlFacts(tab, target, signal)
+        await this.options.policy.beforePress(control.name, tab.surface.getURL(), signal)
+      }
       // Press-and-hold is useful for ordinary canvas, map, slider, and test UI.
       // It is not an automated CAPTCHA solver; a detected anti-bot checkpoint
       // stops automated input until the user clears it in the Browser panel.
@@ -3937,6 +4060,53 @@ export class NativeBrowserSessionService {
     })
   }
 
+  /**
+   * What the policy needs to know about a control. Both ways of aiming go through here: a name read off the
+   * page, or whatever is under a point, since clicking by pixel mustn't be a way around it.
+   */
+  /**
+   * What a step is about to touch, for the rules on it. A failure is the step's failure: going ahead without
+   * knowing could be typing into a password field.
+   */
+  private async controlFacts(
+    tab: TabState,
+    target: { backendNodeId?: number; x: number; y: number } | null,
+    signal?: AbortSignal
+  ): Promise<{ name: string; submit: string; secret: boolean }> {
+    let objectId: string | undefined
+    if (target?.backendNodeId) {
+      const node = await abortable(
+        tab.surface.sendDebuggerCommand<{ object: { objectId?: string } }>('DOM.resolveNode', {
+          backendNodeId: target.backendNodeId
+        }),
+        signal
+      )
+      objectId = node.object.objectId
+    } else {
+      const found = await abortable(
+        tab.surface.sendDebuggerCommand<{ result: { objectId?: string } }>('Runtime.evaluate', {
+          expression: target
+            ? `document.elementFromPoint(${target.x}, ${target.y})`
+            : '(() => { let at = document.activeElement; while (at?.shadowRoot?.activeElement) at = at.shadowRoot.activeElement; return at })()'
+        }),
+        signal
+      )
+      objectId = found.result.objectId
+    }
+    if (!objectId) return { name: '', submit: '', secret: false }
+    const facts = await abortable(
+      tab.surface.sendDebuggerCommand<{
+        result: { value?: { name: string; submit: string; secret: boolean } }
+      }>('Runtime.callFunctionOn', {
+        objectId,
+        functionDeclaration: POLICY_CONTROL_SCRIPT,
+        returnByValue: true
+      }),
+      signal
+    )
+    return facts.result.value ?? { name: '', submit: '', secret: false }
+  }
+
   private async assertAutomatedMutationAllowed(tab: TabState, signal?: AbortSignal): Promise<void> {
     // This DOM/text probe is intentionally cheaper than another full CDP
     // accessibility snapshot. It gates every input/evaluation path, while the
@@ -3969,6 +4139,13 @@ export class NativeBrowserSessionService {
       const target = await this.resolveTarget(tab, input.target, true, signal)
       if (!target.backendNodeId) {
         throw new Error('Browser text entry requires a semantic or selector-backed field target')
+      }
+      if (this.options.policy) {
+        const field = await this.controlFacts(tab, target, signal)
+        this.options.policy.beforeTyping(field)
+        if (input.submit) {
+          await this.options.policy.beforePress(field.submit, tab.surface.getURL(), signal)
+        }
       }
       const sourceUrl = tab.surface.getURL()
       const sourceRefEpoch = tab.refEpoch
@@ -4039,6 +4216,7 @@ export class NativeBrowserSessionService {
       this.guardRepeatedAction(tab, fingerprint)
       await this.ensureBaselineHash(session, tab, signal)
       await this.assertAutomatedMutationAllowed(tab, signal)
+      await this.options.policy?.beforeUpload(files, tab.surface.getURL(), signal)
       const target = await this.resolveTarget(tab, input.target, false, signal)
       if (!target.backendNodeId)
         throw new Error('Upload requires a file-input reference or selector')
@@ -4460,6 +4638,9 @@ export class NativeBrowserSessionService {
         let target: ElementPoint | undefined
         try {
           target = await this.resolveTarget(tab, field.target, false, signal)
+          if (this.options.policy) {
+            this.options.policy.beforeTyping(await this.controlFacts(tab, target, signal))
+          }
           const backendNodeId = target.backendNodeId!
           const before = await this.inspectFormControl(tab, backendNodeId, signal)
           if (before.kind !== field.kind) {
@@ -4795,6 +4976,7 @@ export class NativeBrowserSessionService {
     operation: BrowserOperationOptions = {}
   ): Promise<BrowserSignInResult> {
     if (!input.username && !input.password) throw new Error('A sign-in needs a value to fill')
+    if (this.options.policy?.signInRefusal) throw new Error(this.options.policy.signInRefusal)
     const session = this.getSession(input.sessionId)
     return this.withSessionLock(session, operation, async (signal) => {
       const tab = this.getTab(session)
@@ -5593,6 +5775,16 @@ export class NativeBrowserSessionService {
       const target = input.target
         ? await this.resolveTarget(tab, input.target, true, signal)
         : undefined
+      if (this.options.policy) {
+        // Enter presses a form's button as surely as a click does, and a key is typing like any other.
+        const field = await this.controlFacts(tab, target ?? null, signal)
+        const key = input.key.split('+').pop()?.trim().toLowerCase() ?? ''
+        if (key === 'enter' || key === 'return') {
+          await this.options.policy.beforePress(field.submit, tab.surface.getURL(), signal)
+        } else if (key.length === 1 && !input.key.includes('+')) {
+          this.options.policy.beforeTyping(field)
+        }
+      }
       const startedAt = this.now()
       if (target) this.setPointer(tab, target, 'press', startedAt)
       tab.surface.focus()
@@ -6318,7 +6510,14 @@ export class NativeBrowserSessionService {
         )
       }
       await this.assertAutomatedMutationAllowed(tab, signal)
-      const envelope = await this.evaluateExpression(tab, input.expression, signal)
+      const policy = this.options.policy
+      let envelope = policy?.mayRunQuietly(input.expression)
+        ? await this.evaluateQuietly(tab, input.expression, signal)
+        : null
+      if (!envelope) {
+        await policy?.beforeEvaluate(input.expression, tab.surface.getURL(), signal)
+        envelope = await this.evaluateExpression(tab, input.expression, signal)
+      }
       let value: unknown = envelope.json
       if (!envelope.truncated) {
         try {
@@ -6335,6 +6534,53 @@ export class NativeBrowserSessionService {
         truncated: envelope.truncated
       }
     })
+  }
+
+  /**
+   * Runs a script that can only look, as DevTools' console previews what is being typed: Chromium stops it
+   * at anything that would change the page or reach the network. Null if it can't be run that way, or what
+   * it found includes what a look shouldn't, and it's for the rules to decide about instead.
+   */
+  private async evaluateQuietly(
+    tab: TabState,
+    expression: string,
+    signal?: AbortSignal
+  ): Promise<{ json: string; truncated: boolean } | null> {
+    const secrets = await abortable(
+      tab.surface.sendDebuggerCommand<{
+        result?: { value?: { fields: boolean; cookies: string[] } }
+      }>('Runtime.evaluate', { expression: PAGE_SECRETS_SCRIPT, returnByValue: true }),
+      signal
+    )
+    const held = secrets.result?.value
+    if (!held || held.fields) return null
+    // Inside the look, so that a getter or toJSON of the script's own can't run outside it.
+    const answer = await abortable(
+      tab.surface.sendDebuggerCommand<{
+        result?: { value?: unknown }
+        exceptionDetails?: { text?: string; exception?: { description?: string } }
+      }>('Runtime.evaluate', {
+        expression: `JSON.stringify((${expression.trim().replace(/;+$/, '')}\n))`,
+        throwOnSideEffect: true,
+        returnByValue: true,
+        silent: true,
+        timeout: QUIET_SCRIPT_TIMEOUT_MS
+      }),
+      signal
+    ).catch((error: unknown) => {
+      throw pageChangedError(error)
+    })
+    if (answer.exceptionDetails) {
+      const said =
+        answer.exceptionDetails.exception?.description ?? answer.exceptionDetails.text ?? ''
+      if (/^(EvalError: Possible side-effect|SyntaxError)/.test(said)) return null
+      throw new Error(said || 'Browser page evaluation failed')
+    }
+    const json = typeof answer.result?.value === 'string' ? answer.result.value : 'null'
+    if (held.cookies.some((cookie) => json.includes(cookie))) return null
+    return json.length > MAX_EVALUATION_BYTES
+      ? { json: json.slice(0, MAX_EVALUATION_BYTES), truncated: true }
+      : { json, truncated: false }
   }
 
   /**
@@ -6495,7 +6741,8 @@ export class NativeBrowserSessionService {
     operation: BrowserOperationOptions = {}
   ): Promise<boolean> {
     const session = this.getSession(sessionId)
-    return this.withSessionLock(session, operation, async (signal) => {
+    // The user has the page for now, and looking at it from here is no step of the agent's.
+    return this.lockSession(session, operation, async (signal) => {
       const tab = this.getTab(session)
       if (await this.detectHumanVerification(tab, undefined, signal)) return true
       this.invalidateSemanticRefs(tab)

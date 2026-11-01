@@ -1,9 +1,9 @@
-import { app, globalShortcut, Notification, powerMonitor } from 'electron'
+import { app, Notification, powerMonitor } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { appState } from '../ipc/state'
 import type { ComputerApp } from './computerUseApps'
-import { ComputerUseHighlight } from './computerUseHighlight'
+import { armEscape, computerOverlay as highlight } from './computerUseOverlay'
 import { ComputerUseRememberedApps } from './computerUseRememberedApps'
 import { ComputerUseService } from './computerUseService'
 import { ComputerUseWindows } from './computerUseWindows'
@@ -103,7 +103,6 @@ function bundledDriverPath(): string {
 }
 
 let service: ComputerUseService | null = null
-const highlight = new ComputerUseHighlight()
 const appWindows = new ComputerUseWindows()
 
 /**
@@ -116,6 +115,7 @@ export function computerUseService(): ComputerUseService | null {
   service ??= new ComputerUseService({
     showActive: (target) => highlight.show(target),
     hideActive: () => highlight.hide(),
+    replyEnded: () => highlight.replyEnded(),
     moveCursor: (point) => highlight.moveCursor(point),
     listApps: () => appWindows.apps(),
     showPreview: (image) => highlight.showPreview(image),
@@ -129,10 +129,7 @@ export function computerUseService(): ComputerUseService | null {
     userIdleSeconds: () => powerMonitor.getSystemIdleTime(),
     appWindows,
     startApp: (path) => void appWindows.launch(path),
-    armStop: (stop) => {
-      globalShortcut.register('Escape', stop)
-      return () => globalShortcut.unregister('Escape')
-    },
+    armStop: armEscape,
     notifyActive: (appName) => {
       if (!Notification.isSupported()) return
       new Notification({
