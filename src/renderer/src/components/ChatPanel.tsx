@@ -613,6 +613,7 @@ function ChatPanel({
         }
       }
       try {
+        scrollToBottom()
         await streamAgentResponse(truncatedMessages, targetConversationId, false, undefined, mode)
       } finally {
         pendingGoalStartRef.current = null
@@ -1159,6 +1160,7 @@ function ChatPanel({
   const handleResumeGoal = async (): Promise<void> => {
     if (!goal || !conversationId || isLoading) return
     await resumeGoal()
+    scrollToBottom()
     await streamAgentResponse(messagesRef.current, conversationId, false, undefined, 'conversation')
   }
 
@@ -1166,6 +1168,7 @@ function ChatPanel({
   // The main process refuses a second continuation of the same interruption.
   const continueInterruptedRun = async (message: Message): Promise<void> => {
     if (isLoading || !conversationId || !message.runId) return
+    scrollToBottom()
     await streamAgentResponse(
       messagesRef.current,
       conversationId,
@@ -1324,12 +1327,15 @@ function ChatPanel({
 
   submitFromPageRef.current = handleSubmit
 
+  // Whoever sends a message wants its reply, wherever they had scrolled to read the last one.
+  const followWhatWasSent = scrollToBottom
   const sendArrow = (): Element | null | undefined =>
     inputRef.current?.closest('.input-container')?.querySelector('.send-button svg')
   // The next message to appear rises out of the box, even into a chat created by sending it.
   const markSent = (): void => {
     sentAtRef.current = Date.now()
     liftSendArrow(sendArrow())
+    followWhatWasSent()
   }
 
   const submitMessage = (): void => {
@@ -1401,6 +1407,7 @@ function ChatPanel({
       return
     }
     if (isLoading) {
+      followWhatWasSent()
       void handleSendDuringLoading(inputValue, images, attachments)
       return
     }

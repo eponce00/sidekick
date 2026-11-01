@@ -137,14 +137,29 @@ describe('following the end of a streaming reply', () => {
     expect(top).toBe(1_420)
     expect(follower.following).toBe(true)
 
-    // Something other than the reader moved the view up: not a reason to let go.
+    // A row above shrank, taking the view with it and the content's height with it: not the reader.
+    height -= 120
     scrollBy(-120)
     expect(follower.following).toBe(true)
     stream()
     expect(scrollDistanceFromBottom(view)).toBe(0)
   })
 
-  it('follows again once the reader scrolls back down near the end', () => {
+  it('lets go, and comes back, for a scroll no listener heard, as from over an embedded frame', () => {
+    scrollBy(-200)
+    expect(follower.following).toBe(false)
+    stream()
+    expect(top).toBe(1_300)
+
+    // Part of the way back is still reading; only reaching the end follows again.
+    scrollBy(100)
+    expect(follower.following).toBe(false)
+    scrollBy(140)
+    expect(scrollDistanceFromBottom(view)).toBe(0)
+    expect(follower.following).toBe(true)
+  })
+
+  it('follows again only when the reader scrolls all the way back down', () => {
     wheel(-100)
     wheel(-100)
     wheel(-100)
@@ -156,11 +171,30 @@ describe('following the end of a streaming reply', () => {
     wheel(100)
     wheel(100)
     expect(follower.following).toBe(false)
+    // Still a line short of the end: a nudge while reading the last lines.
+    wheel(40)
+    expect(scrollDistanceFromBottom(view)).toBe(100)
     wheel(100)
-    expect(scrollDistanceFromBottom(view)).toBe(40)
     expect(follower.following).toBe(true)
     stream()
     expect(scrollDistanceFromBottom(view)).toBe(0)
+  })
+
+  it('does not take a small nudge down near the end for the reader coming back', () => {
+    wheel(-30)
+    wheel(2)
+    expect(scrollDistanceFromBottom(view)).toBe(28)
+    expect(follower.following).toBe(false)
+    stream()
+    expect(top).toBe(1_472)
+  })
+
+  it('does not follow again when content shrinks right after a wheel up', () => {
+    wheel(-30)
+    // A row under the reader collapses; the view is at the end again, by no scroll of theirs.
+    height -= 30
+    view.dispatchEvent(new Event('scroll'))
+    expect(follower.following).toBe(false)
   })
 
   it('does not follow again when the view nears the end without the reader', () => {
@@ -169,7 +203,8 @@ describe('following the end of a streaming reply', () => {
       wheel(-30)
       vi.advanceTimersByTime(1_000)
       // A row above is measured taller and the view shifts with it, closer to the end for a moment.
-      scrollBy(20)
+      height += 25
+      scrollBy(25)
       expect(follower.following).toBe(false)
       // The content below shrinks under the reader.
       height -= 10
@@ -227,6 +262,8 @@ describe('following the end of a streaming reply', () => {
     const field = document.createElement('textarea')
     document.body.append(field)
     field.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+    // The view moves as a row above shrinks, not because of the key.
+    height -= 40
     scrollBy(-40)
     expect(follower.following).toBe(true)
     field.remove()

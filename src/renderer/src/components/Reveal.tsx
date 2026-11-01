@@ -33,7 +33,10 @@ export function Reveal({
     const element = ref.current
     if (!element || !canAnimate()) return
     element.dispatchEvent(
-      new CustomEvent(SECTION_REVEAL_EVENT, { bubbles: true, detail: { ms: REVEAL_MS } })
+      new CustomEvent(SECTION_REVEAL_EVENT, {
+        bubbles: true,
+        detail: { ms: REVEAL_MS, opening: open }
+      })
     )
     // Reversing midway starts from where it got to; opening starts from nothing, though the
     // content has just mounted at its full height.
