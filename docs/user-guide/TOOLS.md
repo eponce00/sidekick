@@ -67,7 +67,7 @@ The agent normally works in the background without moving your mouse or taking f
 a soft glow and a label mark the app, SideKick's own pointer shows where it is acting, and the chat
 shows its latest look at the app. Clicks pass through all of this, and it ends when the reply does.
 An app you have minimized comes back behind your other windows while the agent works in it, and goes
-back to minimized afterwards.
+back to minimized afterwards. Store apps such as Calculator work too.
 
 Some apps ignore background input for some steps. WhatsApp scrolls in the background, for example,
 but needs a real click to type, and Docker Desktop takes no background clicks at all. The agent then chooses: it can tell you what it needs, or wait until

@@ -32,7 +32,6 @@ export const COMPUTER_DRIVER_TOOLS = [
   'set_value',
   'scroll',
   'drag',
-  'zoom',
   'bring_to_front',
   'set_agent_cursor_enabled'
 ] as const
@@ -121,6 +120,29 @@ export interface ComputerWindowBounds {
   y: number
   width: number
   height: number
+}
+
+/** The middle of each numbered row, as a screen point, from a look's structured detail. */
+export function computerRowPoints(structured: unknown): Map<number, { x: number; y: number }> {
+  const elements = (structured as { elements?: unknown } | null | undefined)?.elements
+  const points = new Map<number, { x: number; y: number }>()
+  if (!Array.isArray(elements)) return points
+  for (const element of elements as Array<{
+    element_index?: unknown
+    frame?: { x?: unknown; y?: unknown; w?: unknown; h?: unknown }
+  }>) {
+    const { x, y, w, h } = element?.frame ?? {}
+    if (
+      typeof element?.element_index === 'number' &&
+      typeof x === 'number' &&
+      typeof y === 'number' &&
+      typeof w === 'number' &&
+      typeof h === 'number'
+    ) {
+      points.set(element.element_index, { x: Math.round(x + w / 2), y: Math.round(y + h / 2) })
+    }
+  }
+  return points
 }
 
 /** Where an action landed, from what the driver reports. Typing has no such place. */

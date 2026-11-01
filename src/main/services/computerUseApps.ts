@@ -15,6 +15,10 @@ export interface ComputerApp {
   name: string
   path: string
   access: ComputerAppAccess
+  /** How to start it when that isn't its path, as for a Store app. */
+  startTarget?: string
+  /** What people call it, when that isn't its executable's name. */
+  title?: string
 }
 
 // Your call, per app and per chat, once the dialog has said this plainly.
@@ -155,12 +159,67 @@ export function matchInstalledApp(stdout: string, wanted: string): ComputerApp |
   }
 }
 
+const LIST_STORE_APPS =
+  '[Console]::OutputEncoding=[Text.Encoding]::UTF8;' +
+  "@(Get-StartApps | Where-Object { $_.AppID -match '^[\\w.-]+![\\w.-]+$' } | Select-Object Name,AppID) | ConvertTo-Json -Compress"
+
+/** A Store app's Start entry for a name, which isn't a shortcut to its executable. */
+export function matchStoreApp(
+  stdout: string,
+  wanted: string
+): { appId: string; title: string } | null {
+  const trimmed = stdout.trim()
+  if (!trimmed) return null
+  const parsed = JSON.parse(trimmed) as unknown
+  const rows = (Array.isArray(parsed) ? parsed : [parsed]) as Array<{
+    Name?: unknown
+    AppID?: unknown
+  }>
+  const found = rows.find(
+    (row) =>
+      typeof row?.Name === 'string' &&
+      typeof row.AppID === 'string' &&
+      row.Name.toLowerCase() === wanted.toLowerCase()
+  )
+  return found ? { appId: String(found.AppID), title: String(found.Name) } : null
+}
+
+/** Its executable, from the package's manifest, since approvals and limits go by that path. */
+async function storeAppExecutable(appId: string, signal?: AbortSignal): Promise<string | null> {
+  const [family, application] = appId.split('!')
+  const packageName = family.split('_')[0]
+  // Windows supplied these, and this pattern keeps them from being anything but names.
+  if (!/^[\w.-]+$/.test(packageName) || !/^[\w.-]+$/.test(application)) return null
+  const output = await runPowerShell(
+    '[Console]::OutputEncoding=[Text.Encoding]::UTF8;' +
+      `$p=Get-AppxPackage -Name '${packageName}' | Select-Object -First 1;` +
+      "$m=[xml](Get-Content -LiteralPath (Join-Path $p.InstallLocation 'AppxManifest.xml'));" +
+      `$a=@($m.Package.Applications.Application) | Where-Object { $_.Id -eq '${application}' } | Select-Object -First 1;` +
+      'Join-Path $p.InstallLocation $a.Executable',
+    signal
+  )
+  const path = output.trim()
+  return /\.exe$/i.test(path) ? path : null
+}
+
 /** An app that isn't running, found by name. Nothing here starts it. */
 export async function findInstalledApp(
   name: string,
   signal?: AbortSignal
 ): Promise<ComputerApp | null> {
-  return matchInstalledApp(await runPowerShell(LIST_START_MENU_APPS, signal), name)
+  const shortcut = matchInstalledApp(await runPowerShell(LIST_START_MENU_APPS, signal), name)
+  if (shortcut) return shortcut
+  const store = matchStoreApp(await runPowerShell(LIST_STORE_APPS, signal), name)
+  const path = store && (await storeAppExecutable(store.appId, signal))
+  if (!path) return null
+  return {
+    pid: 0,
+    name: basename(path.replaceAll('\\', '/')).replace(/\.exe$/i, ''),
+    path,
+    access: computerAppAccess(path),
+    startTarget: `shell:AppsFolder\\${store.appId}`,
+    title: store.title
+  }
 }
 
 export function powershellPath(): string {

@@ -115,6 +115,15 @@ public static class SideKickWindows {
       && Child(top, "Chrome_RenderWidgetHostHWND") == IntPtr.Zero
       && Child(top, "InputSiteWindowClass") == IntPtr.Zero;
   }
+  // A Store app's window belongs to a shared host. The app itself draws in a window inside it.
+  static IntPtr StoreAppWindow(IntPtr frame) {
+    return ClassOf(frame) == "ApplicationFrameWindow" ? Child(frame, "Windows.UI.Core.CoreWindow") : IntPtr.Zero;
+  }
+  static uint OwnerOf(IntPtr h) {
+    uint pid;
+    GetWindowThreadProcessId(h, out pid);
+    return pid;
+  }
   static string PathOf(uint pid) {
     IntPtr process = OpenProcess(0x1000, false, pid);
     if (process == IntPtr.Zero) return null;
@@ -128,9 +137,10 @@ public static class SideKickWindows {
   public static string Apps() {
     System.Collections.Generic.Dictionary<uint, string> paths = new System.Collections.Generic.Dictionary<uint, string>();
     EnumWindows(delegate(IntPtr h, IntPtr l) {
-      uint pid;
-      GetWindowThreadProcessId(h, out pid);
-      if (IsWindowVisible(h) && GetWindow(h, 4) == IntPtr.Zero && !paths.ContainsKey(pid)) {
+      if (!IsWindowVisible(h) || GetWindow(h, 4) != IntPtr.Zero) return true;
+      IntPtr storeApp = StoreAppWindow(h);
+      uint pid = OwnerOf(storeApp != IntPtr.Zero ? storeApp : h);
+      if (!paths.ContainsKey(pid)) {
         string path = PathOf(pid);
         if (path != null) paths[pid] = path;
       }
@@ -144,20 +154,20 @@ public static class SideKickWindows {
   public static string WindowsOf(uint pid) {
     StringBuilder all = new StringBuilder();
     EnumWindows(delegate(IntPtr h, IntPtr l) {
-      uint owner;
       Rect r;
       int cloaked;
-      GetWindowThreadProcessId(h, out owner);
-      if (owner != pid || !IsWindowVisible(h) || IsIconic(h) || !GetWindowRect(h, out r)) return true;
+      IntPtr storeApp = StoreAppWindow(h);
+      IntPtr inner = storeApp != IntPtr.Zero ? storeApp : h;
+      if (OwnerOf(inner) != pid || !IsWindowVisible(h) || IsIconic(h) || !GetWindowRect(inner, out r)) return true;
       if (DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0) return true;
       // What shows: a window's own rectangle has invisible borders, which pictures of it leave out.
       Rect frame;
-      if (DwmGetWindowAttribute(h, 9, out frame, 16) == 0) r = frame;
+      if (inner == h && DwmGetWindowAttribute(h, 9, out frame, 16) == 0) r = frame;
       StringBuilder title = new StringBuilder(512);
       GetWindowText(h, title, 512);
       string text = title.ToString().Replace('\\r', ' ').Replace('\\n', ' ').Replace('\\u0001', ' ');
       if (text == "" || text == "Program Manager") return true;
-      all.Append(h.ToInt64()).Append(',').Append(r.L).Append(',').Append(r.T).Append(',').Append(r.R - r.L).Append(',').Append(r.B - r.T).Append(',').Append(text).Append('\\u0001');
+      all.Append(inner.ToInt64()).Append(',').Append(r.L).Append(',').Append(r.T).Append(',').Append(r.R - r.L).Append(',').Append(r.B - r.T).Append(',').Append(text).Append('\\u0001');
       return true;
     }, IntPtr.Zero);
     return all.ToString();
@@ -167,9 +177,7 @@ public static class SideKickWindows {
   public static long RestoreBehind(uint pid) {
     IntPtr found = IntPtr.Zero;
     EnumWindows(delegate(IntPtr h, IntPtr l) {
-      uint owner;
-      GetWindowThreadProcessId(h, out owner);
-      if (owner == pid && found == IntPtr.Zero && IsWindowVisible(h) && IsIconic(h)) {
+      if (OwnerOf(h) == pid && found == IntPtr.Zero && IsWindowVisible(h) && IsIconic(h)) {
         StringBuilder title = new StringBuilder(2);
         GetWindowText(h, title, 2);
         if (title.Length > 0) found = h;
@@ -197,9 +205,14 @@ public static class SideKickWindows {
     return true;
   }
   public static bool IsChromium(long window) { return ClassOf(new IntPtr(window)).StartsWith("Chrome_WidgetWin"); }
-  public static long Front() { return GetForegroundWindow().ToInt64(); }
+  // By the window the service knows a Store app by.
+  public static long Front() {
+    IntPtr front = GetForegroundWindow();
+    IntPtr storeApp = StoreAppWindow(front);
+    return (storeApp != IntPtr.Zero ? storeApp : front).ToInt64();
+  }
   public static bool Restore(long window) {
-    IntPtr h = new IntPtr(window);
+    IntPtr h = GetAncestor(new IntPtr(window), 2);
     uint me = GetCurrentThreadId();
     uint front = GetWindowThreadProcessId(GetForegroundWindow(), IntPtr.Zero);
     uint target = GetWindowThreadProcessId(h, IntPtr.Zero);
@@ -212,7 +225,7 @@ public static class SideKickWindows {
     return done;
   }
   public static bool Visible(long window) {
-    IntPtr h = new IntPtr(window);
+    IntPtr h = GetAncestor(new IntPtr(window), 2);
     Rect r;
     if (!IsWindowVisible(h) || IsIconic(h) || !GetWindowRect(h, out r)) return false;
     int w = r.R - r.L, t = r.B - r.T, seen = 0;
@@ -245,7 +258,7 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       'start' {
         $info = New-Object System.Diagnostics.ProcessStartInfo ([string]$c.path)
         $info.UseShellExecute = $true
-        $info.WorkingDirectory = [System.IO.Path]::GetDirectoryName([string]$c.path)
+        if ($c.path -notlike 'shell:*') { $info.WorkingDirectory = [System.IO.Path]::GetDirectoryName([string]$c.path) }
         [void][System.Diagnostics.Process]::Start($info)
         $answer = $true
       }
@@ -447,9 +460,10 @@ export class ComputerUseWindows {
   }
 
   /**
-   * Starts an app through the Windows shell, with no arguments. Started directly, it would inherit
-   * SideKick's open handles: an Excel started that way kept SideKick's debugging port open after
-   * SideKick had closed, so the next start couldn't have it.
+   * Starts an app through the Windows shell, with no arguments: an executable, or a Store app's
+   * `shell:AppsFolder` entry. Started directly, it would inherit SideKick's open handles: an Excel
+   * started that way kept SideKick's debugging port open after SideKick had closed, so the next start
+   * couldn't have it.
    */
   launch(path: string): Promise<boolean> {
     return this.confirm({ op: 'start', path })

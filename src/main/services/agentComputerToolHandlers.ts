@@ -11,7 +11,7 @@ import {
 import { saveViewedImagePreview } from './viewedImagePreviews'
 
 const IMAGE_TYPES: readonly ToolResultImageMimeType[] = ['image/png', 'image/jpeg', 'image/webp']
-const MAX_BATCH_STEPS = 20
+const MAX_BATCH_STEPS = 50
 // Enough for a menu or a field to be ready for the next step.
 const BATCH_STEP_PAUSE_MS = 150
 
@@ -206,19 +206,22 @@ export function registerComputerToolHandlers(
         })
       }
       switch (action) {
-        case 'request_app':
-          return await succeed(await service.requestApp(chat, app, signal))
-        case 'look':
+        case 'request_app': {
+          const answer = await service.requestApp(chat, app, signal)
+          // Every job goes on to look, and asking for it would take a turn of its own.
+          const first = await service.look(chat, app, true, signal).catch((error) => {
+            if (signal.aborted || !(error instanceof ComputerUseRefusal)) throw error
+            return null
+          })
+          return first ? await showLook(first, `${answer}\n`) : await succeed(answer)
+        }
+        case 'look': {
+          const find = text(args, 'find') || undefined
+          // A search answers in words, and the model already has the picture.
           return await showLook(
-            await service.look(
-              chat,
-              app,
-              true,
-              signal,
-              number(args, 'window'),
-              text(args, 'find') || undefined
-            )
+            await service.look(chat, app, !find, signal, number(args, 'window'), find)
           )
+        }
         case 'zoom': {
           const [x, y, toX, toY] = ['x', 'y', 'to_x', 'to_y'].map((key) => number(args, key))
           if (x === undefined || y === undefined || toX === undefined || toY === undefined) {

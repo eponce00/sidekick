@@ -34,7 +34,7 @@ async function confirmApp(
     {
       type: 'warning',
       title: 'Let the agent use this app?',
-      message: `Let the agent ${starting ? 'start and use' : 'use'} ${target.name}?`,
+      message: `Let the agent ${starting ? 'start and use' : 'use'} ${target.title ?? target.name}?`,
       iconDataUrl: icon && !icon.isEmpty() ? icon.toDataURL() : undefined,
       detail: [
         'The agent can read what this app shows, and click and type in it. What it reads goes to the model you selected.',

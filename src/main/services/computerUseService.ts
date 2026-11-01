@@ -2,13 +2,18 @@ import { createHash } from 'crypto'
 import { computerAppAccess, findInstalledApp, type ComputerApp } from './computerUseApps'
 import {
   computerActionPoint,
+  computerRowPoints,
   startComputerDriver,
   type ComputerDriver,
   type ComputerDriverResult,
   type ComputerWindowBounds
 } from './computerUseDriver'
 import type { ComputerHighlightTarget } from './computerUseHighlight'
-import { computerVirtualKey, type ComputerUseWindows } from './computerUseWindows'
+import {
+  computerVirtualKey,
+  type ComputerAppWindow,
+  type ComputerUseWindows
+} from './computerUseWindows'
 
 export class ComputerUseRefusal extends Error {
   constructor(
@@ -89,6 +94,7 @@ interface ChatAccess {
       pid: number
       windowId: number
       imageWidth?: number
+      imageHeight?: number
       imageHash?: string
       /** The picture itself, to judge how much a later one differs. */
       image?: string
@@ -96,14 +102,22 @@ interface ChatAccess {
       treeKey: string
       /** The list of controls this look returned, to say what a row number is. */
       tree: string
+      /** The last list of every control, not a search's, to say what has changed since. */
+      fullTree: string
+      /** Where each row is on screen, so the pointer can get there first. */
+      rowPoints: Map<number, { x: number; y: number }>
       /** The last zoom into this picture, to say where a click on the zoomed picture is. */
-      zoom?: { x: number; y: number; width: number; height: number; imageWidth: number }
+      zoom?: { x: number; y: number; width: number; imageWidth: number }
+      /** It gave no controls in time, so looks don't wait as long for them. */
+      slowControls?: boolean
     }
   >
   /** The window the agent last chose in each app with several, by lower-case path. */
   windows: Map<string, number>
   /** Windows already seen in each app, to notice a dialog opening. */
   knownWindows: Map<string, Set<number>>
+  /** A name the agent asked for that isn't an executable's, like Calculator, with the path it meant. */
+  friendlyNames: Map<string, string>
   /** Steps in a row that changed nothing on screen. */
   unchangedSteps: number
   notified: boolean
@@ -116,6 +130,18 @@ const MAX_TEXT = 5_000
 const APP_START_WAIT_MS = 20_000
 const NEW_WINDOW_GRACE_MS = 3_000
 const POLL_MS = 500
+/** What each action reports once sent. The driver's own wording, full of screen coordinates and its
+ * delivery details, only set a model working out scaling it has no need of. */
+const SENT: Partial<Record<Parameters<ComputerDriver['call']>[0], string>> = {
+  click: 'Click sent',
+  double_click: 'Double click sent',
+  right_click: 'Right click sent',
+  drag: 'Drag sent',
+  type_text: 'Text sent',
+  press_key: 'Key sent',
+  scroll: 'Scroll sent',
+  set_value: 'Value set'
+}
 // The real keyboard goes to whichever window has focus, and the app comes forward over what the user
 // is doing, so this waits until they have stepped away. It stops short of the tool's two minutes.
 const TAKEOVER_IDLE_SECONDS = 10
@@ -146,8 +172,12 @@ const WARN_UNCHANGED_STEPS = 3
 // Past these, more of the same only risks the agent going somewhere strange in someone's app.
 const MAX_UNCHANGED_STEPS = 5
 const MAX_UNCHANGED_REAL_STEPS = 8
-// The driver pads a zoom by this much on every side, so the target stays in view.
-const ZOOM_PADDING = 0.2
+// Wide enough to read small text in, even from a window that is already shown at its full size.
+const ZOOM_PICTURE_WIDTH = 1200
+// The driver gives an app a second to list its controls. Docker Desktop sometimes takes longer, and
+// the agent got an empty list. An app that never answers, as WhatsApp doesn't, needn't cost more.
+const CONTROLS_WAIT_MS = 3_000
+const SLOW_CONTROLS_WAIT_MS = 1_000
 // Words on a control that can't be taken back. A name can't catch everything, so this makes the agent
 // stop and think about what it is pressing rather than promising safety.
 const RISKY_CONTROL =
@@ -206,13 +236,15 @@ async function picturesDiffer(a: string, b: string): Promise<boolean> {
 
 /** A numbered row of the driver's tree. Its header line mentions row numbers too. */
 const TREE_ROW = /^\W*\[\d+\]/m
+/** Any row of the tree, numbered or not: a disabled button or a line of text has no number. */
+const TREE_LINE = /^\s*- /
 
 /**
  * The rows of a tree that differ from an earlier one, or null when most do. A row keeps its number
  * only if its whole line is the same, so whatever isn't listed can still be pressed by its number.
  */
 function changedRows(before: string, now: string): string | null {
-  const rows = (tree: string): string[] => tree.split('\n').filter((line) => TREE_ROW.test(line))
+  const rows = (tree: string): string[] => tree.split('\n').filter((line) => TREE_LINE.test(line))
   const [old, current] = [rows(before), rows(now)]
   const [oldSet, currentSet] = [new Set(old), new Set(current)]
   const added = current.filter((row) => !oldSet.has(row))
@@ -223,6 +255,24 @@ function changedRows(before: string, now: string): string | null {
     ...(added.length ? ['New or changed:', ...added] : []),
     ...(gone.length ? ['No longer there:', ...gone] : [])
   ].join('\n')
+}
+
+/** A part of a picture of the window, enlarged, so small text can be read at any window size. */
+async function cropPicture(
+  data: string,
+  region: { x: number; y: number; width: number; height: number },
+  lookWidth: number
+): Promise<{ data: string; width: number }> {
+  const { createCanvas, loadImage } = await import('@napi-rs/canvas')
+  const picture = await loadImage(Buffer.from(data, 'base64'))
+  const ratio = picture.width / lookWidth
+  const [x, y] = [Math.max(0, region.x * ratio), Math.max(0, region.y * ratio)]
+  const width = Math.min(region.width * ratio, picture.width - x)
+  const height = Math.min(region.height * ratio, picture.height - y)
+  const scale = Math.max(1, ZOOM_PICTURE_WIDTH / width)
+  const canvas = createCanvas(Math.round(width * scale), Math.round(height * scale))
+  canvas.getContext('2d').drawImage(picture, x, y, width, height, 0, 0, canvas.width, canvas.height)
+  return { data: canvas.toBuffer('image/png').toString('base64'), width: canvas.width }
 }
 
 function centerOf(bounds: ComputerWindowBounds | null): { x: number; y: number } | null {
@@ -261,10 +311,12 @@ export function computerKeyCombination(
 }
 
 function wantedName(name: string): string {
-  return name
+  const wanted = name
     .trim()
     .replace(/\.exe$/i, '')
     .toLowerCase()
+  // It has no Start menu shortcut to find it by.
+  return wanted === 'file explorer' ? 'explorer' : wanted
 }
 
 /** Owns the driver, one chat at a time, and every decision about what the agent may reach. */
@@ -292,6 +344,7 @@ export class ComputerUseService {
         snapshots: new Map(),
         windows: new Map(),
         knownWindows: new Map(),
+        friendlyNames: new Map(),
         unchangedSteps: 0,
         notified: false
       }
@@ -318,15 +371,27 @@ export class ComputerUseService {
     }
   }
 
-  private async running(name: string, signal: AbortSignal): Promise<ComputerApp | undefined> {
+  /** The running app by name; of several processes, the one with a window a person could see. */
+  private async running(
+    name: string,
+    signal: AbortSignal,
+    friendlyPath?: string
+  ): Promise<ComputerApp | undefined> {
     signal.throwIfAborted()
     const wanted = wantedName(name)
-    return (await this.deps.listApps()).find((a) => a.name.toLowerCase() === wanted)
+    const matches = (await this.deps.listApps()).filter(
+      (a) => a.name.toLowerCase() === wanted || a.path.toLowerCase() === friendlyPath
+    )
+    for (const app of matches) {
+      if ((await this.deps.appWindows.windowsOf(app.pid)).length) return app
+    }
+    return matches[0]
   }
 
   /** The app by name, its real executable, checked on every call: a name proves nothing. */
-  private async resolve(name: string, signal: AbortSignal): Promise<ComputerApp> {
-    const app = await this.running(name, signal)
+  private async resolve(chat: string, name: string, signal: AbortSignal): Promise<ComputerApp> {
+    const friendly = this.access(chat).friendlyNames.get(wantedName(name))
+    const app = await this.running(name, signal, friendly)
     if (!app) {
       throw new ComputerUseRefusal(`${name} has no window open. Use request_app to start it.`)
     }
@@ -334,21 +399,38 @@ export class ComputerUseService {
     return app
   }
 
+  /** An app's windows, bringing a minimized one back first, since only a window that shows can be used. */
+  private async openWindows(app: ComputerApp): Promise<ComputerAppWindow[]> {
+    const listed = await this.deps.appWindows.windowsOf(app.pid)
+    if (listed.length) return listed
+    const restored = await this.deps.appWindows.restoreBehind(app.pid)
+    if (!restored) return listed
+    this.restored.add(restored)
+    await new Promise((resolve) => setTimeout(resolve, RESTORE_SETTLE_MS))
+    return this.deps.appWindows.windowsOf(app.pid)
+  }
+
   async requestApp(chat: string, name: string, signal: AbortSignal): Promise<string> {
     this.refuseIfTaken(chat)
-    const running = await this.running(name, signal)
-    const app =
-      running ?? (await (this.deps.findInstalled ?? findInstalledApp)(wantedName(name), signal))
+    const access = this.access(chat)
+    const wanted = wantedName(name)
+    let running = await this.running(name, signal, access.friendlyNames.get(wanted))
+    const app = running ?? (await (this.deps.findInstalled ?? findInstalledApp)(wanted, signal))
     if (!app) {
       throw new ComputerUseRefusal(
         `${name} has no window open, and no installed app has that name. Ask the user to open it.`
       )
     }
     this.refuseIfBlocked(app)
-    const access = this.access(chat)
     const key = app.path.toLowerCase()
+    // A name from the Start menu can belong to something already running under its executable's.
+    running ??= (await this.deps.listApps()).find((a) => a.path.toLowerCase() === key)
+    if (app.name.toLowerCase() !== wanted) access.friendlyNames.set(wanted, key)
     const approved = access.approved.has(key)
-    if (approved && running) return `${app.name} is already approved for this chat.`
+    // File Explorer runs with no window of its own, and a tray app with none showing. Starting
+    // either again opens one.
+    const needsStarting = !running || !(await this.openWindows(running)).length
+    if (approved && !needsStarting) return `${app.name} is already approved for this chat.`
     if (!approved && !(await this.deps.confirmApp(app, signal, !running))) {
       throw new ComputerUseRefusal(
         `The user did not allow ${app.name}. Do not try to reach it another way.`
@@ -357,24 +439,26 @@ export class ComputerUseService {
     // Another chat may have started while the question waited on the user.
     this.claim(chat)
     access.approved.set(key, app.path)
-    if (!running) {
+    if (needsStarting) {
       const elsewhere = await this.startAndWait(app, signal)
       if (elsewhere) return elsewhere
     }
-    return `${app.name} is ${running ? '' : 'started and '}approved for this chat. Use look to see it.`
+    return `${app.name} is ${needsStarting ? 'started and ' : ''}approved for this chat.`
   }
 
   /** Null once the app's window is up; otherwise what the agent should know instead. */
   private async startAndWait(app: ComputerApp, signal: AbortSignal): Promise<string | null> {
     const before = new Set((await this.deps.listApps()).map((a) => a.path.toLowerCase()))
-    this.deps.startApp(app.path)
+    this.deps.startApp(app.startTarget ?? app.path)
     const key = app.path.toLowerCase()
     const deadline = Date.now() + APP_START_WAIT_MS
     let newcomers: string[] = []
     while (Date.now() < deadline) {
       signal.throwIfAborted()
       const apps = await this.deps.listApps()
-      if (apps.some((a) => a.path.toLowerCase() === key)) return null
+      for (const started of apps.filter((a) => a.path.toLowerCase() === key)) {
+        if ((await this.deps.appWindows.windowsOf(started.pid)).length) return null
+      }
       newcomers = apps
         .filter((a) => !before.has(a.path.toLowerCase()) && a.access.kind !== 'blocked')
         .map((a) => a.name)
@@ -439,20 +523,12 @@ export class ComputerUseService {
     driver: ComputerDriver
   }> {
     this.claim(chat)
-    const app = await this.resolve(name, signal)
+    const app = await this.resolve(chat, name, signal)
     if (!this.access(chat).approved.has(app.path.toLowerCase())) {
       throw new ComputerUseRefusal(`${app.name} is not approved. Use request_app first.`)
     }
     const driver = await this.driverFor_(chat)
-    let listed = await this.deps.appWindows.windowsOf(app.pid)
-    if (listed.length === 0) {
-      const restored = await this.deps.appWindows.restoreBehind(app.pid)
-      if (restored) {
-        this.restored.add(restored)
-        await new Promise((resolve) => setTimeout(resolve, RESTORE_SETTLE_MS))
-        listed = await this.deps.appWindows.windowsOf(app.pid)
-      }
-    }
+    const listed = await this.openWindows(app)
     const ids = listed.map((window) => window.id)
     if (ids.length === 0) {
       throw new ComputerUseRefusal(
@@ -584,12 +660,15 @@ export class ComputerUseService {
       signal,
       chosenWindow
     )
+    const earlier = this.access(chat).snapshots.get(app.path.toLowerCase())
     const state = await driver.call(
       'get_window_state',
       {
         pid,
         window_id: windowId,
         include_screenshot: includeImage,
+        tree_format: 'both',
+        timeout_ms: earlier?.slowControls ? SLOW_CONTROLS_WAIT_MS : CONTROLS_WAIT_MS,
         max_elements: find ? MAX_CONTROLS_SEARCHED : MAX_CONTROLS,
         ...(find ? { query: find } : {}),
         ...(includeImage ? { max_image_dimension: 1280 } : {})
@@ -604,15 +683,26 @@ export class ComputerUseService {
     let treeKey = ''
     let sameControls = false
     let onlyChanged: string | undefined
+    const counts = state.structured as
+      | {
+          truncated?: unknown
+          returned_element_count?: unknown
+          total_element_count?: unknown
+          screenshot_height?: number
+        }
+      | undefined
+    const gaveNoControls = counts?.truncated === true && !TREE_ROW.test(state.text)
     if (snapshot) {
       const key = app.path.toLowerCase()
       const before = this.access(chat).snapshots.get(key)
       const image = state.images[0]?.data
       imageHash = image ? createHash('sha256').update(image).digest('hex') : undefined
-      treeKey = state.text.replace(/snapshot_id=\S+/g, '').replace(/\d+/g, '#')
-      sameControls = TREE_ROW.test(state.text) && before?.treeKey === treeKey
+      treeKey = find
+        ? (before?.treeKey ?? '')
+        : state.text.replace(/snapshot_id=\S+/g, '').replace(/\d+/g, '#')
+      sameControls = !find && TREE_ROW.test(state.text) && before?.treeKey === treeKey
       if (before?.windowId === windowId && !find) {
-        onlyChanged = changedRows(before.tree, state.text) ?? undefined
+        onlyChanged = changedRows(before.fullTree, state.text) ?? undefined
       }
       if (imageHash && before?.imageHash && before.windowId === windowId) {
         changed =
@@ -623,21 +713,31 @@ export class ComputerUseService {
         snapshot,
         pid,
         windowId,
-        imageWidth: pictureWidth(state.images[0]?.data),
-        imageHash,
-        image: state.images[0]?.data,
+        // A search brings no picture, and clicks still go by the last one.
+        imageWidth: pictureWidth(state.images[0]?.data) ?? before?.imageWidth,
+        imageHeight: includeImage ? counts?.screenshot_height : before?.imageHeight,
+        imageHash: imageHash ?? before?.imageHash,
+        image: state.images[0]?.data ?? before?.image,
         treeKey,
-        tree: state.text
+        tree: state.text,
+        fullTree: find ? (before?.fullTree ?? '') : state.text,
+        rowPoints: computerRowPoints(state.structured),
+        slowControls: gaveNoControls,
+        zoom: find ? before?.zoom : undefined
       })
     }
-    const counts = state.structured as
-      | { truncated?: unknown; returned_element_count?: unknown; total_element_count?: unknown }
-      | undefined
     // The list runs from the top of the app whatever is scrolled into view, so it can disagree with
     // the picture, and an agent counting from it has to be told it isn't complete.
-    const cutOff =
-      counts?.truncated === true
+    const cutOff = gaveNoControls
+      ? "The app didn't list its controls in time, so work from the picture, or look again.\n"
+      : counts?.truncated === true
         ? `This list is cut off: it shows ${String(counts.returned_element_count)} of ${String(counts.total_element_count)} controls, from the top of the app whatever is scrolled into view. Trust the picture for what is on screen, and use look with find to search all of them.\n`
+        : ''
+    // Windows differ in shape, and a model that assumed 16:9 aimed past the bottom of one for 30 steps.
+    const shot = this.access(chat).snapshots.get(app.path.toLowerCase())
+    const size =
+      includeImage && shot?.imageWidth && shot.imageHeight
+        ? `The picture is ${shot.imageWidth} by ${shot.imageHeight} pixels.\n`
         : ''
     const noMatch = find && !TREE_ROW.test(state.text) ? `\nNo control matches "${find}".` : ''
     const otherWindows =
@@ -646,12 +746,12 @@ export class ComputerUseService {
         : ''
     return {
       // The driver's line about how to spell a token is about its own API, not this tool's.
-      text: `${UNTRUSTED}\n${cutOff}${otherWindows}${state.text.replace(/^element_token for row.*$/m, '').trim()}${noMatch}`,
+      text: `${UNTRUSTED}\n${size}${cutOff}${otherWindows}${state.text.replace(/^element_token for row.*$/m, '').trim()}${noMatch}`,
       images: state.images,
       changed,
       sameControls,
-      controls: Boolean(find) || TREE_ROW.test(state.text),
-      onlyChanged: onlyChanged && `${UNTRUSTED}\n${cutOff}${onlyChanged}`
+      controls: Boolean(find) || gaveNoControls || TREE_ROW.test(state.text),
+      onlyChanged: onlyChanged && `${UNTRUSTED}\n${size}${cutOff}${onlyChanged}`
     }
   }
 
@@ -704,6 +804,11 @@ export class ComputerUseService {
     confirmRisky = false
   ): Promise<string> {
     const { app, pid, windowId, bounds, driver } = await this.target(chat, name, signal)
+    this.refuseOutsidePicture(chat, app, [
+      [args.x, args.y],
+      [args.from_x, args.from_y],
+      [args.to_x, args.to_y]
+    ])
     const steps = this.access(chat).unchangedSteps
     if (steps >= (realInput ? MAX_UNCHANGED_REAL_STEPS : MAX_UNCHANGED_STEPS)) {
       throw new ComputerUseRefusal(
@@ -750,7 +855,7 @@ export class ComputerUseService {
     }
     if (realInput) await this.waitToUseRealInput(app, signal)
     // The pointer gets there first, so a click doesn't happen ahead of it.
-    const aimedAt = this.aimedAt(chat, app, args, bounds, scaleNow)
+    const aimedAt = this.aimedAt(chat, app, args, element, bounds, scaleNow)
     if (aimedAt && !realInput) await this.deps.moveCursor(aimedAt)
     const frontBefore = realInput ? 0 : await this.deps.appWindows.front()
     const result = realInput
@@ -770,7 +875,7 @@ export class ComputerUseService {
       if (sent) {
         const point = pointOnScreen(args, bounds, scale)
         if (point) void this.deps.moveCursor(point)
-        return `Sent to ${app.name} in the background. It can't be confirmed from here, so use look to see whether it arrived.`
+        return 'Sent in the background, where it can only be confirmed by what the app shows next.'
       }
       throw new ComputerUseRefusal(
         `${app.name} can't take this step in the background. You decide: repeat it with real_input true, which waits until the user has stepped away and then briefly uses their real mouse and keyboard, or tell the user what you need done.`
@@ -790,7 +895,28 @@ export class ComputerUseService {
           : computerActionPoint(result.text)
     if (point && !realInput) await this.deps.moveCursor(point)
     // Only that it was sent: whether it landed is for the look that follows to say.
-    return `${pressing ? `Click sent to ${pressing}. ` : ''}${(result.text || 'Sent.').replace(/^\W+/u, '')}`
+    return `${SENT[tool] ?? 'Sent'}${pressing ? ` to ${pressing}` : ''}.`
+  }
+
+  /** A point past the picture isn't in the window, so it would land on whatever is beside it. */
+  private refuseOutsidePicture(
+    chat: string,
+    app: ComputerApp,
+    points: ReadonlyArray<readonly [unknown, unknown]>
+  ): void {
+    const seen = this.access(chat).snapshots.get(app.path.toLowerCase())
+    if (!seen?.imageWidth || !seen.imageHeight) return
+    const { imageWidth: width, imageHeight: height } = seen
+    for (const [x, y] of points) {
+      if (
+        (typeof x === 'number' && (x < 0 || x >= width)) ||
+        (typeof y === 'number' && (y < 0 || y >= height))
+      ) {
+        throw new ComputerUseRefusal(
+          `That point is outside the picture of ${app.name}, which is ${width} by ${height} pixels, so nothing was done.`
+        )
+      }
+    }
   }
 
   private imageScale(chat: string, app: ComputerApp, bounds: ComputerWindowBounds | null): number {
@@ -803,23 +929,18 @@ export class ComputerUseService {
     chat: string,
     app: ComputerApp,
     args: Record<string, unknown>,
+    element: number | undefined,
     bounds: ComputerWindowBounds | null,
     scale: number
   ): { x: number; y: number } | null {
+    if (element !== undefined) {
+      const seen = this.access(chat).snapshots.get(app.path.toLowerCase())
+      return seen?.rowPoints.get(element) ?? null
+    }
     if (args.from_x !== undefined) {
       return pointOnScreen({ x: args.from_x, y: args.from_y }, bounds, scale)
     }
-    if (args.from_zoom !== true) return pointOnScreen(args, bounds, scale)
-    const zoom = this.access(chat).snapshots.get(app.path.toLowerCase())?.zoom
-    if (!zoom || typeof args.x !== 'number' || typeof args.y !== 'number') return null
-    return pointOnScreen(
-      {
-        x: zoom.x + (args.x * zoom.width) / zoom.imageWidth,
-        y: zoom.y + (args.y * zoom.width) / zoom.imageWidth
-      },
-      bounds,
-      scale
-    )
+    return pointOnScreen(args, bounds, scale)
   }
 
   /** What a click is about to press: a row's own line, or what Windows says is at the point. */
@@ -840,7 +961,7 @@ export class ComputerUseService {
         .find((row) => /^\W*\[(\d+)\] /.exec(row)?.[1] === String(element))
       return line?.replace(/^.*?\[\d+\]\s*/, '').replace(/\s*\[.*$/, '') ?? ''
     }
-    const point = this.aimedAt(chat, app, args, bounds, scale)
+    const point = this.aimedAt(chat, app, args, undefined, bounds, scale)
     return point ? this.deps.appWindows.controlAt(app.pid, point).catch(() => '') : ''
   }
 
@@ -980,12 +1101,20 @@ export class ComputerUseService {
     realInput = false,
     confirmRisky = false
   ): Promise<string> {
-    const point =
-      target.element === undefined
-        ? { x: target.x, y: target.y, ...(target.fromZoom ? { from_zoom: true } : {}) }
-        : {}
     if (target.element === undefined && (target.x === undefined || target.y === undefined)) {
       throw new ComputerUseRefusal('Give an element number, or both x and y.')
+    }
+    let point: { x?: number; y?: number } = {}
+    if (target.element === undefined) {
+      point = { x: target.x, y: target.y }
+      if (target.fromZoom) {
+        const app = await this.resolve(chat, name, signal)
+        const zoom = this.access(chat).snapshots.get(app.path.toLowerCase())?.zoom
+        if (!zoom) throw new ComputerUseRefusal('Use zoom first.', true)
+        const look = (at: number | undefined, from: number): number =>
+          Math.round(from + ((at ?? 0) * zoom.width) / zoom.imageWidth)
+        point = { x: look(target.x, zoom.x), y: look(target.y, zoom.y) }
+      }
     }
     const tool = target.double
       ? 'double_click'
@@ -1003,32 +1132,39 @@ export class ComputerUseService {
     signal: AbortSignal
   ): Promise<ComputerLook> {
     const { app, pid, windowId, driver } = await this.target(chat, name, signal)
-    // The driver refuses anything wider, so asking for too much gets the middle of it.
+    const seen = this.access(chat).snapshots.get(app.path.toLowerCase())
+    if (!seen?.imageWidth) throw new ComputerUseRefusal(`Use look on ${app.name} first.`, true)
+    this.refuseOutsidePicture(chat, app, [[region.x, region.y]])
+    // Asking for too much gets the middle of it, so the small things stay readable.
     const center = (region.x + region.toX) / 2
     const x = region.toX - region.x > MAX_ZOOM_WIDTH ? center - MAX_ZOOM_WIDTH / 2 : region.x
     const toX = region.toX - region.x > MAX_ZOOM_WIDTH ? center + MAX_ZOOM_WIDTH / 2 : region.toX
+    // For display only, so the rows and pixels of the last look still hold for clicks.
     const result = await driver.call(
-      'zoom',
-      { pid, window_id: windowId, x1: x, y1: region.y, x2: toX, y2: region.toY },
+      'get_window_state',
+      {
+        pid,
+        window_id: windowId,
+        include_screenshot: true,
+        include_accessibility_tree: false,
+        display_only: true,
+        max_image_dimension: 0
+      },
       signal
     )
-    if (result.isError) throw new ComputerUseRefusal(result.text)
-    const seen = this.access(chat).snapshots.get(app.path.toLowerCase())
-    const imageWidth = pictureWidth(result.images[0]?.data)
-    if (seen && imageWidth) {
-      const width = toX - x
-      const height = region.toY - region.y
-      seen.zoom = {
-        x: x - width * ZOOM_PADDING,
-        y: region.y - height * ZOOM_PADDING,
-        width: width * (1 + ZOOM_PADDING * 2),
-        height: height * (1 + ZOOM_PADDING * 2),
-        imageWidth
-      }
+    if (result.isError || !result.images[0]) {
+      throw new ComputerUseRefusal(result.text || 'That window gave no picture.', true)
     }
+    const width = toX - x
+    const crop = await cropPicture(
+      result.images[0].data,
+      { x, y: region.y, width, height: region.toY - region.y },
+      seen.imageWidth
+    )
+    seen.zoom = { x, y: region.y, width, imageWidth: crop.width }
     return {
       text: `${UNTRUSTED}\nThis is a closer view. To click something in it, use click with x and y from this picture and from_zoom true.`,
-      images: result.images,
+      images: [{ mimeType: 'image/png', data: crop.data }],
       changed: null,
       sameControls: false,
       controls: false

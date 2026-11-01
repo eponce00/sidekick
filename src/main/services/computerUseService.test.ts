@@ -352,26 +352,40 @@ describe('what the agent may reach', () => {
     const { service, call, appWindows } = harness([app('notes')])
     const answer = call.getMockImplementation()!
     // A minimal JPEG: start, then a frame header 500 wide.
-    const jpeg = Buffer.from([
-      0xff, 0xd8, 0xff, 0xc0, 0, 11, 8, 0, 100, 0x01, 0xf4, 1, 0, 0, 0, 0
-    ]).toString('base64')
+    const { createCanvas } = await import('@napi-rs/canvas')
+    const picture = (width: number, height: number): string =>
+      createCanvas(width, height).toBuffer('image/png').toString('base64')
     call.mockImplementation(async (tool, args) => ({
       ...(await answer(tool, args)),
-      images: tool === 'zoom' ? [{ mimeType: 'image/jpeg', data: jpeg }] : []
+      images:
+        tool !== 'get_window_state'
+          ? []
+          : [
+              {
+                mimeType: 'image/png',
+                data: args?.display_only ? picture(2000, 1000) : picture(1000, 500)
+              }
+            ]
     }))
     appWindows.windowsOf.mockResolvedValue([
       { id: 77, title: 'W', bounds: { x: 0, y: 0, width: 1000, height: 500 } }
     ])
     await service.requestApp('chat', 'notes', signal)
-    await service.look('chat', 'notes', false, signal)
-    await service.zoom('chat', 'notes', { x: 0, y: 0, toX: 1000, toY: 50 }, signal)
+    await expect(
+      service.click('chat', 'notes', { x: 1, y: 1, fromZoom: true }, signal)
+    ).rejects.toThrow('Use zoom first')
+    await service.look('chat', 'notes', true, signal)
+    const zoomed = await service.zoom('chat', 'notes', { x: 0, y: 0, toX: 1000, toY: 50 }, signal)
+    // The middle 500 of the look is 1000 of the full picture, enlarged to 1200.
+    const { loadImage } = await import('@napi-rs/canvas')
+    expect((await loadImage(Buffer.from(zoomed.images[0].data, 'base64'))).width).toBe(1200)
+    await service.click('chat', 'notes', { x: 600, y: 60, fromZoom: true }, signal)
     expect(call).toHaveBeenLastCalledWith(
-      'zoom',
-      expect.objectContaining({ x1: 250, x2: 750 }),
+      'click',
+      expect.objectContaining({ x: 500, y: 25 }),
       signal
     )
-    await service.click('chat', 'notes', { x: 250, y: 10, fromZoom: true }, signal)
-    expect(appWindows.controlAt).toHaveBeenCalledTimes(1)
+    expect(appWindows.controlAt).toHaveBeenCalledWith(10, { x: 500, y: 25 })
   })
 
   it('types tabs and line breaks as real keys, since they get lost as text', async () => {
@@ -401,13 +415,68 @@ describe('what the agent may reach', () => {
   it('works in a minimized app, and leaves it minimized as it found it', async () => {
     const { service, appWindows } = harness([app('notes')])
     await service.requestApp('chat', 'notes', signal)
-    appWindows.windowsOf.mockResolvedValueOnce([])
-    appWindows.restoreBehind.mockResolvedValueOnce(77)
+    let shown: ComputerAppWindow[] = []
+    appWindows.windowsOf.mockImplementation(async () => shown)
+    appWindows.restoreBehind.mockImplementationOnce(async () => {
+      shown = [{ id: 77, title: 'Window', bounds: null }]
+      return 77
+    })
     await service.look('chat', 'notes', false, signal)
     expect(appWindows.restoreBehind).toHaveBeenCalledWith(10)
     expect(appWindows.minimizeAgain).not.toHaveBeenCalled()
     service.runEnded('chat')
     await vi.waitFor(() => expect(appWindows.minimizeAgain).toHaveBeenCalledWith(77))
+  })
+
+  it('opens a window for an app running without one, as File Explorer does', async () => {
+    const { service, appWindows, startApp } = harness([app('explorer')])
+    let shown: ComputerAppWindow[] = []
+    appWindows.windowsOf.mockImplementation(async () => shown)
+    startApp.mockImplementation(() => {
+      shown = [{ id: 77, title: 'Home', bounds: null }]
+    })
+    await service.requestApp('chat', 'explorer', signal)
+    expect(startApp).toHaveBeenCalledWith('C:\\Apps\\explorer.exe')
+    expect((await service.look('chat', 'explorer', false, signal)).controls).toBe(true)
+  })
+
+  it('finds a Store app by its Start menu name, and starts it through its entry', async () => {
+    const { service, startApp, installed, confirmApp } = harness([])
+    const running = [] as ComputerApp[]
+    const calculator = { ...app('CalculatorApp'), startTarget: 'shell:AppsFolder\\calc!App' }
+    const lookup = vi.fn(async () => calculator)
+    installed.push(calculator)
+    const custom = new ComputerUseService({
+      ...(service as unknown as { deps: ConstructorParameters<typeof ComputerUseService>[0] }).deps,
+      listApps: async () => running,
+      findInstalled: lookup
+    })
+    startApp.mockImplementation(() => running.push(app('CalculatorApp')))
+    await custom.requestApp('chat', 'Calculator', signal)
+    expect(startApp).toHaveBeenCalledWith('shell:AppsFolder\\calc!App')
+    expect(confirmApp).toHaveBeenCalledTimes(1)
+    // The agent goes on calling it what it asked for.
+    expect((await custom.look('chat', 'Calculator', false, signal)).controls).toBe(true)
+  })
+
+  it('refuses to act past the edge of the picture, where it would land on something else', async () => {
+    const { service, call } = harness([app('notes')])
+    const { createCanvas } = await import('@napi-rs/canvas')
+    const data = createCanvas(1280, 672).toBuffer('image/png').toString('base64')
+    const answer = call.getMockImplementation()!
+    call.mockImplementation(async (tool, args) => ({
+      ...(await answer(tool, args)),
+      images: tool === 'get_window_state' ? [{ mimeType: 'image/png', data }] : [],
+      structured: tool === 'get_window_state' ? { screenshot_height: 672 } : undefined
+    }))
+    await service.requestApp('chat', 'notes', signal)
+    expect((await service.look('chat', 'notes', true, signal)).text).toContain('1280 by 672')
+    await expect(service.click('chat', 'notes', { x: 10, y: 700 }, signal)).rejects.toThrow(
+      'outside the picture'
+    )
+    expect(call).not.toHaveBeenCalledWith('click', expect.anything(), signal)
+    await service.click('chat', 'notes', { x: 10, y: 600 }, signal)
+    expect(call).toHaveBeenLastCalledWith('click', expect.objectContaining({ y: 600 }), signal)
   })
 
   it('holds a key combination written as one key to the same limits', async () => {
@@ -467,6 +536,14 @@ describe('what the agent may reach', () => {
     const few = await service.lookAfterAction('chat', 'notes', signal)
     expect(few.text).toContain('[1] Button "B2"')
     expect(few.text).not.toContain('Button "A"')
+    tree = [
+      '- [0] Button "A"',
+      '- [1] Button "B2"',
+      '- [2] Button "C"',
+      '- [3] Button "D"',
+      '- Text "New"'
+    ]
+    expect((await service.lookAfterAction('chat', 'notes', signal)).text).toContain('Text "New"')
     expect((await service.look('chat', 'notes', true, signal)).text).toContain('Button "A"')
     const searched = await service.look('chat', 'notes', true, signal, undefined, 'nothing')
     expect(searched.controls).toBe(true)
@@ -520,23 +597,6 @@ describe('what the agent may reach', () => {
     expect(call).toHaveBeenLastCalledWith(
       'drag',
       expect.objectContaining({ delivery_mode: 'foreground' }),
-      signal
-    )
-  })
-
-  it('zooms through the driver and clicks on what the zoom showed', async () => {
-    const { service, call } = harness([app('notes')])
-    await service.requestApp('chat', 'notes', signal)
-    await service.zoom('chat', 'notes', { x: 10, y: 20, toX: 110, toY: 80 }, signal)
-    expect(call).toHaveBeenLastCalledWith(
-      'zoom',
-      expect.objectContaining({ x1: 10, y1: 20, x2: 110, y2: 80 }),
-      signal
-    )
-    await service.click('chat', 'notes', { x: 3, y: 4, fromZoom: true }, signal)
-    expect(call).toHaveBeenLastCalledWith(
-      'click',
-      expect.objectContaining({ x: 3, y: 4, from_zoom: true }),
       signal
     )
   })
