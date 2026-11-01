@@ -7,6 +7,7 @@ import { ComputerUseHighlight } from './computerUseHighlight'
 import { ComputerUseRememberedApps } from './computerUseRememberedApps'
 import { ComputerUseService } from './computerUseService'
 import { ComputerUseWindows } from './computerUseWindows'
+import { whileWaitingForUser } from './toolExecutionPipeline'
 import { showTrustedDialog } from './trustedDialog'
 
 const ALLOW_FOR_CHAT = 'Allow for this chat'
@@ -60,6 +61,40 @@ async function confirmApp(
   return answer === ALWAYS_ALLOW || answer === ALLOW_FOR_CHAT
 }
 
+const ACCESS_QUESTIONS = {
+  screen: {
+    title: 'Let the agent see your whole screen?',
+    detail:
+      'It sees what every app shows on your screen, and what it sees goes to the model you selected. Windows of password managers, Windows security prompts and SideKick are blanked out. It can only look: to click or type in an app, it still has to ask you for that app.'
+  },
+  clipboard: {
+    title: 'Let the agent read what you copied?',
+    detail:
+      'What you last copied came from an app you have not given it in this chat, and what it reads goes to the model you selected. Anything from a password manager stays private.'
+  }
+} as const
+
+async function confirmAccess(what: 'screen' | 'clipboard', signal: AbortSignal): Promise<boolean> {
+  const { title, detail } = ACCESS_QUESTIONS[what]
+  const buttons = ['Don’t allow', ALLOW_FOR_CHAT]
+  const window = appState.mainWindowRef
+  const result = await showTrustedDialog(
+    window && !window.isDestroyed() ? window : null,
+    {
+      type: 'warning',
+      title,
+      message: title,
+      detail,
+      buttons,
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true
+    },
+    { signal }
+  )
+  return buttons[result.response] === ALLOW_FOR_CHAT
+}
+
 /** Where the driver that ships with SideKick is. */
 function bundledDriverPath(): string {
   return app.isPackaged
@@ -84,9 +119,13 @@ export function computerUseService(): ComputerUseService | null {
     moveCursor: (point) => highlight.moveCursor(point),
     listApps: () => appWindows.apps(),
     showPreview: (image) => highlight.showPreview(image),
+    showTeachStep: (step, signal) =>
+      whileWaitingForUser(() => highlight.showTeachStep(step, signal)),
+    hideTeachStep: () => highlight.hideTeachStep(),
     driverPath,
     dataFolder: () => join(app.getPath('userData'), 'computer-use'),
     confirmApp,
+    confirmAccess,
     userIdleSeconds: () => powerMonitor.getSystemIdleTime(),
     appWindows,
     startApp: (path) => void appWindows.launch(path),

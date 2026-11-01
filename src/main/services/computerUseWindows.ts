@@ -50,6 +50,31 @@ public static class SideKickWindows {
   [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint a, bool i, uint p);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
   [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool QueryFullProcessImageName(IntPtr h, uint f, StringBuilder s, ref uint n);
+  [StructLayout(LayoutKind.Sequential)] struct MouseInput { public int X, Y, Data; public uint Flags, Time; public IntPtr Extra; }
+  [StructLayout(LayoutKind.Sequential)] struct KeyInput { public ushort Vk, Scan; public uint Flags, Time; public IntPtr Extra; }
+  [StructLayout(LayoutKind.Explicit)] struct Input { [FieldOffset(0)] public int Type; [FieldOffset(8)] public MouseInput Mouse; [FieldOffset(8)] public KeyInput Key; }
+  [DllImport("user32.dll")] static extern uint SendInput(uint n, Input[] i, int size);
+  [DllImport("user32.dll")] static extern uint MapVirtualKey(uint c, uint t);
+  [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+  [DllImport("user32.dll")] static extern bool OpenClipboard(IntPtr h);
+  [DllImport("user32.dll")] static extern bool CloseClipboard();
+  [DllImport("user32.dll")] static extern bool EmptyClipboard();
+  [DllImport("user32.dll")] static extern IntPtr GetClipboardData(uint f);
+  [DllImport("user32.dll")] static extern IntPtr SetClipboardData(uint f, IntPtr h);
+  [DllImport("user32.dll")] static extern uint EnumClipboardFormats(uint f);
+  [DllImport("user32.dll")] static extern bool IsClipboardFormatAvailable(uint f);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern uint RegisterClipboardFormat(string name);
+  [DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();
+  [DllImport("user32.dll")] static extern IntPtr GetClipboardOwner();
+  [DllImport("kernel32.dll")] static extern IntPtr GlobalAlloc(uint f, UIntPtr n);
+  [DllImport("kernel32.dll")] static extern IntPtr GlobalLock(IntPtr h);
+  [DllImport("kernel32.dll")] static extern bool GlobalUnlock(IntPtr h);
+  [DllImport("kernel32.dll")] static extern UIntPtr GlobalSize(IntPtr h);
+  delegate bool MonitorProc(IntPtr m, IntPtr dc, IntPtr r, IntPtr d);
+  [DllImport("user32.dll")] static extern bool EnumDisplayMonitors(IntPtr dc, IntPtr clip, MonitorProc f, IntPtr d);
+  [StructLayout(LayoutKind.Sequential)] struct MonitorInfo { public int Size; public Rect Monitor, Work; public int Flags; }
+  [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr m, ref MonitorInfo i);
+  [DllImport("user32.dll")] static extern bool GetWindowDisplayAffinity(IntPtr h, out uint a);
   const uint WM_KEYDOWN = 0x0100, WM_KEYUP = 0x0101, WM_CHAR = 0x0102, WM_MOUSEWHEEL = 0x020A;
   const int VK_PRIOR = 0x21, VK_NEXT = 0x22;
   static string ClassOf(IntPtr h) {
@@ -247,6 +272,214 @@ public static class SideKickWindows {
     return GetCursorPos(out at) ? at.X + "," + at.Y : "";
   }
   public static bool PointerTo(int x, int y) { return SetCursorPos(x, y); }
+  // What is still held when this helper ends gets let go, or the user would be left with it stuck.
+  static readonly HashSet<int> HeldKeys = new HashSet<int>();
+  static string HeldButton = null;
+  static uint ButtonFlag(string button, bool down) {
+    // These flags mean the physical button, so a swapped mouse would get the other one.
+    bool swapped = GetSystemMetrics(23) != 0;
+    string real = button == "middle" ? button : (button == "right") != swapped ? "right" : "left";
+    uint press = real == "right" ? 0x8u : real == "middle" ? 0x20u : 0x2u;
+    return down ? press : press * 2;
+  }
+  public static bool MouseButton(string button, bool down) {
+    Input[] input = new Input[1];
+    input[0].Type = 0;
+    input[0].Mouse.Flags = ButtonFlag(button, down);
+    bool sent = SendInput(1, input, Marshal.SizeOf(typeof(Input))) == 1;
+    if (sent) HeldButton = down ? button : null;
+    return sent;
+  }
+  public static bool KeyState(int vk, bool down) {
+    // The arrows and the block above them are "extended" keys, which an app can tell from the keypad.
+    bool extended = vk >= 0x21 && vk <= 0x2E;
+    Input[] input = new Input[1];
+    input[0].Type = 1;
+    input[0].Key.Vk = (ushort)vk;
+    input[0].Key.Scan = (ushort)MapVirtualKey((uint)vk, 0);
+    input[0].Key.Flags = (extended ? 1u : 0u) | (down ? 0u : 2u);
+    bool sent = SendInput(1, input, Marshal.SizeOf(typeof(Input))) == 1;
+    if (sent && down) HeldKeys.Add(vk);
+    if (sent && !down) HeldKeys.Remove(vk);
+    return sent;
+  }
+  public static void LetGoOfEverything() {
+    if (HeldButton != null) MouseButton(HeldButton, false);
+    foreach (int vk in new List<int>(HeldKeys)) KeyState(vk, false);
+  }
+  static readonly string[] NotForHistory = { "ExcludeClipboardContentFromMonitorProcessing", "CanIncludeInClipboardHistory", "CanUploadToCloudClipboard" };
+  static Dictionary<uint, byte[]> SavedClipboard = null;
+  const long MaxSavedClipboard = 64L * 1024 * 1024;
+  static bool OpenBoard() {
+    for (int i = 0; i < 20; i++) {
+      if (OpenClipboard(IntPtr.Zero)) return true;
+      System.Threading.Thread.Sleep(25);
+    }
+    return false;
+  }
+  static IntPtr Global(byte[] data) {
+    IntPtr h = GlobalAlloc(2, new UIntPtr((ulong)Math.Max(data.Length, 1)));
+    IntPtr to = GlobalLock(h);
+    Marshal.Copy(data, 0, to, data.Length);
+    GlobalUnlock(h);
+    return h;
+  }
+  // Marked this way, it stays out of the clipboard history and of other devices. The history already
+  // has whatever the user copied themselves, and a password put back must not arrive there as new.
+  static void MarkNotForHistory() {
+    foreach (string name in NotForHistory) SetClipboardData(RegisterClipboardFormat(name), Global(new byte[4]));
+  }
+  // What a password manager marks: its copies are meant for one paste, and not for anything watching.
+  static bool MarkedPrivate() {
+    if (IsClipboardFormatAvailable(RegisterClipboardFormat("ExcludeClipboardContentFromMonitorProcessing"))) return true;
+    if (IsClipboardFormatAvailable(RegisterClipboardFormat("Clipboard Viewer Ignore"))) return true;
+    uint history = RegisterClipboardFormat("CanIncludeInClipboardHistory");
+    if (!IsClipboardFormatAvailable(history) || !OpenBoard()) return false;
+    try {
+      IntPtr from = GlobalLock(GetClipboardData(history));
+      if (from == IntPtr.Zero) return false;
+      int allowed = Marshal.ReadInt32(from);
+      GlobalUnlock(GetClipboardData(history));
+      return allowed == 0;
+    } finally { CloseClipboard(); }
+  }
+  // As "sequence,owner,has text,private".
+  public static string ClipboardInfo() {
+    return GetClipboardSequenceNumber() + "," + OwnerOf(GetClipboardOwner()) + "," + (IsClipboardFormatAvailable(13) ? 1 : 0) + "," + (MarkedPrivate() ? 1 : 0);
+  }
+  // As "sequence,text in base64", checked as it is read, since what it holds can change at any time.
+  public static string ClipboardText(bool evenPrivate) {
+    if (!evenPrivate && MarkedPrivate()) return "";
+    if (!OpenBoard()) return "";
+    try {
+      IntPtr h = GetClipboardData(13);
+      if (h == IntPtr.Zero) return "";
+      string text = Marshal.PtrToStringUni(GlobalLock(h));
+      GlobalUnlock(h);
+      return GetClipboardSequenceNumber() + "," + Convert.ToBase64String(Encoding.UTF8.GetBytes(text ?? ""));
+    } finally { CloseClipboard(); }
+  }
+  // The clipboard's new sequence number, or 0.
+  public static long ClipboardWrite(string base64, bool notForHistory) {
+    if (!OpenBoard()) return 0;
+    try {
+      if (!EmptyClipboard()) return 0;
+      byte[] text = Encoding.Unicode.GetBytes(Encoding.UTF8.GetString(Convert.FromBase64String(base64)) + "\\0");
+      SetClipboardData(13, Global(text));
+      if (notForHistory) MarkNotForHistory();
+    } finally { CloseClipboard(); }
+    return GetClipboardSequenceNumber();
+  }
+  // Keeps what is there, in this helper only. Formats that aren't plain memory are left out: Windows
+  // makes those again from the ones that are, as it does a bitmap from its DIB.
+  public static bool ClipboardSave() {
+    if (!OpenBoard()) return false;
+    try {
+      Dictionary<uint, byte[]> saved = new Dictionary<uint, byte[]>();
+      long total = 0;
+      uint format = 0;
+      while ((format = EnumClipboardFormats(format)) != 0) {
+        bool handle = format == 2 || format == 3 || format == 9 || format == 14 || format == 0x80 || format == 0x82 || format == 0x83 || format == 0x8E;
+        if (handle || (format >= 0x200 && format <= 0x3FF)) continue;
+        IntPtr h = GetClipboardData(format);
+        if (h == IntPtr.Zero) continue;
+        IntPtr from = GlobalLock(h);
+        if (from == IntPtr.Zero) continue;
+        long size = (long)GlobalSize(h).ToUInt64();
+        total += size;
+        if (total > MaxSavedClipboard) { GlobalUnlock(h); return false; }
+        byte[] data = new byte[size];
+        Marshal.Copy(from, data, 0, data.Length);
+        GlobalUnlock(h);
+        saved[format] = data;
+      }
+      SavedClipboard = saved;
+      return true;
+    } finally { CloseClipboard(); }
+  }
+  // Only if the clipboard is as the agent left it. If not, the user has copied something since.
+  public static bool ClipboardRestore(long sequence) {
+    Dictionary<uint, byte[]> saved = SavedClipboard;
+    SavedClipboard = null;
+    if (saved == null || GetClipboardSequenceNumber() != sequence || !OpenBoard()) return false;
+    try {
+      if (!EmptyClipboard()) return false;
+      foreach (KeyValuePair<uint, byte[]> item in saved) SetClipboardData(item.Key, Global(item.Value));
+      MarkNotForHistory();
+      return true;
+    } finally { CloseClipboard(); }
+  }
+  public static void ClipboardForget() { SavedClipboard = null; }
+  static List<Rect> Monitors() {
+    List<Rect> primary = new List<Rect>(), others = new List<Rect>();
+    EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, delegate(IntPtr m, IntPtr dc, IntPtr r, IntPtr d) {
+      MonitorInfo info = new MonitorInfo();
+      info.Size = Marshal.SizeOf(typeof(MonitorInfo));
+      if (GetMonitorInfo(m, ref info)) ((info.Flags & 1) != 0 ? primary : others).Add(info.Monitor);
+      return true;
+    }, IntPtr.Zero);
+    primary.AddRange(others);
+    return primary;
+  }
+  // Front first. A window that can't say what it is counts as one to hide.
+  static void ScreenWindows(Rect area, HashSet<string> hidden, List<Rect> blank, List<string> rows) {
+    EnumWindows(delegate(IntPtr h, IntPtr l) {
+      Rect r;
+      int cloaked;
+      uint affinity;
+      if (!IsWindowVisible(h) || IsIconic(h) || !GetWindowRect(h, out r)) return true;
+      if (DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0) return true;
+      // Already left out of any capture. SideKick's glow is one, and blanking it would hide the app under it.
+      if (GetWindowDisplayAffinity(h, out affinity) && affinity != 0) return true;
+      if (r.R <= area.L || r.L >= area.R || r.B <= area.T || r.T >= area.B) return true;
+      IntPtr storeApp = StoreAppWindow(h);
+      string path = PathOf(OwnerOf(storeApp != IntPtr.Zero ? storeApp : h));
+      bool hide = path == null || hidden.Contains(Path.GetFileNameWithoutExtension(path).ToLowerInvariant());
+      if (hide) blank.Add(r);
+      StringBuilder title = new StringBuilder(32);
+      GetWindowText(h, title, 32);
+      if (title.Length > 0 && title.ToString() != "Program Manager" && GetWindow(h, 4) == IntPtr.Zero && !IsPopup(h, true))
+        rows.Add((path ?? "") + "|" + r.L + "|" + r.T + "|" + r.R + "|" + r.B + "|" + (hide ? 1 : 0));
+      return true;
+    }, IntPtr.Zero);
+  }
+  // As "index,count,x,y,width,height,picture width,picture height;apps in base64;png in base64". The
+  // windows are listed before and after the copy, so one opening meanwhile is blanked as well, and every
+  // pixel of what is hidden is gone before anything leaves this helper. Covered parts are blanked too:
+  // a clear overlay above a window would otherwise count as covering it.
+  public static string Screen(int display, int maxWidth, string hiddenNames) {
+    List<Rect> monitors = Monitors();
+    if (display < 0 || display >= monitors.Count) return "";
+    Rect area = monitors[display];
+    HashSet<string> hidden = new HashSet<string>(hiddenNames.Split(','));
+    List<Rect> blank = new List<Rect>();
+    List<string> rows = new List<string>();
+    ScreenWindows(area, hidden, blank, rows);
+    int w = area.R - area.L, t = area.B - area.T;
+    using (System.Drawing.Bitmap full = new System.Drawing.Bitmap(w, t))
+    using (System.Drawing.Graphics g = System.Drawing.Graphics.FromImage(full)) {
+      g.CopyFromScreen(area.L, area.T, 0, 0, new System.Drawing.Size(w, t));
+      ScreenWindows(area, hidden, blank, new List<string>());
+      using (System.Drawing.SolidBrush fill = new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(58, 58, 66)))
+      using (System.Drawing.SolidBrush ink = new System.Drawing.SolidBrush(System.Drawing.Color.White))
+      using (System.Drawing.Font font = new System.Drawing.Font("Segoe UI", Math.Max(14, w / 70), System.Drawing.GraphicsUnit.Pixel)) {
+        foreach (Rect r in blank) {
+          g.FillRectangle(fill, r.L - area.L, r.T - area.T, r.R - r.L, r.B - r.T);
+          g.DrawString("Hidden by SideKick", font, ink, Math.Max(r.L - area.L, 0) + 16, Math.Max(r.T - area.T, 0) + 16);
+        }
+      }
+      int width = Math.Min(w, maxWidth), height = (int)Math.Round((double)t * width / w);
+      using (System.Drawing.Bitmap small = new System.Drawing.Bitmap(width, height))
+      using (System.Drawing.Graphics shrink = System.Drawing.Graphics.FromImage(small))
+      using (MemoryStream png = new MemoryStream()) {
+        shrink.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+        shrink.DrawImage(full, 0, 0, width, height);
+        small.Save(png, System.Drawing.Imaging.ImageFormat.Png);
+        return display + "," + monitors.Count + "," + area.L + "," + area.T + "," + w + "," + t + "," + width + "," + height + ";"
+          + Convert.ToBase64String(Encoding.UTF8.GetBytes(string.Join("?", rows))) + ";" + Convert.ToBase64String(png.ToArray());
+      }
+    }
+  }
   public static long Front() { return GetForegroundWindow().ToInt64(); }
   public static bool Restore(long window) {
     IntPtr h = new IntPtr(window);
@@ -293,6 +526,15 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       'popups' { $answer = [SideKickWindows]::Popups([long]$c.window) }
       'pointer' { $answer = [SideKickWindows]::Pointer() }
       'pointerTo' { $answer = [SideKickWindows]::PointerTo([int]$c.x, [int]$c.y) }
+      'mouseButton' { $answer = [SideKickWindows]::MouseButton([string]$c.button, [bool]$c.down) }
+      'keyState' { $answer = [SideKickWindows]::KeyState([int]$c.vk, [bool]$c.down) }
+      'clipboardInfo' { $answer = [SideKickWindows]::ClipboardInfo() }
+      'clipboardText' { $answer = [SideKickWindows]::ClipboardText([bool]$c.evenPrivate) }
+      'clipboardWrite' { $answer = [SideKickWindows]::ClipboardWrite([string]$c.text, [bool]$c.notForHistory) }
+      'clipboardSave' { $answer = [SideKickWindows]::ClipboardSave() }
+      'clipboardRestore' { $answer = [SideKickWindows]::ClipboardRestore([long]$c.sequence) }
+      'clipboardForget' { [SideKickWindows]::ClipboardForget(); $answer = $true }
+      'screen' { $answer = [SideKickWindows]::Screen([int]$c.display, [int]$c.maxWidth, [string]$c.hidden) }
       'restoreBehind' { $answer = [SideKickWindows]::RestoreBehind([uint32]$c.pid) }
       'minimizeAgain' { $answer = [SideKickWindows]::MinimizeAgain([long]$c.window) }
       'start' {
@@ -312,6 +554,7 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
   } catch { $answer = $false }
   [Console]::Out.WriteLine($(if ($answer -is [bool]) { if ($answer) { 'yes' } else { 'no' } } else { [string]$answer }))
 }
+[SideKickWindows]::LetGoOfEverything()
 `
 
 // The script comes in as the first line of input: on the command line, Windows' limit of 32,767
@@ -347,6 +590,77 @@ export function computerVirtualKey(name: string): number | null {
   const fn = /^f([1-9]|1[0-2])$/.exec(key)
   if (fn) return 0x6f + Number(fn[1])
   return VIRTUAL_KEYS[key] ?? null
+}
+
+const HOLDABLE_MODIFIERS: Readonly<Record<string, number>> = {
+  shift: 0x10,
+  ctrl: 0x11,
+  control: 0x11,
+  alt: 0x12
+}
+
+/** The key code for a key that can be held down, which also covers shift, ctrl and alt. */
+export function computerHoldableKey(name: string): number | null {
+  return HOLDABLE_MODIFIERS[name.trim().toLowerCase()] ?? computerVirtualKey(name)
+}
+
+export interface ComputerClipboardInfo {
+  /** Changes whenever anything is put on the clipboard. */
+  sequence: number
+  /** The process that put it there, or 0 when Windows won't say. */
+  owner: number
+  hasText: boolean
+  /** Marked by what copied it, as password managers do, to stay out of anything watching. */
+  markedPrivate: boolean
+}
+
+/** A picture of one display, in which what must stay hidden is already blanked. */
+export interface ComputerScreen {
+  display: number
+  displays: number
+  /** Where the display is, in physical pixels. */
+  bounds: ComputerWindowBounds
+  width: number
+  height: number
+  data: string
+  /** Each app's window on it, front first, in physical pixels. */
+  windows: Array<{ path: string; bounds: ComputerWindowBounds; hidden: boolean }>
+}
+
+/** The helper's answer about the screen, or null for no picture. */
+export function parseComputerScreen(answer: string): ComputerScreen | null {
+  const found =
+    /^(\d+),(\d+),(-?\d+),(-?\d+),(\d+),(\d+),(\d+),(\d+);([A-Za-z0-9+/=]*);([A-Za-z0-9+/=]+)$/.exec(
+      answer
+    )
+  if (!found) return null
+  const [display, displays, x, y, width, height, pictureWidth, pictureHeight] = found
+    .slice(1, 9)
+    .map(Number)
+  const windows = Buffer.from(found[9], 'base64')
+    .toString('utf8')
+    .split('?')
+    .flatMap((row) => {
+      const parts = row.split('|')
+      if (parts.length !== 6) return []
+      const [left, top, right, bottom] = parts.slice(1, 5).map(Number)
+      return [
+        {
+          path: parts[0],
+          bounds: { x: left, y: top, width: right - left, height: bottom - top },
+          hidden: parts[5] === '1'
+        }
+      ]
+    })
+  return {
+    display,
+    displays,
+    bounds: { x, y, width, height },
+    width: pictureWidth,
+    height: pictureHeight,
+    data: found[10],
+    windows
+  }
 }
 
 /** A menu or dropdown open over a window, in physical pixels. */
@@ -398,6 +712,8 @@ export class ComputerUseWindows {
   private child: ChildProcessWithoutNullStreams | null = null
   private waiting: Array<(answer: string) => void> = []
   private idle: ReturnType<typeof setTimeout> | null = null
+  /** It holds what the user had copied, which going away would lose. */
+  private holdingClipboard = false
 
   private start(): ChildProcessWithoutNullStreams {
     const child = spawn(
@@ -418,7 +734,10 @@ export class ComputerUseWindows {
     })
     child.stderr.resume()
     const gone = (): void => {
-      if (this.child === child) this.child = null
+      if (this.child === child) {
+        this.child = null
+        this.holdingClipboard = false
+      }
       for (const answer of this.waiting.splice(0)) answer('no')
     }
     child.on('error', gone)
@@ -429,8 +748,7 @@ export class ComputerUseWindows {
 
   private ask(request: Record<string, unknown>): Promise<string> {
     this.child ??= this.start()
-    if (this.idle) clearTimeout(this.idle)
-    this.idle = setTimeout(() => this.close(), HELPER_IDLE_MS)
+    this.waitToClose()
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         // Answers come back in order, so one that never came means the helper is stuck.
@@ -443,6 +761,14 @@ export class ComputerUseWindows {
       })
       this.child!.stdin.write(`${JSON.stringify(request)}\n`)
     })
+  }
+
+  private waitToClose(): void {
+    if (this.idle) clearTimeout(this.idle)
+    this.idle = setTimeout(() => {
+      if (this.holdingClipboard) this.waitToClose()
+      else this.close()
+    }, HELPER_IDLE_MS)
   }
 
   private async confirm(request: Record<string, unknown>): Promise<boolean> {
@@ -514,6 +840,72 @@ export class ComputerUseWindows {
   /** Moves the real pointer. Only for real input, once the user has stepped away. */
   pointerTo(point: { x: number; y: number }): Promise<boolean> {
     return this.confirm({ op: 'pointerTo', ...point })
+  }
+
+  /** Presses or lets go of a real mouse button where the pointer is. Only once the user has stepped away. */
+  mouseButton(button: string, down: boolean): Promise<boolean> {
+    return this.confirm({ op: 'mouseButton', button, down })
+  }
+
+  /** Presses or lets go of a real key. Only once the user has stepped away. */
+  keyState(vk: number, down: boolean): Promise<boolean> {
+    return this.confirm({ op: 'keyState', vk, down })
+  }
+
+  async clipboardInfo(): Promise<ComputerClipboardInfo | null> {
+    const found = /^(\d+),(\d+),([01]),([01])$/.exec(await this.ask({ op: 'clipboardInfo' }))
+    if (!found) return null
+    return {
+      sequence: Number(found[1]),
+      owner: Number(found[2]),
+      hasText: found[3] === '1',
+      markedPrivate: found[4] === '1'
+    }
+  }
+
+  /** The clipboard's text and its sequence number, or null if it holds none it may give. */
+  async clipboardText(evenPrivate: boolean): Promise<{ sequence: number; text: string } | null> {
+    const found = /^(\d+),([A-Za-z0-9+/=]*)$/.exec(
+      await this.ask({ op: 'clipboardText', evenPrivate })
+    )
+    return found
+      ? { sequence: Number(found[1]), text: Buffer.from(found[2], 'base64').toString('utf8') }
+      : null
+  }
+
+  /** Puts text on the clipboard. The sequence number it then has, or 0 if Windows refused. */
+  async clipboardWrite(text: string, notForHistory: boolean): Promise<number> {
+    const base64 = Buffer.from(text, 'utf8').toString('base64')
+    return Number(await this.ask({ op: 'clipboardWrite', text: base64, notForHistory })) || 0
+  }
+
+  /** Keeps what is on the clipboard inside the helper, to put back later. False if it is too much. */
+  async clipboardSave(): Promise<boolean> {
+    const saved = await this.confirm({ op: 'clipboardSave' })
+    if (saved) this.holdingClipboard = true
+    return saved
+  }
+
+  /** Puts back what was kept, unless anything has been copied since the given sequence number. */
+  clipboardRestore(sequence: number): Promise<boolean> {
+    this.holdingClipboard = false
+    return this.confirm({ op: 'clipboardRestore', sequence })
+  }
+
+  clipboardForget(): Promise<boolean> {
+    this.holdingClipboard = false
+    return this.confirm({ op: 'clipboardForget' })
+  }
+
+  /** A picture of one display with the named executables blanked out, or null if there is none. */
+  async screen(
+    display: number,
+    maxWidth: number,
+    hidden: readonly string[]
+  ): Promise<ComputerScreen | null> {
+    return parseComputerScreen(
+      await this.ask({ op: 'screen', display, maxWidth, hidden: hidden.join(',') })
+    )
   }
 
   restore(window: number): Promise<boolean> {

@@ -15,6 +15,15 @@ const MAX_BATCH_STEPS = 50
 const MAX_WAIT_SECONDS = 30
 // Enough for a menu or a field to be ready for the next step.
 const BATCH_STEP_PAUSE_MS = 150
+// These can work and leave the window looking as it did.
+const SHOW_NOTHING: ReadonlySet<string> = new Set([
+  'wait',
+  'mouse_down',
+  'mouse_up',
+  'hold_key',
+  'read_clipboard',
+  'write_clipboard'
+])
 
 function text(args: Record<string, unknown>, key: string): string {
   return typeof args[key] === 'string' ? args[key] : ''
@@ -82,8 +91,8 @@ export function registerComputerToolHandlers(
                 {
                   type: 'image',
                   mimeType: first.mimeType as ToolResultImageMimeType,
-                  name: `${app} window`,
-                  description: `The ${app} window`,
+                  name: app ? `${app} window` : 'Screen',
+                  description: app ? `The ${app} window` : 'The whole screen',
                   keepDimensions: true,
                   source: {
                     type: 'data_url',
@@ -107,7 +116,7 @@ export function registerComputerToolHandlers(
       Array.isArray(step.modifiers) ? step.modifiers.map(String) : []
     // Copying shows nothing, and waiting may well not, so neither is a sign of a step not landing.
     const mayShowNothing = (step: Record<string, unknown>): boolean =>
-      text(step, 'action') === 'wait' || isCombination(step)
+      SHOW_NOTHING.has(text(step, 'action')) || isCombination(step)
     const isCombination = (step: Record<string, unknown>): boolean =>
       text(step, 'action') === 'key' &&
       computerKeyCombination(
@@ -159,6 +168,33 @@ export function registerComputerToolHandlers(
             number(step, 'seconds') ?? 1,
             signal
           )
+        case 'mouse_down':
+          return service.mouseDown(
+            chat,
+            app,
+            {
+              element: row,
+              x: number(step, 'x'),
+              y: number(step, 'y'),
+              button: text(step, 'button') || undefined
+            },
+            signal,
+            step.confirm_risky === true
+          )
+        case 'mouse_up':
+          return service.mouseUp(
+            chat,
+            app,
+            { element: row, x: number(step, 'x'), y: number(step, 'y') },
+            signal,
+            step.confirm_risky === true
+          )
+        case 'hold_key':
+          return service.holdKey(chat, app, text(step, 'key'), number(step, 'seconds') ?? 1, signal)
+        case 'read_clipboard':
+          return service.readClipboard(chat, signal)
+        case 'write_clipboard':
+          return service.writeClipboard(chat, text(step, 'text'), step.keep === true, signal)
         case 'hover':
           return service.hover(
             chat,
@@ -214,22 +250,28 @@ export function registerComputerToolHandlers(
       }
     }
     /** Steps the model could already predict, for one turn of its time instead of one each. */
-    const batch = async (steps: Array<Record<string, unknown>>) => {
-      const done: string[] = []
+    const batch = async (
+      steps: Array<Record<string, unknown>>,
+      allReal = realInput,
+      intro = ''
+    ) => {
+      const done: string[] = intro ? [intro] : []
       let anyReal = false
       let stopped = false
       for (const [index, step] of steps.entries()) {
-        const real = step.real_input === true || realInput
+        const real = step.real_input === true || allReal
         anyReal ||= real
         try {
           const result = await perform(step, real)
           if (result === null) {
             throw new ComputerUseRefusal(
-              `${text(step, 'action') || '(none)'} can't be in a batch, only click, double_click, triple_click, middle_click, right_click, type, set_value, key, scroll, drag, hover, press_and_hold and wait.`
+              `${text(step, 'action') || '(none)'} can't be in a batch, only click, double_click, triple_click, middle_click, right_click, type, set_value, key, scroll, drag, hover, press_and_hold, mouse_down, mouse_up, hold_key, read_clipboard, write_clipboard and wait.`
             )
           }
           done.push(`${index + 1}. ${result}`)
         } catch (error) {
+          // Nothing else is coming to finish a press, so it can't stay down.
+          await service.letGo('a step before it failed')
           if (!(error instanceof ComputerUseRefusal)) throw error
           done.push(`${index + 1}. Not done: ${error.message}`)
           if (index + 1 < steps.length)
@@ -248,6 +290,19 @@ export function registerComputerToolHandlers(
     }
     try {
       if (action === 'list_apps') return await succeed(await service.apps(signal))
+      if (action === 'look_screen') {
+        if (!options.vision) {
+          throw new ComputerUseRefusal(
+            'This model cannot see images, so it cannot use look_screen.'
+          )
+        }
+        const shot = await service.lookAtScreen(chat, number(args, 'display') ?? 0, signal)
+        return await showLook(shot, '', false, true)
+      }
+      // These aren't about any one app, and show nothing in one.
+      if (action === 'read_clipboard' || action === 'write_clipboard') {
+        return await succeed((await perform(args, realInput)) ?? '')
+      }
       if (!app) {
         return toolExecutionFailed({
           title,
@@ -289,6 +344,35 @@ export function registerComputerToolHandlers(
             throw new ComputerUseRefusal(`batch needs 1 to ${MAX_BATCH_STEPS} steps.`)
           }
           return await batch(steps)
+        }
+        case 'teach': {
+          const steps = Array.isArray(args.steps)
+            ? (args.steps as Array<Record<string, unknown>>)
+            : []
+          if (steps.length > MAX_BATCH_STEPS) {
+            throw new ComputerUseRefusal(`teach can take up to ${MAX_BATCH_STEPS} steps.`)
+          }
+          const answer = await service.teach(
+            chat,
+            app,
+            {
+              text: text(args, 'text'),
+              element: number(args, 'element'),
+              x: number(args, 'x'),
+              y: number(args, 'y'),
+              nextDoes: steps.length
+            },
+            signal
+          )
+          if (answer === 'exit') {
+            return await succeed(
+              'The user ended the walkthrough, so nothing else was done. Do not show more steps.'
+            )
+          }
+          // They are watching, and have just said to go on.
+          return steps.length
+            ? await batch(steps, true, 'The user pressed Next.')
+            : await acted('The user pressed Next.', { realInput: true, mayShowNothing: true })
         }
         default: {
           const result = await perform(args, realInput)

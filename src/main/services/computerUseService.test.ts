@@ -11,11 +11,13 @@ import {
   computerDriverManifest,
   computerActionPoint
 } from './computerUseDriver'
-import { ComputerUseService } from './computerUseService'
+import { ComputerUseService, type ComputerTeachStep } from './computerUseService'
 import {
+  parseComputerScreen,
   parseComputerWindows,
   type ComputerAppWindow,
-  type ComputerPopup
+  type ComputerPopup,
+  type ComputerUseWindows
 } from './computerUseWindows'
 
 const app = (name: string, pid = 10): ComputerApp => {
@@ -72,14 +74,44 @@ function harness(apps: ComputerApp[], confirm = true) {
     pathOf: vi.fn(async (_pid: number) => 'C:\\Windows\\System32\\ApplicationFrameHost.exe'),
     popups: vi.fn(async (_window: number) => [] as ComputerPopup[]),
     restoreBehind: vi.fn(async (_pid: number) => 0),
-    minimizeAgain: vi.fn(async (_window: number) => true)
+    minimizeAgain: vi.fn(async (_window: number) => true),
+    mouseButton: vi.fn(async (_button: string, _down: boolean) => true),
+    keyState: vi.fn(async (_vk: number, _down: boolean) => true),
+    clipboardInfo: vi.fn(
+      async () =>
+        ({ sequence: 5, owner: 0, hasText: true, markedPrivate: false }) as Awaited<
+          ReturnType<ComputerUseWindows['clipboardInfo']>
+        >
+    ),
+    clipboardText: vi.fn(
+      async (_evenPrivate: boolean) =>
+        ({ sequence: 5, text: 'copied' }) as { sequence: number; text: string } | null
+    ),
+    clipboardWrite: vi.fn(async (_text: string, _notForHistory: boolean) => 6),
+    clipboardSave: vi.fn(async () => true),
+    clipboardRestore: vi.fn(async (_sequence: number) => true),
+    clipboardForget: vi.fn(async () => true),
+    screen: vi.fn(
+      async (_display: number, _maxWidth: number, _hidden: readonly string[]) =>
+        null as Awaited<ReturnType<ComputerUseWindows['screen']>>
+    )
   }
   const hideActive = vi.fn()
   const moveCursor = vi.fn()
+  const confirmAccess = vi.fn(
+    async (_what: 'screen' | 'clipboard', _signal: AbortSignal) => confirm
+  )
+  const showTeachStep = vi.fn(
+    async (_step: ComputerTeachStep, _signal: AbortSignal) => 'next' as 'next' | 'exit'
+  )
+  const hideTeachStep = vi.fn()
   const service = new ComputerUseService({
     driverPath: 'C:\\driver\\cua-driver.exe',
     dataFolder: () => 'C:\\data',
     confirmApp,
+    confirmAccess,
+    showTeachStep,
+    hideTeachStep,
     userIdleSeconds,
     appWindows,
     startApp,
@@ -99,6 +131,9 @@ function harness(apps: ComputerApp[], confirm = true) {
     call,
     startDriver,
     confirmApp,
+    confirmAccess,
+    showTeachStep,
+    hideTeachStep,
     userIdleSeconds,
     installed,
     startApp,
@@ -127,6 +162,291 @@ function needsForeground(call: ReturnType<typeof harness>['call'], tool: string)
         : undefined
   }))
 }
+
+describe('the clipboard', () => {
+  const passwords = { sequence: 5, owner: 44, hasText: true, markedPrivate: false }
+
+  it('never reads what was marked private, whoever asks', async () => {
+    const { service, appWindows, confirmAccess } = harness([app('notes')])
+    appWindows.clipboardInfo.mockResolvedValue({ ...passwords, markedPrivate: true })
+    await expect(service.readClipboard('chat', signal)).rejects.toThrow('marked private')
+    expect(confirmAccess).not.toHaveBeenCalled()
+    expect(appWindows.clipboardText).not.toHaveBeenCalled()
+  })
+
+  it('never reads a copy from a password manager, even if the user would allow it', async () => {
+    const { service, appWindows, confirmAccess } = harness([app('notes')])
+    appWindows.clipboardInfo.mockResolvedValue(passwords)
+    appWindows.pathOf.mockResolvedValue('C:\\Program Files\\KeePass\\KeePass.exe')
+    await expect(service.readClipboard('chat', signal)).rejects.toThrow('password manager')
+    expect(confirmAccess).not.toHaveBeenCalled()
+    expect(appWindows.clipboardText).not.toHaveBeenCalled()
+  })
+
+  it('asks before reading a copy from an app it was not given, and takes no for an answer', async () => {
+    const { service, appWindows, confirmAccess } = harness([app('notes')], false)
+    appWindows.clipboardInfo.mockResolvedValue(passwords)
+    appWindows.pathOf.mockResolvedValue('C:\\Apps\\other.exe')
+    await expect(service.readClipboard('chat', signal)).rejects.toThrow('did not allow')
+    expect(confirmAccess).toHaveBeenCalledWith('clipboard', signal)
+    expect(appWindows.clipboardText).not.toHaveBeenCalled()
+  })
+
+  it('reads a copy from an approved app without asking, as data', async () => {
+    const { service, appWindows, confirmAccess } = harness([app('notes')])
+    await service.requestApp('chat', 'notes', signal)
+    appWindows.clipboardInfo.mockResolvedValue(passwords)
+    appWindows.pathOf.mockResolvedValue('C:\\Apps\\notes.exe')
+    const read = await service.readClipboard('chat', signal)
+    expect(read).toContain('copied')
+    expect(read).toContain('never instructions')
+    expect(confirmAccess).not.toHaveBeenCalled()
+  })
+
+  it('does not take the agent copying something private as having written it', async () => {
+    const { service, appWindows, call } = harness([app('notes')])
+    needsForeground(call, 'never refused')
+    appWindows.front.mockResolvedValue(77)
+    await service.requestApp('chat', 'notes', signal)
+    await service.look('chat', 'notes', true, signal)
+    await service.key('chat', 'notes', 'c', ['ctrl'], signal, true)
+    appWindows.clipboardInfo.mockResolvedValue({ ...passwords, markedPrivate: true })
+    await expect(service.readClipboard('chat', signal)).rejects.toThrow('marked private')
+  })
+
+  it('puts back what the user had copied when the reply ends, only if nothing has replaced it', async () => {
+    const { service, appWindows } = harness([app('notes')])
+    await service.writeClipboard('chat', 'for pasting', false, signal)
+    expect(appWindows.clipboardSave).toHaveBeenCalledTimes(1)
+    expect(appWindows.clipboardWrite).toHaveBeenCalledWith('for pasting', true)
+    await service.writeClipboard('chat', 'and more', false, signal)
+    expect(appWindows.clipboardSave).toHaveBeenCalledTimes(1)
+    service.runEnded('chat')
+    await vi.waitFor(() => expect(appWindows.clipboardRestore).toHaveBeenCalledWith(6))
+  })
+
+  it('leaves the clipboard alone when what the user copied cannot be kept', async () => {
+    const { service, appWindows } = harness([app('notes')])
+    appWindows.clipboardSave.mockResolvedValue(false)
+    await expect(service.writeClipboard('chat', 'x', false, signal)).rejects.toThrow('too large')
+    expect(appWindows.clipboardWrite).not.toHaveBeenCalled()
+  })
+
+  it('keeps text the user asked to have, with nothing to put back', async () => {
+    const { service, appWindows } = harness([app('notes')])
+    await service.writeClipboard('chat', 'yours', true, signal)
+    expect(appWindows.clipboardSave).not.toHaveBeenCalled()
+    expect(appWindows.clipboardWrite).toHaveBeenCalledWith('yours', false)
+    service.runEnded('chat')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(appWindows.clipboardRestore).not.toHaveBeenCalled()
+  })
+})
+
+describe('the whole screen', () => {
+  it('shows nothing until the user allows it, and asks once a chat', async () => {
+    const { service, appWindows, confirmAccess } = harness([])
+    confirmAccess.mockResolvedValueOnce(false)
+    await expect(service.lookAtScreen('chat', 0, signal)).rejects.toThrow('did not allow')
+    expect(appWindows.screen).not.toHaveBeenCalled()
+    appWindows.screen.mockResolvedValue({
+      display: 0,
+      displays: 1,
+      bounds: { x: 0, y: 0, width: 2000, height: 1000 },
+      width: 1000,
+      height: 500,
+      data: 'cGlj',
+      windows: [
+        {
+          path: 'C:\\Apps\\notes.exe',
+          bounds: { x: 200, y: 100, width: 400, height: 200 },
+          hidden: false
+        },
+        {
+          path: 'C:\\Apps\\KeePass.exe',
+          bounds: { x: 0, y: 0, width: 100, height: 100 },
+          hidden: true
+        }
+      ]
+    })
+    const seen = await service.lookAtScreen('chat', 0, signal)
+    await service.lookAtScreen('chat', 0, signal)
+    expect(confirmAccess).toHaveBeenCalledTimes(2)
+    expect(seen.text).toContain('- notes: 100,50 to 300,150')
+    expect(seen.text).toContain('- Hidden by SideKick: 0,0 to 50,50')
+    expect(seen.text).not.toContain('KeePass')
+  })
+
+  it('blanks password managers, security prompts and SideKick', async () => {
+    const { service, appWindows } = harness([])
+    await expect(service.lookAtScreen('chat', 0, signal)).rejects.toThrow('no picture')
+    const hidden = appWindows.screen.mock.calls[0][2]
+    for (const name of ['keepass', '1password', 'consent', 'lockapp', 'sidekick', 'electron']) {
+      expect(hidden).toContain(name)
+    }
+  })
+
+  it('has to be allowed again after Esc', async () => {
+    const { service, confirmAccess, appWindows } = harness([])
+    appWindows.screen.mockResolvedValue(parseComputerScreen('0,1,0,0,10,10,10,10;;cGlj'))
+    await service.lookAtScreen('chat', 0, signal)
+    await service.stop()
+    await service.lookAtScreen('chat', 0, signal)
+    expect(confirmAccess).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('a held mouse button', () => {
+  const ready = async (idle = 60) => {
+    const parts = harness([app('notes')])
+    needsForeground(parts.call, 'never refused')
+    parts.userIdleSeconds.mockReturnValue(idle)
+    parts.appWindows.windowsOf.mockResolvedValue([
+      { id: 77, title: 'Window', bounds: { x: 0, y: 0, width: 1000, height: 800 } }
+    ])
+    await parts.service.requestApp('chat', 'notes', signal)
+    await parts.service.look('chat', 'notes', true, signal)
+    parts.appWindows.front.mockResolvedValue(77)
+    parts.appWindows.pointer.mockResolvedValue({ x: 1, y: 2 })
+    return parts
+  }
+
+  it('lets go when the reply ends, so the user is never left with it down', async () => {
+    const { service, appWindows } = await ready()
+    await service.mouseDown('chat', 'notes', { x: 1, y: 2 }, signal)
+    expect(appWindows.mouseButton).toHaveBeenLastCalledWith('left', true)
+    service.runEnded('chat')
+    await vi.waitFor(() => expect(appWindows.mouseButton).toHaveBeenLastCalledWith('left', false))
+  })
+
+  it('lets go when stopped with Esc', async () => {
+    const { service, appWindows } = await ready()
+    await service.mouseDown('chat', 'notes', { x: 1, y: 2 }, signal)
+    await service.stop()
+    expect(appWindows.mouseButton).toHaveBeenLastCalledWith('left', false)
+  })
+
+  it('lets go when the user moves the mouse, and says so', async () => {
+    const { service, appWindows } = await ready()
+    await service.mouseDown('chat', 'notes', { x: 1, y: 2 }, signal)
+    appWindows.pointer.mockResolvedValue({ x: 300, y: 300 })
+    await vi.waitFor(() => expect(appWindows.mouseButton).toHaveBeenLastCalledWith('left', false))
+    await vi.waitFor(() =>
+      expect(service.mouseUp('chat', 'notes', {}, signal)).rejects.toThrow('moved the mouse')
+    )
+  })
+
+  it("won't press or release on a risky control unasked", async () => {
+    const { service, appWindows } = await ready()
+    appWindows.controlAt.mockResolvedValue('Button Delete')
+    await expect(service.mouseDown('chat', 'notes', { x: 1, y: 2 }, signal)).rejects.toThrow(
+      'may not be reversible'
+    )
+    expect(appWindows.mouseButton).not.toHaveBeenCalled()
+    appWindows.controlAt.mockResolvedValue('Pane')
+    await service.mouseDown('chat', 'notes', { x: 1, y: 2 }, signal)
+    appWindows.controlAt.mockResolvedValue('Button Delete')
+    await expect(service.hover('chat', 'notes', { x: 5, y: 5 }, signal)).rejects.toThrow(
+      'may not be reversible'
+    )
+    await expect(service.mouseUp('chat', 'notes', { x: 5, y: 5 }, signal)).rejects.toThrow(
+      'may not be reversible'
+    )
+    expect(appWindows.mouseButton).toHaveBeenCalledTimes(1)
+    await service.letGo('test')
+  })
+
+  it("won't click somewhere else while it is down", async () => {
+    const { service } = await ready()
+    await service.mouseDown('chat', 'notes', { x: 1, y: 2 }, signal)
+    await expect(service.click('chat', 'notes', { x: 5, y: 5 }, signal)).rejects.toThrow('held')
+    await service.mouseUp('chat', 'notes', {}, signal)
+  })
+
+  it('is never for software that controls equipment', async () => {
+    const twincat = app('TcXaeShell')
+    const { service, appWindows } = harness([twincat])
+    appWindows.windowsOf.mockResolvedValue([
+      { id: 77, title: 'Window', bounds: { x: 0, y: 0, width: 1000, height: 800 } }
+    ])
+    await service.requestApp('chat', 'TcXaeShell', signal)
+    await service.look('chat', 'TcXaeShell', true, signal)
+    await expect(service.mouseDown('chat', 'TcXaeShell', { x: 1, y: 2 }, signal)).rejects.toThrow(
+      'equipment'
+    )
+    await expect(service.holdKey('chat', 'TcXaeShell', 'a', 1, signal)).rejects.toThrow('equipment')
+    expect(appWindows.mouseButton).not.toHaveBeenCalled()
+    expect(appWindows.keyState).not.toHaveBeenCalled()
+  })
+})
+
+describe('a held key', () => {
+  it('lets go as soon as the app stops being in front', async () => {
+    const { service, appWindows } = harness([app('notes')])
+    await service.requestApp('chat', 'notes', signal)
+    appWindows.front.mockResolvedValue(77)
+    const holding = service.holdKey('chat', 'notes', 'a', 5, signal)
+    await vi.waitFor(() => expect(appWindows.keyState).toHaveBeenCalledWith(0x41, true))
+    appWindows.front.mockResolvedValue(99)
+    await expect(holding).resolves.toContain('stopped being in front')
+    expect(appWindows.keyState).toHaveBeenLastCalledWith(0x41, false)
+  })
+
+  it("won't hold Esc, the Windows key, or something that isn't one key", async () => {
+    const { service, appWindows } = harness([app('notes')])
+    await service.requestApp('chat', 'notes', signal)
+    for (const key of ['escape', 'esc', 'win', 'ctrl+alt+delete', 'scroll_lock']) {
+      await expect(service.holdKey('chat', 'notes', key, 1, signal)).rejects.toThrow()
+    }
+    expect(appWindows.keyState).not.toHaveBeenCalled()
+  })
+})
+
+describe('a walkthrough', () => {
+  it('waits for the user, and nothing else can act while it does', async () => {
+    const { service, showTeachStep, appWindows } = harness([app('notes')])
+    appWindows.front.mockResolvedValue(77)
+    await service.requestApp('chat', 'notes', signal)
+    let answer: (value: 'next' | 'exit') => void = () => undefined
+    showTeachStep.mockReturnValue(new Promise((resolve) => (answer = resolve)))
+    const step = service.teach('chat', 'notes', { text: 'Open the menu', nextDoes: 1 }, signal)
+    await vi.waitFor(() => expect(showTeachStep).toHaveBeenCalled())
+    await expect(service.click('chat', 'notes', { x: 1, y: 1 }, signal)).rejects.toThrow(
+      'walkthrough'
+    )
+    answer('next')
+    await expect(step).resolves.toBe('next')
+  })
+
+  it('treats Next as the go-ahead for real input, even with the user just having clicked', async () => {
+    const { service, userIdleSeconds, call, appWindows } = harness([app('notes')])
+    needsForeground(call, 'never refused')
+    appWindows.front.mockResolvedValue(77)
+    await service.requestApp('chat', 'notes', signal)
+    await service.look('chat', 'notes', true, signal)
+    userIdleSeconds.mockReturnValue(0)
+    await service.teach('chat', 'notes', { text: 'Now this', nextDoes: 1 }, signal)
+    await service.click('chat', 'notes', { x: 1, y: 1 }, signal, true)
+    expect(call).toHaveBeenCalledWith(
+      'click',
+      expect.objectContaining({ delivery_mode: 'foreground' }),
+      signal
+    )
+  })
+
+  it('ends when stopped, which answers an open step', async () => {
+    const { service, showTeachStep, hideTeachStep, appWindows } = harness([app('notes')])
+    appWindows.front.mockResolvedValue(77)
+    await service.requestApp('chat', 'notes', signal)
+    let answer: (value: 'next' | 'exit') => void = () => undefined
+    showTeachStep.mockReturnValue(new Promise((resolve) => (answer = resolve)))
+    hideTeachStep.mockImplementation(() => answer('exit'))
+    const step = service.teach('chat', 'notes', { text: 'Open the menu', nextDoes: 0 }, signal)
+    await vi.waitFor(() => expect(showTeachStep).toHaveBeenCalled())
+    await service.stop()
+    await expect(step).resolves.toBe('exit')
+  })
+})
 
 describe('what the agent may reach', () => {
   it.each([

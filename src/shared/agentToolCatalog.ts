@@ -833,19 +833,45 @@ const computer = definition(
           'drag',
           'hover',
           'press_and_hold',
+          'mouse_down',
+          'mouse_up',
+          'hold_key',
           'wait',
           'zoom',
-          'batch'
+          'batch',
+          'read_clipboard',
+          'write_clipboard',
+          'look_screen',
+          'teach'
         ]
       },
       steps: {
         type: 'array',
         maxItems: 50,
         description:
-          'For batch: up to 50 actions on the same app, each with its own action and arguments, run in order. It stops at the first one refused, and you get one look at the end. Only click, double_click, triple_click, middle_click, right_click, type, set_value, key, scroll, drag, hover, press_and_hold and wait. Row numbers are from your last look, so leave out steps that depend on what an earlier step opens.',
+          'For batch: up to 50 actions on the same app, each with its own action and arguments, run in order. It stops at the first one refused, and you get one look at the end. Only click, double_click, triple_click, middle_click, right_click, type, set_value, key, scroll, drag, hover, press_and_hold, mouse_down, mouse_up, hold_key, read_clipboard, write_clipboard and wait. Row numbers are from your last look, so leave out steps that depend on what an earlier step opens. For teach: what pressing Next does in the app, in the same form.',
         items: { type: 'object' }
       },
-      app: { type: 'string', description: 'App name. All but list_apps need it.' },
+      app: {
+        type: 'string',
+        description: 'App name. All but list_apps, look_screen and the clipboard actions need it.'
+      },
+      button: {
+        type: 'string',
+        enum: ['left', 'right', 'middle'],
+        description:
+          'For mouse_down. Prefer drag or press_and_hold: mouse_down, hover and mouse_up are for gestures they cannot make, as one batch, since the button lets go by itself after 30 seconds or if the user moves the mouse. Always real input.'
+      },
+      keep: {
+        type: 'boolean',
+        description:
+          "For write_clipboard, only when the user asked to have the text on their clipboard. Otherwise what they had copied comes back when your reply ends. To paste, send key v with ctrl, with real_input. To read what an app holds, send key c with ctrl, then read_clipboard, which asks the user if what is there came from an app you weren't given."
+      },
+      display: {
+        type: 'number',
+        description:
+          'For look_screen, which asks the user and shows a whole display, from 0: only for seeing what is open or when a task spans apps. To act on what it shows, request_app that app.'
+      },
       window: { type: 'number', description: 'For look: a window id it listed, to switch to.' },
       find: {
         type: 'string',
@@ -884,12 +910,13 @@ const computer = definition(
       to_y: { type: 'number' },
       text: {
         type: 'string',
-        description: 'For type and set_value. To fill in a field, prefer set_value: it is exact.'
+        description:
+          'For type and set_value. To fill in a field, prefer set_value: it is exact. For write_clipboard, what to put there. For teach, what to tell the user in this step: when they ask to be shown how to do something in an app, send one teach at a time, with element or x and y for what it is about, and steps for what Next should do for them, if anything. Each waits for them to press Next, and comes back with a fresh look.'
       },
       key: {
         type: 'string',
         description:
-          'For key: a letter or digit, or return, tab, escape, space, backspace, delete, insert, home, end, pageup, pagedown, up, down, left, right, f1 to f12.'
+          'For key and hold_key: a letter or digit, or return, tab, escape, space, backspace, delete, insert, home, end, pageup, pagedown, up, down, left, right, f1 to f12. hold_key also takes shift, ctrl or alt, but not escape, and is always real input.'
       },
       modifiers: {
         type: 'array',
@@ -899,7 +926,7 @@ const computer = definition(
       seconds: {
         type: 'number',
         description:
-          'For wait: how long, up to 30, when something is loading, then you get a fresh look. For press_and_hold: how long to hold, up to 10. For drag: how long it takes, up to 10, for apps that need it slow.'
+          'For wait: how long, up to 30, when something is loading, then you get a fresh look. For press_and_hold and hold_key: how long to hold, up to 10. For drag: how long it takes, up to 10, for apps that need it slow.'
       },
       direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] },
       amount: { type: 'number', minimum: 1, maximum: 50 }

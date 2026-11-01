@@ -80,6 +80,25 @@ already moved on. This is never done for software that may control real
 equipment. If the app is covered or minimized, the glow gives way to a small label in the corner with a picture
 of what the agent last saw.
 
+Three more things it can ask for, each with its own limits:
+
+- **Your clipboard.** It can put text there to paste it, and what you had copied comes back when the
+  reply ends, unless you have copied something else by then. Neither reaches your clipboard history.
+  It keeps text there only if you asked for that. It can read what it copied from an app you gave it;
+  for anything you copied elsewhere it asks you first, once per chat. Anything from a password manager,
+  or that the app copying it marked as private, stays out of its reach.
+- **Your whole screen.** It asks you first, once per chat, and can then look at a display but not act
+  on it: to click or type in an app, it still has to ask for that app. Windows of password managers,
+  Windows security prompts and SideKick are blanked out before the picture leaves your computer, and
+  the chat shows you the picture it got. Passwords shown inside another app, such as a browser, are not.
+- **Showing you how.** Ask it to walk you through something in an app. It brings the app forward, points
+  at the step, and waits beside it with **Next** and **Exit**. If Next will do something in the app,
+  the step says so first.
+
+For gestures that a drag can't make, it can keep a real mouse button down and move with it, and hold a
+key for up to 10 seconds. A held button lets go by itself when you move the mouse, press Esc, the reply
+ends or 30 seconds pass. A held key lets go as soon as the app stops being in front.
+
 Before a click, SideKick checks what is being pressed where it can tell. A control named something
 like Send, Delete or Pay is refused until the agent confirms that you asked for it. Names can't catch
 everything: web-based apps may not name their controls, and a covered app can't be checked.

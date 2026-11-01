@@ -369,7 +369,11 @@ windows through its own long-lived helper (`computerUseWindows.ts`) rather than 
 happens on every step, and draws the agent's pointer itself with the driver's turned off.
 While Esc is armed, `computerUseHighlight.ts` outlines the app with a click-through window that runs no
 script and stays out of screen captures. The end of a run gives back the driver, Esc and the one-chat
-lock.
+lock, lets go of a held mouse button, and puts back what the user had copied. The helper keeps that copy
+itself and lets go of anything still held when it exits. A picture of the whole screen is made and blanked
+inside the helper too, so hidden windows' pixels never reach the main process, and it gives no way to act.
+A walkthrough step is the one overlay that takes a click; it never takes focus, and shows the model's
+words only as text.
 The driver's telemetry and update checks are turned off, and its files stay in SideKick's
 folder. The Windows package ships the driver in `resources/computer-driver`, fetched at build time by
 `scripts/fetch-computer-driver.cjs`, with its licence and notices. Only the pinned build starts: both

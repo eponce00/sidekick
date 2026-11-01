@@ -128,6 +128,72 @@ html, body { height: 100%; padding: 0; }
 </html>`
 }
 
+const TEACH_SCHEME = 'sidekick-teach:'
+const TEACH_WIDTH_DIP = 340
+const TEACH_GAP_DIP = 28
+const TEACH_SCRIPT = `
+for (const button of document.querySelectorAll('button')) {
+  button.addEventListener('click', () => { location.href = '${TEACH_SCHEME}' + button.dataset.answer })
+}
+const report = () => { location.href = '${TEACH_SCHEME}size/' + Math.ceil(document.querySelector('.card').getBoundingClientRect().height) }
+report()
+`
+
+/**
+ * One step of a walkthrough. The words are the model's, so they are only ever text here, and the card
+ * says whose they are and what Next will do, so it can't pass for SideKick asking for an approval.
+ */
+export function computerTeachPage(
+  step: { appName: string; text: string; nextDoes: number },
+  look: TrustedLook
+): string {
+  const hash = createHash('sha256').update(TEACH_SCRIPT).digest('base64')
+  const next = step.nextDoes
+    ? `Next lets the agent do ${step.nextDoes === 1 ? 'this step' : `these ${step.nextDoes} steps`} in ${escapeHtml(step.appName)}.`
+    : ''
+  return `<!doctype html>
+<html data-theme="${look.theme}">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-${hash}'">
+<title>SideKick is showing you ${escapeHtml(step.appName)}</title>
+<style>
+${trustedLookCss(look)}
+html, body { padding: 0; background: transparent; }
+.card {
+  box-sizing: border-box; width: ${TEACH_WIDTH_DIP}px;
+  margin: 10px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--surface); box-shadow: 0 8px 24px var(--shadow); font-size: 13px; line-height: 1.45;
+}
+.who { display: flex; gap: 7px; align-items: center; margin-bottom: 6px; color: var(--text-2); font-size: 11px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.next { margin-top: 8px; color: var(--text-2); font-size: 12px; }
+.actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+button {
+  height: 28px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); background: var(--surface-2); font: inherit; font-size: 12px; cursor: pointer;
+}
+button:hover { background: var(--surface-3); }
+button.primary { border-color: transparent; color: var(--on-accent); background: var(--accent); font-weight: 600; }
+button.primary:hover { filter: brightness(1.08); }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="who"><span class="dot"></span>The agent, showing you ${escapeHtml(step.appName)}</div>
+  <div class="text">${escapeHtml(step.text)}</div>
+  ${next ? `<div class="next">${next}</div>` : ''}
+  <div class="actions">
+    <button data-answer="exit">Exit</button>
+    <button class="primary" data-answer="next">Next</button>
+  </div>
+</div>
+<script>${TEACH_SCRIPT}</script>
+</body>
+</html>`
+}
+
 function overlayWindow(title: string, javascript: boolean): BrowserWindow {
   const window = new BrowserWindow({
     show: false,
@@ -178,6 +244,90 @@ export class ComputerUseHighlight {
   private mode: 'glow' | 'pill' = 'pill'
   private preview = ''
   private previewHeight = 0
+  private endTeachStep: ((answer: 'next' | 'exit') => void) | null = null
+
+  /**
+   * A walkthrough step beside what it is about, until the user presses Next or Exit. The only overlay
+   * that takes a click, and it never takes focus, so the app stays ready for what the user does in it.
+   */
+  async showTeachStep(
+    step: {
+      appName: string
+      text: string
+      nextDoes: number
+      anchor: { x: number; y: number } | null
+    },
+    signal: AbortSignal
+  ): Promise<'next' | 'exit'> {
+    this.hideTeachStep()
+    if (signal.aborted) return 'exit'
+    const look = await trustedLook(appState.mainWindowRef)
+    const anchor = step.anchor ? screen.screenToDipPoint(step.anchor) : null
+    const window = overlayWindow('SideKick is showing you an app', true)
+    window.setIgnoreMouseEvents(false)
+    return new Promise((resolve) => {
+      const finish = (answer: 'next' | 'exit'): void => {
+        if (this.endTeachStep !== finish) return
+        this.endTeachStep = null
+        signal.removeEventListener('abort', abort)
+        if (!window.isDestroyed()) window.destroy()
+        resolve(answer)
+      }
+      const abort = (): void => finish('exit')
+      this.endTeachStep = finish
+      signal.addEventListener('abort', abort, { once: true })
+      window.on('closed', abort)
+      window.webContents.on('render-process-gone', abort)
+      window.webContents.on('will-navigate', (_event, url) => {
+        if (!url.startsWith(TEACH_SCHEME)) return
+        const [kind, height] = url.slice(TEACH_SCHEME.length).split('/')
+        if (kind === 'next' || kind === 'exit') return finish(kind)
+        if (kind !== 'size') return
+        window.setBounds(this.teachBounds(anchor, Math.max(Number(height) || 120, 80) + 20))
+        if (!window.isVisible()) window.showInactive()
+      })
+      void window
+        .loadURL(
+          `data:text/html;charset=utf-8,${encodeURIComponent(computerTeachPage(step, look))}`
+        )
+        // Reporting its size is a refused navigation, which can count as a failed load. That is fine.
+        .catch(() => undefined)
+    })
+  }
+
+  hideTeachStep(): void {
+    this.endTeachStep?.('exit')
+  }
+
+  /** Beside the point, and on the side of it with room. With no point, low in the middle of the screen. */
+  private teachBounds(anchor: { x: number; y: number } | null, height: number): Electron.Rectangle {
+    const width = TEACH_WIDTH_DIP + 20
+    const { workArea: area } = screen.getDisplayNearestPoint(
+      anchor ?? screen.getCursorScreenPoint()
+    )
+    const clamp = (at: number, size: number, from: number, room: number): number =>
+      Math.round(Math.min(Math.max(at, from), from + room - size))
+    if (!anchor) {
+      return {
+        x: Math.round(area.x + (area.width - width) / 2),
+        y: area.y + area.height - height - PILL_MARGIN_DIP,
+        width,
+        height
+      }
+    }
+    const fitsBelow = anchor.y + TEACH_GAP_DIP + height <= area.y + area.height
+    return {
+      x: clamp(anchor.x + TEACH_GAP_DIP, width, area.x, area.width),
+      y: clamp(
+        fitsBelow ? anchor.y + TEACH_GAP_DIP : anchor.y - TEACH_GAP_DIP - height,
+        height,
+        area.y,
+        area.height
+      ),
+      width,
+      height
+    }
+  }
 
   show(target: ComputerHighlightTarget): void {
     const running = this.target !== null

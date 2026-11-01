@@ -56,11 +56,18 @@ const POWERFUL: ReadonlyArray<readonly [string, readonly string[]]> = [
   ]
 ]
 
-const BLOCKED: ReadonlyArray<readonly [string, readonly string[]]> = [
-  [
-    'it holds your passwords',
-    ['1password', 'bitwarden', 'keepass', 'keepassxc', 'lastpass', 'dashlane', 'nordpass']
-  ],
+const PASSWORD_MANAGERS = [
+  '1password',
+  'bitwarden',
+  'keepass',
+  'keepassxc',
+  'lastpass',
+  'dashlane',
+  'nordpass'
+]
+
+const SENSITIVE: ReadonlyArray<readonly [string, readonly string[]]> = [
+  ['it holds your passwords', PASSWORD_MANAGERS],
   [
     'it is a Windows security prompt, which only you may answer',
     ['consent', 'credentialuibroker', 'lockapp', 'logonui']
@@ -68,7 +75,16 @@ const BLOCKED: ReadonlyArray<readonly [string, readonly string[]]> = [
   [
     'the agent may not operate SideKick itself',
     ['sidekick', 'electron', 'cua-driver', 'cua-driver-uia']
-  ],
+  ]
+]
+
+/** Blanked out of a picture of the whole screen, by executable name. */
+export const COMPUTER_APPS_HIDDEN_FROM_SCREEN: readonly string[] = SENSITIVE.flatMap(
+  ([, names]) => names
+)
+
+const BLOCKED: ReadonlyArray<readonly [string, readonly string[]]> = [
+  ...SENSITIVE,
   [
     'it is part of Windows or a background host, not an app to operate',
     [
@@ -101,6 +117,14 @@ export function computerAppAccess(executablePath: string): ComputerAppAccess {
     if (names.includes(name)) return { kind: 'powerful', warning }
   }
   return PHYSICAL.test(executablePath) ? { kind: 'physical' } : { kind: 'allowed' }
+}
+
+/** Whether an executable is a password manager, whose copies stay private whatever the user allows. */
+export function computerHoldsPasswords(executablePath: string): boolean {
+  const name = basename(executablePath.replaceAll('\\', '/'))
+    .replace(/\.exe$/i, '')
+    .toLowerCase()
+  return PASSWORD_MANAGERS.includes(name)
 }
 
 /** The window helper's answer: "pid|path" for each app, each ending in a mark no path can hold. */
