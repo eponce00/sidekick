@@ -102,7 +102,6 @@ import type { ArtifactInspectorLike } from './artifactInspector'
 import type { InspectedArtifactType } from '../../shared/artifactInspection'
 import { registerMcpToolHandlers } from './agentMcpToolHandlers'
 import { registerVisionToolHandlers } from './agentVisionToolHandlers'
-import { registerChromeToolHandlers } from './agentChromeToolHandlers'
 import { registerComputerToolHandlers } from './agentComputerToolHandlers'
 import type { ChromeUseService } from './chromeUseService'
 import type { ComputerUseService } from './computerUseService'
@@ -192,7 +191,7 @@ export interface AgentToolRuntimeSessionInput {
   /** Operating other apps on this computer. Only ever set from the user's settings. */
   computer?: { service: ComputerUseService; vision: boolean }
   /** Working in the user's own Chrome. Only ever set from the user's settings. */
-  chrome?: { service: ChromeUseService; vision: boolean }
+  chrome?: { service: ChromeUseService; manager: AgentBrowserSessionManager }
   /** Page images one PDF read may attach: the provider's image budget, or 0 for a text model. */
   pageImages?: number
   /** The previous reply made an artifact, so the web-artifacts guidance is already in history. */
@@ -593,6 +592,8 @@ export class AgentToolRuntime {
       const listed = await this.mcp.listTools()
       for (const tool of listed.tools) mcpByFunction.set(mcpFunctionName(tool), tool)
     }
+    const browserOf = (conversationId: string): AgentBrowserSessionManager =>
+      input.chrome?.service.inChrome.has(conversationId) ? input.chrome.manager : this.browser!
     const handlers = new AgentToolHandlerRegistry()
     registerCoreToolHandlers(handlers, this.outputs)
     registerWebToolHandlers(handlers, this.outputs)
@@ -607,14 +608,10 @@ export class AgentToolRuntime {
         vision: input.computer.vision
       })
     }
-    if (input.chrome) {
-      registerChromeToolHandlers(handlers, input.chrome.service, this.outputs, {
-        vision: input.chrome.vision
-      })
-    }
     if (input.browserEnabled === true && this.browser) {
       registerBrowserToolHandlers(handlers, this.browser, this.outputs, {
-        credentials: () => this.credentials?.uses
+        credentials: () => this.credentials?.uses,
+        ...(input.chrome ? { chrome: input.chrome } : {})
       })
     }
     registerConversationToolHandlers(handlers, this.db, { goal: input.goal, plan: input.plan })
@@ -741,7 +738,7 @@ export class AgentToolRuntime {
       webSearchEnabled: input.webSearchEnabled,
       browserEnabled: input.browserEnabled === true && Boolean(this.browser),
       computerEnabled: Boolean(input.computer),
-      chromeEnabled: Boolean(input.chrome),
+      chromeEnabled: input.browserEnabled === true && Boolean(input.chrome),
       activeSkillIds: [...activeSkillIds],
       officeHelpersAvailable: officeSession?.available() ?? false,
       capabilities: input.capabilities,
@@ -773,7 +770,9 @@ export class AgentToolRuntime {
         name,
         args,
         context,
-        name === 'browser_sign_in' ? this.browser?.activeAddress(browserScope(context)) : undefined
+        name === 'browser_sign_in' && this.browser
+          ? browserOf(browserScope(context)).activeAddress(browserScope(context))
+          : undefined
       )
     return {
       catalog,
@@ -797,7 +796,12 @@ export class AgentToolRuntime {
         approvalPreview: (name, args, context) => handlers.preview(name, args, context),
         requestedAccess: (name, args, context) =>
           name === 'browser_call_webmcp_tool' && this.browser
-            ? webMcpCallAccess(this.browser, browserScope(context), args, context)
+            ? webMcpCallAccess(
+                browserOf(browserScope(context)),
+                browserScope(context),
+                args,
+                context
+              )
             : scheduleTools?.requestedAccess(name, args, context),
         credentialApproval: (name, args, context) => {
           const uses = this.credentials?.uses
@@ -822,15 +826,26 @@ export class AgentToolRuntime {
         },
         ...(this.browser
           ? {
-              reserveBrowserForHumanCheck: (conversationId: string) =>
-                this.browser!.reserveForHumanCheck(conversationId),
+              reserveBrowserForHumanCheck: async (conversationId: string) => {
+                const session = await browserOf(conversationId).reserveForHumanCheck(conversationId)
+                // It's the user's to do, and they may not be looking at Chrome.
+                if (browserOf(conversationId) !== this.browser) {
+                  await input.chrome?.service.showToUser(conversationId)
+                }
+                return session
+              },
               waitForBrowserHumanCheck: (
                 conversationId: string,
                 expectedSessionId: string,
                 signal: AbortSignal
-              ) => this.browser!.waitForHumanCheck(conversationId, expectedSessionId, signal),
+              ) =>
+                browserOf(conversationId).waitForHumanCheck(
+                  conversationId,
+                  expectedSessionId,
+                  signal
+                ),
               releaseBrowserHumanCheck: (conversationId: string, expectedSessionId: string) =>
-                this.browser!.releaseHumanCheck(conversationId, expectedSessionId)
+                browserOf(conversationId).releaseHumanCheck(conversationId, expectedSessionId)
             }
           : {})
       }

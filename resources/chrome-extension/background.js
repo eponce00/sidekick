@@ -12,43 +12,105 @@ const WINDOW_HEIGHT = 800
 const attached = new Set()
 let polling = false
 
-const KEYS = {
-  return: ['Enter', 13, '\r'],
-  enter: ['Enter', 13, '\r'],
-  tab: ['Tab', 9],
-  escape: ['Escape', 27],
-  esc: ['Escape', 27],
-  space: [' ', 32, ' '],
-  backspace: ['Backspace', 8],
-  delete: ['Delete', 46],
-  home: ['Home', 36],
-  end: ['End', 35],
-  pageup: ['PageUp', 33],
-  pagedown: ['PageDown', 34],
-  up: ['ArrowUp', 38],
-  down: ['ArrowDown', 40],
-  left: ['ArrowLeft', 37],
-  right: ['ArrowRight', 39]
-}
-const MODIFIER_BITS = { alt: 1, ctrl: 2, control: 2, shift: 8 }
-
 async function tabInfo(tabId) {
   const tab = await chrome.tabs.get(tabId)
   return {
     id: tab.id,
     title: tab.title ?? '',
-    url: tab.url ?? '',
+    // A tab that has only just opened has no address yet, only the one it's on its way to.
+    url: tab.url || tab.pendingUrl || '',
     active: tab.active,
     windowId: tab.windowId,
     loading: tab.status !== 'complete'
   }
 }
 
-/** Only ever web pages: not Chrome's own pages, where saved passwords live, nor other extensions. */
+/**
+ * Only ever web pages: not Chrome's own pages, where saved passwords live, nor other extensions. A tab
+ * that has just been opened is blank for a moment on its way to one.
+ */
 async function webTab(tabId) {
   const info = await tabInfo(tabId)
-  if (!/^https?:/i.test(info.url)) throw new Error('That tab is not a web page.')
+  // Chrome's page for an address that failed still has to be somewhere the agent can leave.
+  if (!/^(https?:|about:blank$|chrome-error:)/i.test(info.url)) {
+    throw new Error('That tab is not a web page.')
+  }
   return info
+}
+
+// What SideKick's browser tools use, and nothing else. No cookies or storage, and no way to reach other
+// tabs or Chrome itself, whatever it's asked for.
+const ALLOWED_COMMANDS = new Set([
+  'Accessibility.enable',
+  'Accessibility.getFullAXTree',
+  'DOM.describeNode',
+  'DOM.enable',
+  'DOM.getDocument',
+  'DOM.getNodeForLocation',
+  'DOM.querySelectorAll',
+  'DOM.resolveNode',
+  'DOM.scrollIntoViewIfNeeded',
+  'Emulation.clearDeviceMetricsOverride',
+  'Emulation.setDeviceMetricsOverride',
+  'Emulation.setTouchEmulationEnabled',
+  'Emulation.setUserAgentOverride',
+  'Input.dispatchKeyEvent',
+  'Input.dispatchMouseEvent',
+  'Input.insertText',
+  'Network.enable',
+  'Page.addScriptToEvaluateOnNewDocument',
+  'Page.captureScreenshot',
+  'Page.enable',
+  'Page.getFrameTree',
+  'Page.getLayoutMetrics',
+  'Page.getNavigationHistory',
+  'Page.navigateToHistoryEntry',
+  'Page.reload',
+  'Page.stopLoading',
+  'Runtime.callFunctionOn',
+  'Runtime.enable',
+  'Runtime.evaluate',
+  'Runtime.releaseObject',
+  'WebMCP.cancelInvocation',
+  'WebMCP.enable',
+  'WebMCP.invokeTool'
+])
+
+// What the browser tools listen for. The rest is a lot of traffic with nothing in it for them.
+const FORWARDED_EVENTS = new Set([
+  'Network.loadingFailed',
+  'Network.loadingFinished',
+  'Network.requestWillBeSent',
+  'Page.frameNavigated',
+  'Page.navigatedWithinDocument',
+  'Runtime.consoleAPICalled',
+  'Runtime.exceptionThrown'
+])
+const EVENT_BATCH_MS = 40
+const MAX_FILE_BYTES = 25 * 1024 * 1024
+
+/** Domains and scripts turned on for each tab, to turn back on if the debugger has to attach again. */
+const remembered = new Map()
+let pendingEvents = []
+let eventTimer = null
+
+function sendEvent(event) {
+  pendingEvents.push(event)
+  eventTimer ??= setTimeout(flushEvents, EVENT_BATCH_MS)
+}
+
+async function flushEvents() {
+  eventTimer = null
+  const events = pendingEvents
+  pendingEvents = []
+  if (!events.length) return
+  const paired = await pairing().catch(() => null)
+  if (!paired) return
+  await fetch(`http://127.0.0.1:${paired.port}/event`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${paired.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify(events)
+  }).catch(() => undefined)
 }
 
 function loaded(tabId) {
@@ -103,6 +165,7 @@ async function open({ url, windowId }) {
     tab = created.tabs[0]
   }
   await inGroup(tab.id, tab.windowId)
+  tracked.add(tab.id)
   // A page that thinks it's hidden may not even draw.
   await debug(tab.id, 'Page.enable')
   await loaded(tab.id)
@@ -118,219 +181,6 @@ async function activeTab() {
 }
 
 // Runs in the page, kept apart from the page's own scripts. Every value a page keeps secret stays here.
-function snapshot(maxElements, maxText, find, textFrom) {
-  const MAX_FOUND = 5000
-  const MAX_EXCERPTS = 12
-  const EXCERPT_REACH = 160
-  const MAX_IMAGES = 80
-  const MIN_IMAGE_PX = 48
-  const SELECTOR =
-    'a[href],button,input,select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=menuitem],[role=tab],[role=switch],[role=combobox],[role=textbox],[contenteditable="true"],[onclick]'
-  const SECRET =
-    /password|passwd|passcode|one-time-code|cc-|card.?(num|number)|cvv|cvc|security.?code|ssn/i
-  const found = []
-  const walk = (root) => {
-    for (const element of root.querySelectorAll('*')) {
-      if (element.matches(SELECTOR)) found.push(element)
-      if (element.shadowRoot) walk(element.shadowRoot)
-    }
-  }
-  walk(document)
-  const isSecret = (element) =>
-    element.type === 'password' ||
-    SECRET.test(
-      [element.autocomplete, element.name, element.id, element.getAttribute?.('aria-label')].join(
-        ' '
-      )
-    )
-  const nameOf = (element) =>
-    (
-      element.getAttribute('aria-label') ||
-      element.labels?.[0]?.innerText ||
-      element.innerText ||
-      (element.type === 'submit' || element.type === 'button' ? element.value : '') ||
-      element.placeholder ||
-      element.title ||
-      element.alt ||
-      element.name ||
-      ''
-    )
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 120)
-  const shown = []
-  for (const element of found) {
-    const box = element.getBoundingClientRect()
-    const style = getComputedStyle(element)
-    if (box.width <= 0 || box.height <= 0) continue
-    if (style.visibility === 'hidden' || style.display === 'none') continue
-    shown.push(element)
-    if (shown.length >= MAX_FOUND) break
-  }
-  window.__sidekickElements = shown
-  const needle = (find ?? '').trim().toLowerCase()
-  const onScreen = (element) => {
-    const box = element.getBoundingClientRect()
-    return box.bottom > 0 && box.top < innerHeight
-  }
-  // What the user could see comes first: a long page has more controls than fit, and the top of it says
-  // nothing about the part that has been scrolled to. A private field's value is never searched.
-  const indexes = shown.map((_, index) => index)
-  const matching = needle
-    ? indexes.filter((index) => {
-        const element = shown[index]
-        const value = 'value' in element && !isSecret(element) ? String(element.value) : ''
-        return `${nameOf(element)} ${value}`.toLowerCase().includes(needle)
-      })
-    : indexes
-  const chosen = (
-    needle
-      ? matching
-      : [
-          ...matching.filter((index) => onScreen(shown[index])),
-          ...matching.filter((index) => !onScreen(shown[index]))
-        ]
-  )
-    .slice(0, maxElements)
-    .sort((a, b) => a - b)
-  const rows = chosen.map((index) => {
-    const element = shown[index]
-    const secret = isSecret(element)
-    const holdsValue = 'value' in element && element.type !== 'submit' && element.type !== 'button'
-    return {
-      index,
-      role: element.getAttribute('role') || element.type || element.tagName.toLowerCase(),
-      name: nameOf(element),
-      value: holdsValue
-        ? secret
-          ? element.value
-            ? '(hidden)'
-            : ''
-          : String(element.value).slice(0, 200)
-        : undefined,
-      checked:
-        element.type === 'checkbox' || element.type === 'radio' ? element.checked : undefined,
-      disabled: element.disabled === true || undefined,
-      secret: secret || undefined,
-      onScreen: onScreen(element)
-    }
-  })
-  const allText = document.body?.innerText ?? ''
-  const lowerText = allText.toLowerCase()
-  const excerpts = []
-  let matches = 0
-  if (needle) {
-    for (
-      let at = lowerText.indexOf(needle);
-      at !== -1;
-      at = lowerText.indexOf(needle, at + needle.length)
-    ) {
-      matches++
-      if (excerpts.length < MAX_EXCERPTS) {
-        excerpts.push({
-          at,
-          text: allText.slice(Math.max(0, at - EXCERPT_REACH), at + needle.length + EXCERPT_REACH)
-        })
-      }
-    }
-  }
-  const allImages = [...document.images].filter((image) => {
-    if (!/^https?:/i.test(image.currentSrc || image.src)) return false
-    const box = image.getBoundingClientRect()
-    // One still waiting to load has no size yet. Anything else this small is an icon.
-    return !image.complete || (box.width >= MIN_IMAGE_PX && box.height >= MIN_IMAGE_PX)
-  })
-  const describe = (image) =>
-    (
-      image.alt ||
-      image.title ||
-      image.closest('figure')?.querySelector('figcaption')?.innerText ||
-      ''
-    )
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 160)
-  const images = allImages
-    .map((image) => ({
-      description: describe(image),
-      // Without what follows the path, which can carry a session's token.
-      url: (image.currentSrc || image.src).split(/[?#]/)[0].slice(0, 200),
-      onScreen: onScreen(image)
-    }))
-    .filter(
-      (image) => !needle || `${image.description} ${image.url}`.toLowerCase().includes(needle)
-    )
-  return {
-    title: document.title,
-    url: location.href,
-    rows,
-    total: shown.length,
-    matching: matching.length,
-    text: allText.slice(textFrom, textFrom + maxText),
-    textFrom,
-    textTotal: allText.length,
-    excerpts,
-    matches,
-    images: images.slice(0, MAX_IMAGES),
-    imagesTotal: images.length,
-    scrolled: Math.round(scrollY),
-    pageHeight: document.documentElement.scrollHeight,
-    viewHeight: innerHeight
-  }
-}
-
-// Also in the page: what a row is right now, in view, and where. Null once the page has replaced it.
-function locate(index) {
-  const SECRET =
-    /password|passwd|passcode|one-time-code|cc-|card.?(num|number)|cvv|cvc|security.?code|ssn/i
-  const element = window.__sidekickElements?.[index]
-  if (!element?.isConnected) return null
-  element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
-  const box = element.getBoundingClientRect()
-  const form = element.form ?? element.closest?.('form')
-  const submit = form?.querySelector('[type=submit],button:not([type=button])')
-  return {
-    x: box.left + box.width / 2,
-    y: box.top + box.height / 2,
-    name: (
-      element.getAttribute('aria-label') ||
-      element.innerText ||
-      element.value ||
-      element.title ||
-      ''
-    )
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 120),
-    submit: (submit?.innerText || submit?.value || '').trim().slice(0, 120),
-    secret:
-      element.type === 'password' ||
-      SECRET.test(
-        [element.autocomplete, element.name, element.id, element.getAttribute('aria-label')].join(
-          ' '
-        )
-      )
-  }
-}
-
-// In the page: what Enter would do where the focus is now.
-function focused() {
-  const SECRET =
-    /password|passwd|passcode|one-time-code|cc-|card.?(num|number)|cvv|cvc|security.?code|ssn/i
-  const element = document.activeElement
-  const form = element?.form ?? element?.closest?.('form')
-  const submit = form?.querySelector('[type=submit],button:not([type=button])')
-  return {
-    name: (element?.innerText || '').trim().slice(0, 120),
-    submit: (submit?.innerText || submit?.value || '').trim().slice(0, 120),
-    secret:
-      element?.type === 'password' ||
-      SECRET.test([element?.autocomplete, element?.name, element?.id].join(' '))
-  }
-}
-
-// In the page: SideKick's glow and pointer, as it shows around an app. They take no clicks, sit in a closed
-// shadow root the page can't style or read, and are stylesheets it can't block.
 function showOverlay(accent, x, y) {
   const STYLE = `
     .glow { position: fixed; inset: 0; border: 2px solid var(--accent); box-shadow: inset 0 0 36px 2px color-mix(in srgb, var(--accent) 38%, transparent); animation: breathe 2.6s ease-in-out infinite; }
@@ -421,60 +271,49 @@ async function debug(tabId, method, params = {}) {
     await chrome.debugger.sendCommand({ tabId }, 'Emulation.setFocusEmulationEnabled', {
       enabled: true
     })
+    for (const [method, params] of remembered.get(tabId) ?? []) {
+      await chrome.debugger.sendCommand({ tabId }, method, params).catch(() => undefined)
+    }
   }
   return chrome.debugger.sendCommand({ tabId }, method, params)
 }
 
-async function pressAt(tabId, x, y) {
-  const mouse = (type, extra = {}) =>
-    debug(tabId, 'Input.dispatchMouseEvent', { type, x, y, button: 'none', ...extra })
-  await mouse('mouseMoved')
-  await mouse('mousePressed', { button: 'left', buttons: 1, clickCount: 1 })
-  await mouse('mouseReleased', { button: 'left', buttons: 0, clickCount: 1 })
+const withTimeout = (promise, ms, message) =>
+  Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms))
+  ])
+
+// One at a time: a picture for the model asked for while one for the corner label was on its way never came.
+let lastCapture = Promise.resolve()
+function capturing(work) {
+  const turn = lastCapture.catch(() => undefined).then(work)
+  lastCapture = turn
+  return turn
 }
 
-async function click({ tabId, x, y }) {
-  await webTab(tabId)
-  await pressAt(tabId, x, y)
+const captureOnce = (tabId, params) =>
+  withTimeout(
+    debug(tabId, 'Page.captureScreenshot', params),
+    CAPTURE_WAIT_MS,
+    'Chrome gave no picture of this tab in time.'
+  )
+
+/** A capture that has stalled stays stalled until the debugger lets go, so that's worth one more try. */
+async function capture(tabId, params) {
+  try {
+    return await captureOnce(tabId, params)
+  } catch {
+    attached.delete(tabId)
+    await chrome.debugger.detach({ tabId }).catch(() => undefined)
+    return captureOnce(tabId, params)
+  }
 }
 
-async function typeText({ tabId, text }) {
+/** For the corner label. It keeps the glow, being for the user to see. */
+async function screenshot({ tabId }) {
   await webTab(tabId)
-  await debug(tabId, 'Input.insertText', { text })
-}
-
-async function pressKey({ tabId, key, modifiers = [] }) {
-  await webTab(tabId)
-  const named = KEYS[key.toLowerCase()]
-  const single = key.length === 1 ? key : null
-  if (!named && !single) throw new Error(`There is no key called "${key}".`)
-  const bits = modifiers.reduce((all, name) => all | (MODIFIER_BITS[name.toLowerCase()] ?? 0), 0)
-  const code = named ? named[1] : single.toUpperCase().charCodeAt(0)
-  const shared = { key: named ? named[0] : single, windowsVirtualKeyCode: code, modifiers: bits }
-  // A key with ctrl or alt held is a shortcut, not a character to type.
-  const text = bits & 3 ? undefined : named ? named[2] : single
-  await debug(tabId, 'Input.dispatchKeyEvent', {
-    type: text ? 'keyDown' : 'rawKeyDown',
-    ...shared,
-    ...(text ? { text } : {})
-  })
-  await debug(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', ...shared })
-}
-
-async function wheel({ tabId, direction, amount = 3 }) {
-  await webTab(tabId)
-  const { innerWidth: width, innerHeight: height } = await inPage(tabId, () => ({
-    innerWidth,
-    innerHeight
-  }))
-  const distance = Math.round((height / 3) * amount)
-  await debug(tabId, 'Input.dispatchMouseEvent', {
-    type: 'mouseWheel',
-    x: Math.round(width / 2),
-    y: Math.round(height / 2),
-    deltaX: direction === 'left' ? -distance : direction === 'right' ? distance : 0,
-    deltaY: direction === 'up' ? -distance : direction === 'down' ? distance : 0
-  })
+  return capturing(() => capture(tabId, { format: 'jpeg', quality: 80 }))
 }
 
 async function navigate({ tabId, url }) {
@@ -484,32 +323,9 @@ async function navigate({ tabId, url }) {
   return tabInfo(tabId)
 }
 
-async function back({ tabId }) {
-  await webTab(tabId)
-  await chrome.tabs.goBack(tabId)
-  await loaded(tabId)
-  return tabInfo(tabId)
-}
-
-const withTimeout = (promise, ms, message) =>
-  Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms))
-  ])
-
-/** With `clean`, for the model: its own glow and pointer aren't part of the page. */
-async function screenshot({ tabId, clean }) {
-  await webTab(tabId)
-  if (clean) await inPage(tabId, overlayShown, false)
-  try {
-    return await withTimeout(
-      debug(tabId, 'Page.captureScreenshot', { format: 'jpeg', quality: 80 }),
-      CAPTURE_WAIT_MS,
-      'Chrome gave no picture of this tab in time.'
-    )
-  } finally {
-    if (clean) await inPage(tabId, overlayShown, true).catch(() => undefined)
-  }
+async function showTab({ tabId }) {
+  const tab = await chrome.tabs.update(tabId, { active: true })
+  await chrome.windows.update(tab.windowId, { focused: true })
 }
 
 async function overlaysOff({ tabIds = [] }) {
@@ -523,26 +339,125 @@ async function detachAll() {
   }
 }
 
-chrome.debugger.onDetach.addListener(({ tabId }) => attached.delete(tabId))
-chrome.tabs.onRemoved.addListener((tabId) => attached.delete(tabId))
+/** A command from the browser tools, on a tab SideKick has told this about. */
+async function cdp({ tabId, method, params = {} }) {
+  if (!ALLOWED_COMMANDS.has(method)) throw new Error(`${method} is not available.`)
+  await webTab(tabId)
+  if (method.endsWith('.enable') || method === 'Page.addScriptToEvaluateOnNewDocument') {
+    const list = remembered.get(tabId) ?? []
+    list.push([method, params])
+    remembered.set(tabId, list)
+  }
+  tracked.add(tabId)
+  if (method !== 'Page.captureScreenshot') return (await debug(tabId, method, params)) ?? {}
+  return capturing(async () => {
+    // For the model: its own glow and pointer aren't part of the page.
+    await inPage(tabId, overlayShown, false).catch(() => undefined)
+    try {
+      return await capture(tabId, params)
+    } finally {
+      await inPage(tabId, overlayShown, true).catch(() => undefined)
+    }
+  })
+}
+
+/** With the user's own cookies, for a download they asked the agent for. */
+async function fetchFile({ url, method = 'GET' }) {
+  if (!/^https?:/i.test(url)) throw new Error('Only web addresses can be downloaded.')
+  const answer = await fetch(url, { method, credentials: 'include' })
+  const bytes = await answer.arrayBuffer()
+  if (bytes.byteLength > MAX_FILE_BYTES) throw new Error('That file is too large to download.')
+  let binary = ''
+  const view = new Uint8Array(bytes)
+  for (let at = 0; at < view.length; at += 0x8000) {
+    binary += String.fromCharCode(...view.subarray(at, at + 0x8000))
+  }
+  return { status: answer.status, headers: [...answer.headers.entries()], data: btoa(binary) }
+}
+
+const tracked = new Set()
+/** The tab the user last had selected in each window, as a new tab of the agent's mustn't take it over. */
+const selectedTabs = new Map()
+
+chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
+  if (!tracked.has(tabId)) selectedTabs.set(windowId, tabId)
+})
+
+chrome.debugger.onEvent.addListener(({ tabId }, method, params) => {
+  if (tabId === undefined) return
+  // A page's alert would freeze it, and everything waiting on it, until someone answered.
+  if (method === 'Page.javascriptDialogOpening') {
+    void chrome.debugger
+      .sendCommand({ tabId }, 'Page.handleJavaScriptDialog', {
+        accept: params.type === 'beforeunload'
+      })
+      .catch(() => undefined)
+    sendEvent({
+      kind: 'cdp',
+      tabId,
+      method: 'Runtime.consoleAPICalled',
+      params: {
+        type: 'warning',
+        args: [{ value: `A page dialog was dismissed: ${params.message}` }]
+      }
+    })
+    return
+  }
+  if (FORWARDED_EVENTS.has(method) || method.startsWith('WebMCP.')) {
+    sendEvent({ kind: 'cdp', tabId, method, params })
+  }
+})
+
+chrome.debugger.onDetach.addListener(({ tabId }, reason) => {
+  attached.delete(tabId)
+  if (tabId !== undefined && tracked.has(tabId)) sendEvent({ kind: 'detached', tabId, reason })
+})
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  attached.delete(tabId)
+  remembered.delete(tabId)
+  if (tracked.delete(tabId)) sendEvent({ kind: 'removed', tabId })
+})
+
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+  if (!tracked.has(tabId) || !('url' in change || 'title' in change || 'status' in change)) return
+  sendEvent({
+    kind: 'tab',
+    tabId,
+    url: tab.url ?? '',
+    title: tab.title ?? '',
+    loading: tab.status !== 'complete'
+  })
+})
+
+// A link or script in one of the agent's tabs that opens another: the page may need that exact tab, as a
+// sign-in popup does. It joins the group, and the user keeps the tab they were on.
+// Not tabs.onCreated: a link that opens a new tab has no opener, as far as that one can tell. Only while the
+// agent holds the tab it came from, so what the user opens from a tab they shared stays theirs.
+chrome.webNavigation.onCreatedNavigationTarget.addListener(async ({ sourceTabId, tabId, url }) => {
+  if (!tracked.has(sourceTabId) || !attached.has(sourceTabId)) return
+  const tab = await chrome.tabs.get(tabId).catch(() => null)
+  if (!tab) return
+  tracked.add(tabId)
+  void inGroup(tabId, tab.windowId).catch(() => undefined)
+  const theirs = selectedTabs.get(tab.windowId)
+  if (tab.active && theirs !== undefined && theirs !== tabId) {
+    void chrome.tabs.update(theirs, { active: true }).catch(() => undefined)
+  }
+  sendEvent({ kind: 'popup', tabId, openerTabId: sourceTabId, url, title: tab.title ?? '' })
+})
 
 const OPERATIONS = {
   open,
   activeTab,
   tabInfo: ({ tabId }) => tabInfo(tabId),
-  read: ({ tabId, maxElements, maxText, find, textFrom }) =>
-    inPage(tabId, snapshot, maxElements, maxText, find ?? '', textFrom ?? 0),
-  locate: ({ tabId, index }) => inPage(tabId, locate, index),
-  focused: ({ tabId }) => inPage(tabId, focused),
-  click,
-  typeText,
-  pressKey,
-  wheel,
   navigate,
-  back,
   screenshot,
+  showTab,
   closeTab: ({ tabId }) => chrome.tabs.remove(tabId),
   detachAll,
+  cdp,
+  fetchFile,
   overlay: ({ tabId, accent, x, y }) => inPage(tabId, showOverlay, accent, x, y),
   overlaysOff,
   // The user pressed Disconnect in SideKick, which needs no permission and nothing more from them.

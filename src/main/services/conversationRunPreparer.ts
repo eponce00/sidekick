@@ -913,7 +913,7 @@ export class ConversationRunPreparer {
       surface === 'conversation' &&
       currentSettings.chromeUseEnabled === true &&
       !conversation.permission_ceiling
-        ? (await import('./chromeUseHost')).chromeUseService()
+        ? (await import('./chromeUseHost')).chromeBrowser()
         : null
     const toolSession = await this.tools.createSession({
       permissionMode,
@@ -928,9 +928,7 @@ export class ConversationRunPreparer {
       ...(computerUse
         ? { computer: { service: computerUse, vision: input.model.supportsVision !== false } }
         : {}),
-      ...(chromeUse
-        ? { chrome: { service: chromeUse, vision: input.model.supportsVision !== false } }
-        : {}),
+      ...(chromeUse ? { chrome: chromeUse } : {}),
       pageImages:
         input.model.supportsVision !== false
           ? providerImageProfile(executionTarget.providerKind).maxImages

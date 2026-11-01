@@ -2,10 +2,10 @@
   "manifest_version": 3,
   "name": "SideKick",
   "description": "Lets SideKick's agent work in Chrome, on sites and tabs you approve in SideKick.",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "minimum_chrome_version": "116",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvwOzyYdg1jPmxusYeevjl0lcaCuDmpqDVtHIQKZDy4JjZTAGEEFsLeYCEQXVD2a8sEgoZeHAD+AO1yQFntv8XKeDmWK7qy4B+3h/YFRd5hkqprHask1J8WnrSp9O0e1iWA71c8NNDAK8WfX56p0xGgQYQ52mMdB7pKgmX1KJWd5HWvNvePxb3TDR2yuIxzzCa2WSAE6RIUqk+ibngZAnqb8qTSu5sXl5U9al9earYDFbWE9XUClb+IKI3C54X+/Z7uM2tLoqOFj1H7HWjno3LyPH9yk6p/hrccHuDLfmXYftH8NaKLX53vA6Y5F3gBCwP4SCiRHVgpahgGygR0XCdwIDAQAB",
-  "permissions": ["alarms", "debugger", "scripting", "tabGroups", "tabs"],
+  "permissions": ["alarms", "debugger", "scripting", "tabGroups", "tabs", "webNavigation"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
