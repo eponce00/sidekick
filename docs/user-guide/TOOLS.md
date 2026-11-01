@@ -112,8 +112,10 @@ keep using your computer. Turn this on in **Settings › Chrome**, which is off 
 - **It works in a tab group named SideKick,** in your Chrome window, without taking you off your tab. Say
   "continue in the tab I have open" and SideKick shows you which tab that is and asks you to share it. The
   agent then picks up from what you've done there, and your tab stays where it is.
-- **It only reaches what you allow.** You approve each site for the chat, and any tab you share. It can't
-  see your other tabs, or Chrome's own pages, where saved passwords live.
+- **It asks where it matters.** Turning this on covers ordinary sites. Sites for your email, money or account
+  ask you once per chat, and you can choose to be asked about every site. Names can't catch everything,
+  so a page could still try to steer the agent to another site you're signed in to. Sharing a tab of yours
+  always asks. It can't see your other tabs, or Chrome's own pages, where saved passwords live.
 - **It can't type passwords or card details.** Chrome can still fill in what it has saved, and you can
   fill in the rest.
 - **It asks you before pressing things like Buy, Send or Delete,** in SideKick's own dialog. Names can't

@@ -10,7 +10,7 @@ import { parseChromeProfiles } from './chromeUseSetup'
 const signal = new AbortController().signal
 const BUNDLED = resolve('resources/chrome-extension')
 
-function harness(url = 'https://shop.example/page', answer = true) {
+function harness(url = 'https://shop.example/page', answer = true, everySite = true) {
   const page = { url }
   const located = { x: 1, y: 2, name: 'Details', submit: '', secret: false }
   const send = vi.fn(async (op: string, _args: Record<string, unknown>) => {
@@ -43,6 +43,7 @@ function harness(url = 'https://shop.example/page', answer = true) {
     bringUpChrome: async () => true,
     overlay,
     setTimer: (() => 0) as never,
+    askEverySite: () => everySite,
     confirmSite,
     confirmSharedTab,
     confirmPress
@@ -85,6 +86,22 @@ describe('what the agent may reach in Chrome', () => {
     const { service, send } = harness()
     await expect(service.open('chat', url, signal)).rejects.toThrow('Only web pages')
     expect(sent(send, 'open')).toBe(false)
+  })
+
+  it('asks about no ordinary site unless the user chose that, but always about sensitive ones', async () => {
+    const { service, page, send, confirmSite } = harness('https://shop.example/', false, false)
+    await service.open('chat', 'https://shop.example/', signal)
+    expect(confirmSite).not.toHaveBeenCalled()
+    expect(sent(send, 'open')).toBe(true)
+    await expect(service.navigate('chat', 'https://mail.google.com/', signal)).rejects.toThrow(
+      'did not allow'
+    )
+    expect(confirmSite).toHaveBeenCalledWith('https://mail.google.com', true, signal)
+    expect(sent(send, 'navigate')).toBe(false)
+    // A click or a page can get there by itself, and what it shows isn't read until the user says.
+    page.url = 'https://www.mybank.example/account'
+    await expect(service.read('chat', signal)).rejects.toThrow('did not allow')
+    expect(sent(send, 'read')).toBe(false)
   })
 
   it('never opens a web vault of saved passwords, even if the user would allow it', async () => {

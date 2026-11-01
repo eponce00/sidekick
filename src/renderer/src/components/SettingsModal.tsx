@@ -327,14 +327,24 @@ function SettingsModal({
             <SettingsSection
               icon={Chrome}
               title="Chrome"
-              description="Lets the agent work in your own Chrome, with your sign-ins. Each site and any tab you share needs your approval."
+              description="Lets the agent work in your own Chrome, with your sign-ins, in a tab group of its own."
             >
               <ToggleField
-                label="Let the agent ask to use Chrome"
-                hint="It can't see your other tabs, or fill in password or payment fields itself, and asks before pressing things like Buy or Send. What it reads goes to your selected model."
+                label="Let the agent use Chrome"
+                hint="It asks before sites for email, money or your account, and before pressing things like Buy or Send. It can't see your other tabs, or fill in password or payment fields. What it reads goes to your selected model."
                 checked={settings.chromeUseEnabled ?? false}
                 onChange={(chromeUseEnabled) => setSettings({ ...settings, chromeUseEnabled })}
               />
+              {settings.chromeUseEnabled && (
+                <ToggleField
+                  label="Ask before each new site"
+                  hint="For every site in each chat, not only sensitive ones."
+                  checked={settings.chromeAskEverySite ?? false}
+                  onChange={(chromeAskEverySite) =>
+                    setSettings({ ...settings, chromeAskEverySite })
+                  }
+                />
+              )}
               {settings.chromeUseEnabled && (
                 <ChromeUseSetup saved={initialSettings.chromeUseEnabled === true} />
               )}

@@ -176,6 +176,7 @@ const KNOWN_STORED_KEYS: Record<keyof ProviderSettings | keyof PublicProviderSet
   maxConcurrentRuns: true,
   computerUseEnabled: true,
   chromeUseEnabled: true,
+  chromeAskEverySite: true,
   shellIsolation: true,
   officeHelperInterpreter: true,
   officeHelperConfigurationId: true,

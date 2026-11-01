@@ -490,6 +490,7 @@
   border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
   border-radius: 10px;
   background: var(--accent-subtle);
+  margin-bottom: var(--settings-row-gap);
 }
 
 .settings-chrome-actions {

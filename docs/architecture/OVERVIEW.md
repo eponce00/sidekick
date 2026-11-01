@@ -385,7 +385,7 @@ AppData, so no store or native host is involved. Chrome reads an unpacked extens
 to, so when SideKick's copy changes it tells the extension to reload itself. The extension asks
 `chromeUseBridge.ts` for work over the loopback address, proving itself with a secret written in its own
 folder and its fixed origin. `chromeUseService.ts` decides everything in the main process: only tabs the
-chat opened or the user shared, approved sites checked again on every step, no typing in password or
+chat opened or the user shared, sensitive sites asked about and checked again on every step, no typing in password or
 payment fields, and a trusted dialog before risky presses. The extension reads pages from an isolated
 world, and takes the debugger for real input, pictures and its own tabs, with focus emulation so a covered
 window keeps working. There is no way for the model to run its own script or

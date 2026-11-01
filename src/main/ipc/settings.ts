@@ -430,7 +430,7 @@ export async function confirmSensitiveSettingsChange(
       ? 'The agent will be able to ask to operate apps on this computer, each only after you allow it.'
       : null,
     enablingChromeUse
-      ? 'The agent will be able to ask to work in your own Chrome, with your sign-ins, on sites you allow.'
+      ? 'The agent will be able to work in your own Chrome, with your sign-ins, on most sites without asking. It asks before sites for email, money or your account.'
       : null,
     mcpChanged
       ? `These MCP connectors are new or changed. Local connectors launch processes with your account's permissions; remote connectors send requests to the listed endpoint. SideKick asks again whenever one changes.\n\n${mcpServers.map(describeMcpServer).join('\n\n')}`

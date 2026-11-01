@@ -141,7 +141,7 @@ async function runSetup(signal: AbortSignal): Promise<boolean> {
       message: 'Let the agent work in your own Chrome?',
       iconDataUrl: await chromeIcon(),
       detail: [
-        'It can then ask to work in the profile you pick, with its sign-ins and saved details. You approve each site and any tab you share, and it asks before pressing things like Buy, Send or Delete. It can’t see your other tabs, and what it reads goes to the model you selected.',
+        'It can then work in the profile you pick, with its sign-ins and saved details. It asks you before using sites for email, money or your account, before pressing things like Buy, Send or Delete, and before using a tab of yours. It can’t see your other tabs, and what it reads goes to the model you selected.',
         'SideKick will open a Chrome window, turn on Developer mode and load its extension from your computer. This takes about 10 seconds with your real mouse and keyboard, so please don’t touch them until the window closes. Chrome shows a banner while the agent works, and you can disconnect it at any time in Settings.',
         offered.length
           ? null
@@ -246,10 +246,15 @@ export function chromeUseService(): ChromeUseService | null {
       },
       accent: async () => (await trustedLook(appState.mainWindowRef)).accent
     },
-    confirmSite: (origin, signal) =>
+    askEverySite: () =>
+      (appState.store?.get('settings', {}) as { chromeAskEverySite?: unknown } | undefined)
+        ?.chromeAskEverySite === true,
+    confirmSite: (origin, sensitive, signal) =>
       confirm(
         'Let the agent use this site in Chrome?',
-        'It will work with your sign-ins there, and what the page shows goes to the model you selected.',
+        sensitive
+          ? 'This looks like a site for your email, your money or your account, so SideKick asks first. The agent would work with your sign-ins there, and what the page shows goes to the model you selected.'
+          : 'It will work with your sign-ins there, and what the page shows goes to the model you selected.',
         [{ label: 'Site', value: origin, code: true }],
         ALLOW_FOR_CHAT,
         signal
