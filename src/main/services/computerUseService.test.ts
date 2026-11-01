@@ -12,7 +12,11 @@ import {
   computerActionPoint
 } from './computerUseDriver'
 import { ComputerUseService } from './computerUseService'
-import { parseComputerWindows, type ComputerAppWindow } from './computerUseWindows'
+import {
+  parseComputerWindows,
+  type ComputerAppWindow,
+  type ComputerPopup
+} from './computerUseWindows'
 
 const app = (name: string, pid = 10): ComputerApp => {
   const path = `C:\\Apps\\${name}.exe`
@@ -58,7 +62,6 @@ function harness(apps: ComputerApp[], confirm = true) {
     front: vi.fn(async () => 0),
     controlAt: vi.fn(async (_pid: number, _point: { x: number; y: number }) => ''),
     ignoresPostedClicks: vi.fn(async (_window: number) => false),
-    ignoresBackgroundDrags: vi.fn(async (_window: number) => false),
     windowsOf: vi.fn(
       async (_pid: number): Promise<ComputerAppWindow[]> => [
         { id: 77, title: 'Window', bounds: null }
@@ -66,6 +69,7 @@ function harness(apps: ComputerApp[], confirm = true) {
     ),
     glide: vi.fn(async (_point: { x: number; y: number }) => true),
     pathOf: vi.fn(async (_pid: number) => 'C:\\Windows\\System32\\ApplicationFrameHost.exe'),
+    popups: vi.fn(async (_window: number) => [] as ComputerPopup[]),
     restoreBehind: vi.fn(async (_pid: number) => 0),
     minimizeAgain: vi.fn(async (_window: number) => true)
   }
@@ -530,6 +534,135 @@ describe('what the agent may reach', () => {
     }
   })
 
+  it('drags from one row to another by where they are on screen', async () => {
+    const { service, call, appWindows } = harness([app('notes')])
+    const { createCanvas } = await import('@napi-rs/canvas')
+    const data = createCanvas(500, 250).toBuffer('image/png').toString('base64')
+    appWindows.windowsOf.mockResolvedValue([
+      { id: 77, title: 'W', bounds: { x: 100, y: 200, width: 1000, height: 500 } }
+    ])
+    needsForeground(call, 'never refused')
+    const answer = call.getMockImplementation()!
+    const frame = { x: 300, y: 400, w: 20, h: 10 }
+    call.mockImplementation(async (tool, args) => ({
+      ...(await answer(tool, args)),
+      text: tool === 'get_window_state' ? 'snapshot_id=s1\n- [0] A\n- [1] B' : 'ok',
+      images: tool === 'get_window_state' ? [{ mimeType: 'image/png', data }] : [],
+      structured:
+        tool === 'bring_to_front'
+          ? { landed_on_target: true, previous_fg_hwnd: '0x9', target_hwnd: '0x4d' }
+          : tool === 'get_window_state'
+            ? {
+                elements: [
+                  { element_index: 0, frame },
+                  { element_index: 1, frame: { ...frame, x: 700 } }
+                ]
+              }
+            : undefined
+    }))
+    await service.requestApp('chat', 'notes', signal)
+    await service.look('chat', 'notes', true, signal)
+    await service.drag('chat', 'notes', { element: 0 }, { element: 1 }, signal, true)
+    // The middle of each frame, back in the picture's pixels, which are half the screen's here.
+    expect(call).toHaveBeenLastCalledWith(
+      'drag',
+      expect.objectContaining({ from_x: 105, from_y: 103, to_x: 305, to_y: 103 }),
+      signal
+    )
+    await expect(
+      service.drag('chat', 'notes', { element: 9 }, { x: 1, y: 1 }, signal)
+    ).rejects.toThrow('no place on screen')
+  })
+
+  it('draws an open menu onto the picture, since a picture of the window leaves it out', async () => {
+    const { service, call, appWindows } = harness([app('notes')])
+    const { createCanvas, loadImage } = await import('@napi-rs/canvas')
+    const data = createCanvas(100, 50).toBuffer('image/png').toString('base64')
+    const menu = createCanvas(10, 10)
+    const brush = menu.getContext('2d')
+    brush.fillStyle = '#ff0000'
+    brush.fillRect(0, 0, 10, 10)
+    appWindows.windowsOf.mockResolvedValue([
+      { id: 77, title: 'W', bounds: { x: 100, y: 100, width: 200, height: 100 } }
+    ])
+    appWindows.popups.mockResolvedValue([
+      {
+        x: 120,
+        y: 120,
+        width: 20,
+        height: 20,
+        data: menu.toBuffer('image/png').toString('base64')
+      }
+    ])
+    const answer = call.getMockImplementation()!
+    call.mockImplementation(async (tool, args) => ({
+      ...(await answer(tool, args)),
+      images: tool === 'get_window_state' ? [{ mimeType: 'image/png', data }] : []
+    }))
+    await service.requestApp('chat', 'notes', signal)
+    const seen = await service.look('chat', 'notes', true, signal)
+    expect(seen.text).toContain('menu or dropdown is open')
+    const picture = await loadImage(Buffer.from(seen.images[0].data, 'base64'))
+    const canvas = createCanvas(picture.width, picture.height)
+    const context = canvas.getContext('2d')
+    context.drawImage(picture, 0, 0)
+    // Half the screen's size, so the menu's (20, 20) on the window is (10, 10) here.
+    expect([...context.getImageData(15, 15, 1, 1).data].slice(0, 3)).toEqual([255, 0, 0])
+    expect(context.getImageData(40, 40, 1, 1).data[0]).not.toBe(255)
+  })
+
+  it('says a step may have worked when the window changes under it', async () => {
+    const { service, call } = harness([app('notes')])
+    needsForeground(call, 'never refused')
+    const answer = call.getMockImplementation()!
+    call.mockImplementation(async (tool, args) =>
+      tool === 'click'
+        ? {
+            isError: true,
+            images: [],
+            text: 'foreground_unavailable: exact target',
+            structured: undefined
+          }
+        : answer(tool, args)
+    )
+    await service.requestApp('chat', 'notes', signal)
+    await expect(service.click('chat', 'notes', { x: 1, y: 2 }, signal, true)).rejects.toThrow(
+      'may well have worked'
+    )
+  })
+
+  it('looks at a dialog that opened just after the windows were listed', async () => {
+    const { service, appWindows, call } = harness([app('notes')])
+    const first = { id: 77, title: 'W', bounds: null }
+    await service.requestApp('chat', 'notes', signal)
+    await service.look('chat', 'notes', false, signal)
+    let listed = 0
+    appWindows.windowsOf.mockImplementation(async () =>
+      ++listed > 2 ? [first, { id: 88, title: 'Save', bounds: null }] : [first]
+    )
+    await service.lookAfterAction('chat', 'notes', signal)
+    expect(call).toHaveBeenLastCalledWith(
+      'get_window_state',
+      expect.objectContaining({ window_id: 88 }),
+      signal
+    )
+  })
+
+  it('rests the real pointer on a row, only once the user has stepped away', async () => {
+    const { service, call, appWindows, userIdleSeconds, hideCursor } = harness([app('notes')])
+    needsForeground(call, 'never refused')
+    userIdleSeconds.mockReturnValue(60)
+    await service.requestApp('chat', 'notes', signal)
+    await service.hover('chat', 'notes', { x: 5, y: 6 }, signal).catch(() => undefined)
+    expect(appWindows.glide).not.toHaveBeenCalled()
+    appWindows.windowsOf.mockResolvedValue([
+      { id: 77, title: 'W', bounds: { x: 10, y: 20, width: 100, height: 100 } }
+    ])
+    await service.hover('chat', 'notes', { x: 5, y: 6 }, signal)
+    expect(appWindows.glide).toHaveBeenCalledWith({ x: 15, y: 26 })
+    expect(hideCursor).toHaveBeenCalled()
+  })
+
   it('holds a key combination written as one key to the same limits', async () => {
     const { service, call } = harness([app('notes')])
     needsForeground(call, 'never refused')
@@ -635,14 +768,13 @@ describe('what the agent may reach', () => {
     )
   })
 
-  it('sends no background drag to an app that ignores them', async () => {
-    const { service, call, appWindows } = harness([app('notes')])
+  it('sends no drag in the background, where it reports success and moves nothing', async () => {
+    const { service, call } = harness([app('notes')])
     needsForeground(call, 'never refused')
-    appWindows.ignoresBackgroundDrags.mockResolvedValue(true)
     await service.requestApp('chat', 'notes', signal)
     const from = { x: 1, y: 2 }
     const to = { x: 3, y: 4 }
-    await expect(service.drag('chat', 'notes', from, to, signal)).rejects.toThrow('drags')
+    await expect(service.drag('chat', 'notes', from, to, signal)).rejects.toThrow('real_input')
     expect(call).not.toHaveBeenCalledWith('drag', expect.anything(), signal)
     await service.drag('chat', 'notes', from, to, signal, true)
     expect(call).toHaveBeenLastCalledWith(

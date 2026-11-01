@@ -175,11 +175,13 @@ export function matchStoreApp(
     Name?: unknown
     AppID?: unknown
   }>
+  // People say Windows Terminal or Windows Settings for what Start calls Terminal and Settings.
+  const names = [wanted.toLowerCase(), wanted.toLowerCase().replace(/^(windows|microsoft) /, '')]
   const found = rows.find(
     (row) =>
       typeof row?.Name === 'string' &&
       typeof row.AppID === 'string' &&
-      row.Name.toLowerCase() === wanted.toLowerCase()
+      names.includes(row.Name.toLowerCase())
   )
   return found ? { appId: String(found.AppID), title: String(found.Name) } : null
 }
@@ -207,9 +209,14 @@ export async function findInstalledApp(
   name: string,
   signal?: AbortSignal
 ): Promise<ComputerApp | null> {
-  const shortcut = matchInstalledApp(await runPowerShell(LIST_START_MENU_APPS, signal), name)
+  // Side by side, since each takes seconds and a job waits on them before it can begin.
+  const [shortcuts, storeApps] = await Promise.all([
+    runPowerShell(LIST_START_MENU_APPS, signal),
+    runPowerShell(LIST_STORE_APPS, signal)
+  ])
+  const shortcut = matchInstalledApp(shortcuts, name)
   if (shortcut) return shortcut
-  const store = matchStoreApp(await runPowerShell(LIST_STORE_APPS, signal), name)
+  const store = matchStoreApp(storeApps, name)
   const path = store && (await storeAppExecutable(store.appId, signal))
   if (!path) return null
   return {

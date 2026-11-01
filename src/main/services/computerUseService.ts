@@ -12,6 +12,7 @@ import type { ComputerHighlightTarget } from './computerUseHighlight'
 import {
   computerVirtualKey,
   type ComputerAppWindow,
+  type ComputerPopup,
   type ComputerUseWindows
 } from './computerUseWindows'
 
@@ -57,12 +58,12 @@ export interface ComputerUseDependencies {
     | 'front'
     | 'controlAt'
     | 'ignoresPostedClicks'
-    | 'ignoresBackgroundDrags'
     | 'windowsOf'
     | 'glide'
     | 'restoreBehind'
     | 'minimizeAgain'
     | 'pathOf'
+    | 'popups'
   >
   /** Starts an approved executable, with no arguments. */
   startApp: (path: string) => void
@@ -132,6 +133,8 @@ const DRIVER_IDLE_MS = 5 * 60_000
 const MAX_TEXT = 5_000
 const APP_START_WAIT_MS = 20_000
 const NEW_WINDOW_GRACE_MS = 3_000
+// A window that has just appeared can still be empty, and the first look is what the agent plans from.
+const STARTED_APP_DRAW_MS = 1_200
 const POLL_MS = 500
 /** What each action reports once sent. The driver's own wording, full of screen coordinates and its
  * delivery details, only set a model working out scaling it has no need of. */
@@ -261,6 +264,30 @@ function changedRows(before: string, now: string): string | null {
     ...(added.length ? ['New or changed:', ...added] : []),
     ...(gone.length ? ['No longer there:', ...gone] : [])
   ].join('\n')
+}
+
+/** A picture of the window with its open menus and dropdowns drawn on it, where they are on screen. */
+async function withPopups(
+  data: string,
+  popups: readonly ComputerPopup[],
+  bounds: ComputerWindowBounds
+): Promise<string> {
+  const { createCanvas, loadImage } = await import('@napi-rs/canvas')
+  const picture = await loadImage(Buffer.from(data, 'base64'))
+  const ratio = picture.width / bounds.width
+  const canvas = createCanvas(picture.width, picture.height)
+  const context = canvas.getContext('2d')
+  context.drawImage(picture, 0, 0)
+  for (const popup of popups) {
+    context.drawImage(
+      await loadImage(Buffer.from(popup.data, 'base64')),
+      (popup.x - bounds.x) * ratio,
+      (popup.y - bounds.y) * ratio,
+      popup.width * ratio,
+      popup.height * ratio
+    )
+  }
+  return canvas.toBuffer('image/png').toString('base64')
 }
 
 /** A part of a picture of the window, enlarged, so small text can be read at any window size. */
@@ -464,10 +491,19 @@ export class ComputerUseService {
       signal.throwIfAborted()
       const apps = await this.deps.listApps()
       for (const started of apps.filter((a) => a.path.toLowerCase() === key)) {
-        if ((await this.deps.appWindows.windowsOf(started.pid)).length) return null
+        if ((await this.deps.appWindows.windowsOf(started.pid)).length) {
+          await new Promise((resolve) => setTimeout(resolve, STARTED_APP_DRAW_MS))
+          return null
+        }
       }
+      // The app itself can be running a while before its window shows, as Settings is.
       newcomers = apps
-        .filter((a) => !before.has(a.path.toLowerCase()) && a.access.kind !== 'blocked')
+        .filter(
+          (a) =>
+            !before.has(a.path.toLowerCase()) &&
+            a.path.toLowerCase() !== key &&
+            a.access.kind !== 'blocked'
+        )
         .map((a) => a.name)
       // Its window may belong to another app, as a shell's does to the terminal hosting it.
       if (newcomers.length && Date.now() > deadline - APP_START_WAIT_MS + NEW_WINDOW_GRACE_MS) break
@@ -622,6 +658,17 @@ export class ComputerUseService {
     await this.minimizeWhatWasMinimized()
   }
 
+  private async aWindowHasOpened(
+    chat: string,
+    name: string,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    const app = await this.resolve(chat, name, signal)
+    const known = this.access(chat).knownWindows.get(app.path.toLowerCase())
+    if (!known) return false
+    return (await this.deps.appWindows.windowsOf(app.pid)).some((window) => !known.has(window.id))
+  }
+
   /** Unless the user has since gone to it themselves. */
   private async minimizeWhatWasMinimized(): Promise<void> {
     const windows = [...this.restored]
@@ -673,7 +720,7 @@ export class ComputerUseService {
     chosenWindow?: number,
     find?: string
   ): Promise<ComputerLook> {
-    const { app, pid, windowId, windows, driver } = await this.target(
+    const { app, pid, windowId, windows, bounds, driver } = await this.target(
       chat,
       name,
       signal,
@@ -696,6 +743,13 @@ export class ComputerUseService {
       signal
     )
     if (state.isError) throw new ComputerUseRefusal(state.text, true)
+    const popups = state.images[0] && bounds ? await this.deps.appWindows.popups(windowId) : []
+    if (popups.length && bounds) {
+      state.images[0] = {
+        mimeType: 'image/png',
+        data: await withPopups(state.images[0].data, popups, bounds)
+      }
+    }
     if (state.images[0]) this.deps.showPreview(state.images[0])
     const snapshot = /snapshot_id=(\S+)/.exec(state.text)?.[1]
     let imageHash: string | undefined
@@ -758,6 +812,9 @@ export class ComputerUseService {
       includeImage && shot?.imageWidth && shot.imageHeight
         ? `The picture is ${shot.imageWidth} by ${shot.imageHeight} pixels.\n`
         : ''
+    const popupNote = popups.length
+      ? 'A menu or dropdown is open, drawn on the picture where it is. It can reach past the picture, so go by its rows.\n'
+      : ''
     const noMatch = find && !TREE_ROW.test(state.text) ? `\nNo control matches "${find}".` : ''
     const otherWindows =
       windows.length > 1
@@ -765,13 +822,13 @@ export class ComputerUseService {
         : ''
     return {
       // The driver's line about how to spell a token is about its own API, not this tool's.
-      text: `${UNTRUSTED}\n${size}${cutOff}${otherWindows}${state.text.replace(/^element_token for row.*$/m, '').trim()}${noMatch}`,
+      text: `${UNTRUSTED}\n${size}${popupNote}${cutOff}${otherWindows}${state.text.replace(/^element_token for row.*$/m, '').trim()}${noMatch}`,
       // A search answers in words, and the model already has a picture of the window.
       images: find ? [] : state.images,
       changed,
       sameControls,
       controls: Boolean(find) || gaveNoControls || TREE_ROW.test(state.text),
-      onlyChanged: onlyChanged && `${UNTRUSTED}\n${size}${cutOff}${onlyChanged}`
+      onlyChanged: onlyChanged && `${UNTRUSTED}\n${size}${popupNote}${cutOff}${onlyChanged}`
     }
   }
 
@@ -791,6 +848,10 @@ export class ComputerUseService {
   ): Promise<ComputerLook & { note: string }> {
     await new Promise((resolve) => setTimeout(resolve, ACTION_SETTLE_MS))
     let seen = await this.look(chat, name, true, signal)
+    // A dialog can open just after the app's windows were listed for that look.
+    if (await this.aWindowHasOpened(chat, name, signal)) {
+      seen = await this.look(chat, name, true, signal)
+    }
     // Even a shortcut that may show nothing can open a dialog a moment later, as Ctrl+S does.
     if (seen.changed === false) {
       await new Promise((resolve) => setTimeout(resolve, SLOW_APP_SETTLE_MS))
@@ -871,13 +932,10 @@ export class ComputerUseService {
         `${app.name} ignores clicks sent in the background, so nothing was sent. You decide: repeat it with real_input true, which waits until the user has stepped away and then briefly uses their real mouse, or tell the user what you need done.`
       )
     }
-    if (
-      !realInput &&
-      tool === 'drag' &&
-      (await this.deps.appWindows.ignoresBackgroundDrags(windowId))
-    ) {
+    // Measured in draw.io, Chrome and Paint: the driver reported it sent, and nothing moved or was drawn.
+    if (!realInput && tool === 'drag') {
       throw new ComputerUseRefusal(
-        `${app.name} doesn't move for drags sent in the background, so nothing was sent. You decide: repeat it with real_input true, which waits until the user has stepped away and then briefly uses their real mouse, or tell the user what you need done.`
+        `Drags don't work in the background, so nothing was sent. You decide: repeat it with real_input true, which waits until the user has stepped away and then briefly uses their real mouse, or tell the user what you need done.`
       )
     }
     if (realInput) await this.waitToUseRealInput(app, signal)
@@ -908,6 +966,13 @@ export class ComputerUseService {
         `${app.name} can't take this step in the background. You decide: repeat it with real_input true, which waits until the user has stepped away and then briefly uses their real mouse and keyboard, or tell the user what you need done.`
       )
     }
+    // Seen after a click on Save, which worked and closed the window the driver was checking on.
+    if (result.isError && /foreground_unavailable/.test(result.text)) {
+      throw new ComputerUseRefusal(
+        'This was sent, but the window changed while it was being sent, so it may well have worked. Use look to see before repeating it.',
+        true
+      )
+    }
     if (result.isError) {
       throw new ComputerUseRefusal(
         /stale/i.test(result.text) ? 'The window changed. Use look again.' : result.text,
@@ -922,7 +987,8 @@ export class ComputerUseService {
           : computerActionPoint(result.text)
     if (point && !realInput) await this.deps.moveCursor(point)
     // Only that it was sent: whether it landed is for the look that follows to say.
-    return `${SENT[tool] ?? 'Sent'}${pressing ? ` to ${pressing}` : ''}.`
+    // A pane is just what a web-based app's whole window calls itself, and says nothing about the click.
+    return `${SENT[tool] ?? 'Sent'}${pressing && !/^Pane\b/.test(pressing) ? ` to ${pressing}` : ''}.`
   }
 
   /** A point past the picture isn't in the window, so it would land on whatever is beside it. */
@@ -1161,6 +1227,39 @@ export class ComputerUseService {
     return this.act(chat, name, tool, point, target.element, signal, realInput, confirmRisky)
   }
 
+  /**
+   * Rests the real pointer on a point or row, for what only shows on hovering. There is no way to do
+   * this in the background, so it is real input like any other.
+   */
+  async hover(
+    chat: string,
+    name: string,
+    target: { element?: number; x?: number; y?: number },
+    signal: AbortSignal
+  ): Promise<string> {
+    const { app, pid, windowId, bounds, driver } = await this.target(chat, name, signal)
+    this.refuseOutsidePicture(chat, app, [[target.x, target.y]])
+    const scale = this.imageScale(chat, app, bounds)
+    const point = this.aimedAt(
+      chat,
+      app,
+      { x: target.x, y: target.y },
+      target.element,
+      bounds,
+      scale
+    )
+    if (!point) throw new ComputerUseRefusal('Give a row with a place on screen, or both x and y.')
+    await this.waitToUseRealInput(app, signal)
+    if ((await this.deps.appWindows.front()) !== windowId) {
+      await this.bringForward(app, driver, { pid, window_id: windowId }, signal)
+    }
+    this.deps.hideCursor()
+    await this.deps.appWindows.glide(point)
+    this.lastRealInput = Date.now()
+    await new Promise((resolve) => setTimeout(resolve, REAL_DRAG_HOVER_MS))
+    return 'The pointer is resting there.'
+  }
+
   /** A part of the app at full resolution, for targets too small to judge in the shrunken picture. */
   async zoom(
     chat: string,
@@ -1168,7 +1267,7 @@ export class ComputerUseService {
     region: { x: number; y: number; toX: number; toY: number },
     signal: AbortSignal
   ): Promise<ComputerLook> {
-    const { app, pid, windowId, driver } = await this.target(chat, name, signal)
+    const { app, pid, windowId, bounds, driver } = await this.target(chat, name, signal)
     const seen = this.access(chat).snapshots.get(app.path.toLowerCase())
     if (!seen?.imageWidth) throw new ComputerUseRefusal(`Use look on ${app.name} first.`, true)
     this.refuseOutsidePicture(chat, app, [[region.x, region.y]])
@@ -1193,8 +1292,11 @@ export class ComputerUseService {
       throw new ComputerUseRefusal(result.text || 'That window gave no picture.', true)
     }
     const width = toX - x
+    const popups = bounds ? await this.deps.appWindows.popups(windowId) : []
     const crop = await cropPicture(
-      result.images[0].data,
+      popups.length && bounds
+        ? await withPopups(result.images[0].data, popups, bounds)
+        : result.images[0].data,
       { x, y: region.y, width, height: region.toY - region.y },
       seen.imageWidth
     )
@@ -1211,15 +1313,34 @@ export class ComputerUseService {
   async drag(
     chat: string,
     name: string,
-    from: { x?: number; y?: number },
-    to: { x?: number; y?: number },
+    from: { x?: number; y?: number; element?: number },
+    to: { x?: number; y?: number; element?: number },
     signal: AbortSignal,
     realInput = false
   ): Promise<string> {
-    if ([from.x, from.y, to.x, to.y].includes(undefined)) {
-      throw new ComputerUseRefusal('Give x and y to start from, and to_x and to_y to end at.')
+    // A row's place is exact. Guessing at small targets by eye is what took a model longest on a canvas.
+    const place = async (end: typeof from): Promise<{ x?: number; y?: number }> => {
+      if (end.element === undefined) return { x: end.x, y: end.y }
+      const { app, bounds } = await this.target(chat, name, signal)
+      const point = this.access(chat)
+        .snapshots.get(app.path.toLowerCase())
+        ?.rowPoints.get(end.element)
+      if (!point || !bounds) {
+        throw new ComputerUseRefusal(`Row ${end.element} has no place on screen. Use look.`, true)
+      }
+      const scale = this.imageScale(chat, app, bounds)
+      return {
+        x: Math.round((point.x - bounds.x) / scale),
+        y: Math.round((point.y - bounds.y) / scale)
+      }
     }
-    const args = { from_x: from.x, from_y: from.y, to_x: to.x, to_y: to.y }
+    const [start, end] = [await place(from), await place(to)]
+    if ([start.x, start.y, end.x, end.y].includes(undefined)) {
+      throw new ComputerUseRefusal(
+        'Give a row or x and y to start from, and a row or to_x and to_y to end at.'
+      )
+    }
+    const args = { from_x: start.x, from_y: start.y, to_x: end.x, to_y: end.y }
     return this.act(chat, name, 'drag', args, undefined, signal, realInput)
   }
 

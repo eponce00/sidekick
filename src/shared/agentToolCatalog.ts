@@ -111,7 +111,10 @@ function presentationTitle(
   if (name === 'read') return { kind, title: `Read ${path || 'file'}`, subject: path }
   if (name === 'computer') {
     const app = stringArgument(args, 'app')
-    const action = stringArgument(args, 'action').replaceAll('_', ' ')
+    const steps = Array.isArray(args.steps) ? args.steps.length : 0
+    const action = steps
+      ? `${steps} step${steps === 1 ? '' : 's'}`
+      : stringArgument(args, 'action').replaceAll('_', ' ')
     return { kind, title: `Computer: ${action}${app ? ` in ${app}` : ''}`, subject: app }
   }
   if (name === 'list_files') return { kind, title: 'List workspace files', subject: path }
@@ -826,6 +829,7 @@ const computer = definition(
           'key',
           'scroll',
           'drag',
+          'hover',
           'zoom',
           'batch'
         ]
@@ -834,7 +838,7 @@ const computer = definition(
         type: 'array',
         maxItems: 50,
         description:
-          'For batch: up to 50 actions on the same app, each with its own action and arguments, run in order. It stops at the first one refused, and you get one look at the end. Only click, double_click, right_click, type, set_value, key, scroll and drag. Row numbers are from your last look, so leave out steps that depend on what an earlier step opens.',
+          'For batch: up to 50 actions on the same app, each with its own action and arguments, run in order. It stops at the first one refused, and you get one look at the end. Only click, double_click, right_click, type, set_value, key, scroll, drag and hover. Row numbers are from your last look, so leave out steps that depend on what an earlier step opens.',
         items: { type: 'object' }
       },
       app: { type: 'string', description: 'App name. All but list_apps need it.' },
@@ -843,7 +847,12 @@ const computer = definition(
         type: 'string',
         description: 'For look: list only the controls containing this text, across all of them.'
       },
-      element: { type: 'number', description: 'Row number from the last look. Prefer this.' },
+      element: {
+        type: 'number',
+        description:
+          'Row number from the last look. Prefer this: it is exact. For drag, the row to start from.'
+      },
+      to_element: { type: 'number', description: 'For drag: the row to end on. Prefer this.' },
       x: {
         type: 'number',
         description:
@@ -853,7 +862,7 @@ const computer = definition(
       real_input: {
         type: 'boolean',
         description:
-          'For a step that was refused or changed nothing: wait until the user has stepped away, then use their real mouse and keyboard. On batch, for all its steps. Later steps go straight on unless the user comes back.'
+          'For a step that was refused or changed nothing, and always for drag: wait until the user has stepped away, then use their real mouse and keyboard. On batch, for all its steps. Later steps go straight on unless the user comes back. Hover always does this.'
       },
       from_zoom: {
         type: 'boolean',

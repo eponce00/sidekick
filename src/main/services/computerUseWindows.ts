@@ -13,9 +13,9 @@ const REQUEST_TIMEOUT_MS = 10_000
 const HELPER_SCRIPT = `
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false
-Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase
-Add-Type -TypeDefinition @'
-using System; using System.Text; using System.Runtime.InteropServices;
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase, System.Drawing
+Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @'
+using System; using System.IO; using System.Text; using System.Collections.Generic; using System.Runtime.InteropServices;
 public static class SideKickWindows {
   delegate bool EnumProc(IntPtr h, IntPtr l);
   [StructLayout(LayoutKind.Sequential)] public struct Rect { public int L, T, R, B; }
@@ -41,6 +41,7 @@ public static class SideKickWindows {
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int c);
   [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int t, uint f);
+  [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h, IntPtr dc, uint flags);
   [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] static extern bool GetCursorPos(out Point p);
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int a, out int v, int n);
@@ -171,6 +172,43 @@ public static class SideKickWindows {
     }, IntPtr.Zero);
     return all.ToString();
   }
+  // A menu or dropdown is a window of its own, so a picture of the app leaves it out. Each is drawn
+  // here, wherever it is and whatever covers it, as "x,y,width,height,png", bottom-most first.
+  public static string Popups(long window) {
+    IntPtr main = new IntPtr(window);
+    uint pid = OwnerOf(main);
+    Rect m;
+    if (!GetWindowRect(main, out m)) return "";
+    long mainArea = (long)(m.R - m.L) * (m.B - m.T);
+    List<string> found = new List<string>();
+    EnumWindows(delegate(IntPtr h, IntPtr l) {
+      if (h == main || found.Count >= 6 || OwnerOf(h) != pid || !IsWindowVisible(h) || IsIconic(h)) return true;
+      if (GetWindow(h, 4) == IntPtr.Zero && ClassOf(h) != "#32768") return true;
+      StringBuilder title = new StringBuilder(2);
+      GetWindowText(h, title, 2);
+      int cloaked;
+      if (title.Length > 0 || (DwmGetWindowAttribute(h, 14, out cloaked, 4) == 0 && cloaked != 0)) return true;
+      Rect r;
+      if (!GetWindowRect(h, out r)) return true;
+      int w = r.R - r.L, t = r.B - r.T;
+      // Anything nearly as big as the app is more likely a clear overlay, which would hide it.
+      if (w <= 0 || t <= 0 || (long)w * t * 10 > mainArea * 8) return true;
+      if (r.R <= m.L || r.L >= m.R || r.B <= m.T || r.T >= m.B) return true;
+      using (System.Drawing.Bitmap picture = new System.Drawing.Bitmap(w, t))
+      using (System.Drawing.Graphics g = System.Drawing.Graphics.FromImage(picture))
+      using (MemoryStream png = new MemoryStream()) {
+        IntPtr dc = g.GetHdc();
+        bool drawn = PrintWindow(h, dc, 2);
+        g.ReleaseHdc(dc);
+        if (drawn) {
+          picture.Save(png, System.Drawing.Imaging.ImageFormat.Png);
+          found.Insert(0, r.L + "," + r.T + "," + w + "," + t + "," + Convert.ToBase64String(png.ToArray()));
+        }
+      }
+      return true;
+    }, IntPtr.Zero);
+    return string.Join(";", found);
+  }
   // A minimized app can't be read or clicked. This brings its largest window back behind everything
   // else, without focus, so nothing changes for whoever is using the computer. 0 if it has none.
   public static long RestoreBehind(uint pid) {
@@ -204,7 +242,6 @@ public static class SideKickWindows {
     }
     return true;
   }
-  public static bool IsChromium(long window) { return ClassOf(new IntPtr(window)).StartsWith("Chrome_WidgetWin"); }
   public static long Front() { return GetForegroundWindow().ToInt64(); }
   public static bool Restore(long window) {
     IntPtr h = new IntPtr(window);
@@ -248,6 +285,7 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
       'apps' { $answer = [SideKickWindows]::Apps() }
       'windows' { $answer = [SideKickWindows]::WindowsOf([uint32]$c.pid) }
       'path' { $answer = [SideKickWindows]::PathOf([uint32]$c.pid) }
+      'popups' { $answer = [SideKickWindows]::Popups([long]$c.window) }
       'glide' { $answer = [SideKickWindows]::Glide([int]$c.x, [int]$c.y) }
       'restoreBehind' { $answer = [SideKickWindows]::RestoreBehind([uint32]$c.pid) }
       'minimizeAgain' { $answer = [SideKickWindows]::MinimizeAgain([long]$c.window) }
@@ -259,7 +297,6 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
         $answer = $true
       }
       'ignoresClicks' { $answer = [SideKickWindows]::IgnoresPostedClicks([long]$c.window) }
-      'chromium' { $answer = [SideKickWindows]::IsChromium([long]$c.window) }
       'at' {
         $found = [System.Windows.Automation.AutomationElement]::FromPoint((New-Object System.Windows.Point ([double]$c.x), ([double]$c.y)))
         $info = $found.Current
@@ -304,6 +341,15 @@ export function computerVirtualKey(name: string): number | null {
   const fn = /^f([1-9]|1[0-2])$/.exec(key)
   if (fn) return 0x6f + Number(fn[1])
   return VIRTUAL_KEYS[key] ?? null
+}
+
+/** A menu or dropdown open over a window, in physical pixels. */
+export interface ComputerPopup {
+  x: number
+  y: number
+  width: number
+  height: number
+  data: string
 }
 
 export interface ComputerAppWindow {
@@ -429,6 +475,15 @@ export class ComputerUseWindows {
     return parseComputerWindows(await this.ask({ op: 'windows', pid }), pid)
   }
 
+  async popups(window: number): Promise<ComputerPopup[]> {
+    return (await this.ask({ op: 'popups', window })).split(';').flatMap((row) => {
+      const found = /^(-?\d+),(-?\d+),(\d+),(\d+),([A-Za-z0-9+/=]+)$/.exec(row)
+      if (!found) return []
+      const [x, y, width, height] = found.slice(1, 5).map(Number)
+      return [{ x, y, width, height, data: found[5] }]
+    })
+  }
+
   /** A process's executable, or '' if Windows won't say. */
   async pathOf(pid: number): Promise<string> {
     const answer = await this.ask({ op: 'path', pid })
@@ -474,11 +529,6 @@ export class ComputerUseWindows {
    */
   launch(path: string): Promise<boolean> {
     return this.confirm({ op: 'start', path })
-  }
-
-  /** Chromium and Electron windows, where a drag sent in the background moves nothing. */
-  ignoresBackgroundDrags(window: number): Promise<boolean> {
-    return this.confirm({ op: 'chromium', window })
   }
 
   ignoresPostedClicks(window: number): Promise<boolean> {

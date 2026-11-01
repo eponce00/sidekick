@@ -47,19 +47,25 @@ export function registerComputerToolHandlers(
       })
     }
     // The user sees the picture in the chat either way; only a model with vision is sent it.
-    const showLook = async (seen: ComputerLook, before = '', isZoom = false) => {
+    const showLook = async (
+      seen: ComputerLook,
+      before = '',
+      isZoom = false,
+      // Asked for outright, which has to bring a picture: a model got none and took the app for blank.
+      always = false
+    ) => {
+      // The model has this picture already, so sending it again would only be slower.
+      const sendImage = options.vision && (always || seen.changed !== false)
       // Web-based apps often expose no controls, and then only the picture says what is there.
       const bounded = await outputs.apply(
         isZoom || seen.controls
-          ? `${before}${seen.text}`
+          ? `${before}${seen.text}${options.vision && !sendImage && seen.images.length ? "\nThe picture is the same as your last one, so it wasn't sent again." : ''}`
           : `${before}${seen.text}\n${options.vision ? 'This app lists no controls. Work from the image, by pixel.' : 'This app lists no controls, and this model cannot see the image, so it cannot operate this app. Tell the user.'}`
       )
       const images = seen.images.filter((image) =>
         IMAGE_TYPES.includes(image.mimeType as ToolResultImageMimeType)
       )
       const first = images[0]
-      // The model has this picture already, so sending it again would only be slower.
-      const sendImage = options.vision && seen.changed !== false
       const previewUrl = first
         ? await saveViewedImagePreview(Buffer.from(first.data, 'base64'))
         : undefined
@@ -128,12 +134,23 @@ export function registerComputerToolHandlers(
             real,
             step.confirm_risky === true
           )
+        case 'hover':
+          return service.hover(
+            chat,
+            app,
+            { element: row, x: number(step, 'x'), y: number(step, 'y') },
+            signal
+          )
         case 'drag':
           return service.drag(
             chat,
             app,
-            { x: number(step, 'x'), y: number(step, 'y') },
-            { x: number(step, 'to_x'), y: number(step, 'to_y') },
+            { x: number(step, 'x'), y: number(step, 'y'), element: row },
+            {
+              x: number(step, 'to_x'),
+              y: number(step, 'to_y'),
+              element: number(step, 'to_element')
+            },
             signal,
             real
           )
@@ -213,12 +230,15 @@ export function registerComputerToolHandlers(
             if (signal.aborted || !(error instanceof ComputerUseRefusal)) throw error
             return null
           })
-          return first ? await showLook(first, `${answer}\n`) : await succeed(answer)
+          return first ? await showLook(first, `${answer}\n`, false, true) : await succeed(answer)
         }
         case 'look': {
           const find = text(args, 'find') || undefined
           return await showLook(
-            await service.look(chat, app, true, signal, number(args, 'window'), find)
+            await service.look(chat, app, true, signal, number(args, 'window'), find),
+            '',
+            false,
+            true
           )
         }
         case 'zoom': {
