@@ -25,6 +25,7 @@ import {
   type NativeBrowserSurfaceConsoleMessage,
   type NativeBrowserSurfaceLoadFailure,
   sameSignInSite,
+  SECRET_FIELD,
   signInDomain,
   toViewInputEvent
 } from './nativeBrowserSessionService'
@@ -1500,18 +1501,32 @@ describe('NativeBrowserSessionService', () => {
     const { service, runtime } = await testService()
     const { sessionId } = await service.open({ runId: 'busy', url: 'https://example.com/' })
     const surface = runtime.surfaces[0]
-    const send = surface.sendDebuggerCommand.bind(surface)
-    surface.sendDebuggerCommand = ((method: string, params?: Record<string, unknown>) =>
-      params?.expression === '1'
-        ? new Promise(() => undefined)
-        : send(method, params)) as typeof surface.sendDebuggerCommand
+    surface.sendDebuggerCommand = (() =>
+      new Promise(() => undefined)) as typeof surface.sendDebuggerCommand
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     try {
       const looked = expect(service.observe(sessionId)).rejects.toThrow("isn't answering")
-      await vi.advanceTimersByTimeAsync(30_000)
+      await vi.advanceTimersByTimeAsync(35_000)
       await looked
     } finally {
       vi.useRealTimers()
+    }
+  })
+
+  it('knows a secret field by its words, not by letters inside other words', () => {
+    for (const name of [
+      'ssn',
+      'user_ssn',
+      'userSsn',
+      'ssnNumber',
+      'cc-number',
+      'cc-csc',
+      'password'
+    ]) {
+      expect(SECRET_FIELD.test(name), name).toBe(true)
+    }
+    for (const name of ['ssne', 'ssne_untouched', 'session', 'access-token', 'success-url']) {
+      expect(SECRET_FIELD.test(name), name).toBe(false)
     }
   })
 

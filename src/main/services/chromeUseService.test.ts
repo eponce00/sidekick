@@ -158,6 +158,7 @@ describe('what the agent may reach in Chrome', () => {
       .catch(() => undefined)
     expect(confirmPress).toHaveBeenCalledTimes(2)
     for (const harmless of [
+      'submit search',
       '12, Thursday, November 2026. This day is only available for checkout.',
       'Sorted by top flights, Change sort order.',
       'Remove filter',

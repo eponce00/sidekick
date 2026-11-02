@@ -723,8 +723,9 @@ export interface NativeBrowserPolicy {
 
 /** What a control is, for the policy: read from the page, so a name can't be avoided by clicking by pixel. */
 /** What a password or payment field calls itself, in its type, name, id or label. */
-const SECRET_FIELD =
-  /password|passwd|passcode|one-time-code|cc-|card.?(num|number)|cvv|cvc|security.?code|ssn/i
+// Whole words where a short one could sit inside another: Booking's hidden "ssne" stopped every script on its pages.
+export const SECRET_FIELD =
+  /password|passwd|passcode|one-time-code|(?<![a-z])cc-|card.?(num|number)|cvv|cvc|security.?code|(?<![a-z])ssn(?![a-z])|user.?ssn|ssn.?num|social.?security/i
 
 const POLICY_CONTROL_SCRIPT = `function () {
   const SECRET = ${SECRET_FIELD}
@@ -1041,6 +1042,7 @@ const NO_BROWSER_DIALOGS_SCRIPT = `(() => {
 const BROWSER_DIALOG_NOTE =
   "That click never reached the page. The browser itself is showing something over it, such as a sign-in or payment dialog, which pictures of the page don't show. Don't try it again: open the page again, and if the same thing happens tell the user that a browser dialog is in the way."
 const NEW_PAGE_DRAWING_MS = 8_000
+const PAGE_CHECK_MS = 5_000
 const PAGE_ANSWER_MS = 30_000
 const PAGE_NOT_ANSWERING =
   "This page isn't answering: its own script may be keeping it busy, or a dialog of the browser's own may be holding it up. What was just done may or may not have gone through. Wait and look again, or close the tab and open the page again."
@@ -1063,6 +1065,7 @@ const HUMAN_VERIFICATION_PATTERNS: readonly RegExp[] = [
   /\bcomplete\s+(?:the\s+)?security\s+check\b/i
 ]
 
+const LONG_PAGE_TEXT = 16_000
 const HUMAN_VERIFICATION_TITLE_PATTERNS: readonly RegExp[] = [
   /\bcaptcha\b/i,
   /\bsecurity\s+check\b/i,
@@ -1096,7 +1099,10 @@ function detectTextualHumanVerification(
       .filter((line) => !/\bnot\s+a\s+robot\b/i.test(line))
       .join('\n')
   }
-  if (activeText && HUMAN_VERIFICATION_PATTERNS.some((pattern) => pattern.test(activeText))) {
+  // A long page that has these words is about them. A challenge says little else, unless it's over the page.
+  const long = (activeText?.length ?? 0) > LONG_PAGE_TEXT
+  const patterns = long ? HUMAN_VERIFICATION_PATTERNS.slice(0, 1) : HUMAN_VERIFICATION_PATTERNS
+  if (activeText && patterns.some((pattern) => pattern.test(activeText))) {
     return {
       required: true,
       kind: 'captcha_or_bot_challenge',
@@ -1107,6 +1113,7 @@ function detectTextualHumanVerification(
   }
   if (
     !solvedKnownWidget &&
+    !long &&
     HUMAN_VERIFICATION_TITLE_PATTERNS.some((pattern) => pattern.test(title))
   ) {
     return {
@@ -2953,9 +2960,53 @@ export class NativeBrowserSessionService {
       this.assertCurrentSession(session)
       session.lookAfterAction = operation.look !== false || !this.runtime.picturesOnlyWhenAsked
       session.quickAction = operation.quick === true
-      return await body(signal)
+      return await this.whilePageAnswers(session, signal, body)
     } finally {
       release()
+    }
+  }
+
+  /**
+   * Anything sent to a page too busy to answer waits for as long as the tool has, and then says nothing
+   * useful. Even tidying up waits, so the step is left behind rather than asked to finish.
+   */
+  private async whilePageAnswers<T>(
+    session: SessionState,
+    signal: AbortSignal | undefined,
+    body: (signal: AbortSignal | undefined) => Promise<T>
+  ): Promise<T> {
+    const abandon = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const stopped = new Promise<never>((_resolve, reject) => {
+      const check = (): void => {
+        const surface = session.tabs.get(session.activeTabId)?.surface
+        if (!surface || surface.isDestroyed()) {
+          timer = setTimeout(check, PAGE_CHECK_MS)
+          return
+        }
+        timer = setTimeout(() => {
+          reject(new Error(PAGE_NOT_ANSWERING))
+          abandon.abort()
+        }, PAGE_ANSWER_MS)
+        const answered = (): void => {
+          if (abandon.signal.aborted) return
+          clearTimeout(timer)
+          timer = setTimeout(check, PAGE_CHECK_MS)
+        }
+        void surface
+          .sendDebuggerCommand('Runtime.evaluate', { expression: '1' })
+          .then(answered, answered)
+      }
+      timer = setTimeout(check, PAGE_CHECK_MS)
+    })
+    const work = body(signal ? AbortSignal.any([signal, abandon.signal]) : abandon.signal)
+    // What's left behind stops at its next look at the signal, with no one to hear how.
+    work.catch(() => undefined)
+    try {
+      return await Promise.race([work, stopped])
+    } finally {
+      clearTimeout(timer)
+      stopped.catch(() => undefined)
     }
   }
 
@@ -3402,7 +3453,6 @@ export class NativeBrowserSessionService {
     signal?: AbortSignal
   ): Promise<BrowserObservation> {
     const tab = this.getTab(session, options.tabId)
-    await this.assertPageAnswers(tab, signal)
     // The page's own changes from here on tell the next action's wait what is noise.
     await abortable(tab.surface.executeJavaScript(SETTLE_INSTALL_SCRIPT), signal).catch(
       () => undefined
@@ -3524,18 +3574,26 @@ export class NativeBrowserSessionService {
           const nodesFor = selectors => Array.from(new Set(
             selectors.flatMap(selector => Array.from(document.querySelectorAll(selector)))
           ));
-          const visibleNodes = selectors => nodesFor(selectors).filter(visible);
+          // A site's invisible reCAPTCHA shows only a badge, and asks nothing of anyone.
+          const asksNothing = node =>
+            node.getAttribute('data-size') === 'invisible' ||
+            /[?&]size=invisible|checkbox-invisible/.test(node.getAttribute('src') || '') ||
+            !!node.closest('.grecaptcha-badge');
+          const visibleNodes = selectors => nodesFor(selectors).filter(node => visible(node) && !asksNothing(node));
           const responseCount = selectors => nodesFor(selectors).filter(node =>
             typeof node.value === 'string' && node.value.trim().length > 8
           ).length;
           const challengeCheckboxes = nodesFor(['[role="checkbox"]', 'input[type="checkbox"]']).filter(node => {
+            // Its own words only: a parent can hold anything, as Wikipedia's contents list does a heading with "Human" in it.
+            const beside = node.parentElement?.textContent || '';
             const label = [
               node.getAttribute('aria-label'),
               node.getAttribute('title'),
               node.textContent,
-              node.parentElement?.textContent
+              ...Array.from(node.labels || [], each => each.textContent),
+              beside.length <= 120 ? beside : ''
             ].filter(Boolean).join(' ');
-            return /captcha|not\\s+a\\s+robot|verify|human/i.test(label);
+            return /captcha|not\\s+a\\s+robot|\\bverify\\s+(?:you|that)\\b|click\\s+to\\s+verify|\\bi(?:'m|\\s+am)\\s+human\\b/i.test(label);
           });
           const checkboxSolved = node => node.matches(':checked') || node.getAttribute('aria-checked') === 'true';
           const solvedCheckbox = challengeCheckboxes.some(checkboxSolved);
@@ -7133,24 +7191,6 @@ export class NativeBrowserSessionService {
    * any loading sign it brought up, ignoring the page's own background activity. See
    * browserSettle.ts.
    */
-  /** Anything sent to a page that's too busy to answer waits for as long as the tool has, then says nothing useful. */
-  private async assertPageAnswers(tab: TabState, signal?: AbortSignal): Promise<void> {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const answered = await abortable(
-      Promise.race([
-        tab.surface.sendDebuggerCommand('Runtime.evaluate', { expression: '1' }).then(
-          () => true,
-          () => true
-        ),
-        new Promise<boolean>((resolvePromise) => {
-          timer = setTimeout(() => resolvePromise(false), PAGE_ANSWER_MS)
-        })
-      ]),
-      signal
-    ).finally(() => clearTimeout(timer))
-    if (!answered) throw new Error(PAGE_NOT_ANSWERING)
-  }
-
   private async waitForQuiescence(
     tab: TabState,
     input: { idleMs?: number; maxWaitMs?: number },
@@ -7159,7 +7199,6 @@ export class NativeBrowserSessionService {
     const idleMs = boundedInteger(input.idleMs ?? 350, 50, 5_000, 'idleMs')
     // Many real pages never go quiet, so the wait can't be for that. What's still moving shows in the result.
     const maxWaitMs = boundedInteger(input.maxWaitMs ?? 2_000, idleMs, 30_000, 'maxWaitMs')
-    await this.assertPageAnswers(tab, signal)
     const startedAt = this.now()
     const mark =
       tab.settleMark && startedAt - tab.settleMark.at < 60_000 ? tab.settleMark : undefined
@@ -7624,6 +7663,11 @@ export class NativeBrowserSessionService {
         }),
         signal
       ).catch((error: unknown) => {
+        if (String((error as Error)?.message ?? error).includes('Execution was terminated')) {
+          throw new Error(
+            'That script took too long, and was stopped. Look at less of the page at once, as going through every element is slow on a big page.'
+          )
+        }
         throw pageChangedError(error)
       })
     const refused = (said: string): boolean => /^EvalError: Possible side-effect/.test(said)

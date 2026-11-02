@@ -150,6 +150,20 @@ const PAGES = {
     'Hangs itself',
     `<button onclick="got('hang', 'asked'); setTimeout(() => { for (const end = Date.now() + 90000; Date.now() < end; ); }, 50)">Hang</button>${GOT}`
   ),
+  '/t/not-a-check': page(
+    'Pages that only look like a human check',
+    `<label><input type="checkbox"> Compact view</label>
+     <div><input type="checkbox" aria-label="Toggle contents"><ul>${'<li>Human history and how to verify it</li>'.repeat(9)}</ul></div>
+     <iframe src="/t/then?recaptcha=1&size=invisible" title="reCAPTCHA" width="256" height="60"></iframe>`
+  ),
+  '/t/a-check': page(
+    'A real human check',
+    `<div><input type="checkbox" id="c"><label for="c">I'm not a robot</label></div>`
+  ),
+  '/t/hidden-field': page(
+    'A hidden field with a name like a secret',
+    `<form><input type="hidden" name="ssne" value="abcd"><input aria-label="City"></form>`
+  ),
   '/t/print-frame': page(
     'Print button in a frame on another address',
     `<iframe src="http://localhost:${PORT}/t/print" width="500" height="200" title="Form"></iframe>`

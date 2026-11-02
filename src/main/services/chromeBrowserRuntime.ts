@@ -42,6 +42,7 @@ interface ChromeTabInfo {
   loading: boolean
 }
 
+const CLOSE_WAIT_MS = 3_000
 const MODIFIER_BITS = { alt: 1, control: 2, ctrl: 2, meta: 4, shift: 8 } as const
 
 // Names as the browser tools write them, with what Chromium's input expects: key, code and Windows key code.
@@ -315,9 +316,13 @@ class ChromeSurface implements NativeBrowserSurface {
   async close(): Promise<void> {
     // The user's own tab stays. This chat just stops using it.
     if (!this.attached) {
-      await this.line
-        .send('closeTab', { tabId: this.webContentsId }, this.quiet)
-        .catch(() => undefined)
+      // Chrome says a tab has closed only once its page has let go, which a hung page may never do.
+      await Promise.race([
+        this.line
+          .send('closeTab', { tabId: this.webContentsId }, this.quiet)
+          .catch(() => undefined),
+        new Promise((done) => setTimeout(done, CLOSE_WAIT_MS))
+      ])
     }
     this.destroy()
   }

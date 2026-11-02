@@ -367,8 +367,13 @@ function failuresWorthSaying(observation: BrowserObservation): unknown {
   const failed = observation.failedRequests.filter(
     (failure) => failure.errorText !== 'net::ERR_ABORTED'
   )
+  // A site's tracking blocked on this computer says nothing about the page, wherever it's hosted.
   const own = failed.filter(
-    (failure) => failure.resourceType === 'Document' || siteOf(failure.url) === site
+    (failure) =>
+      failure.resourceType === 'Document' ||
+      (siteOf(failure.url) === site &&
+        failure.resourceType !== 'Ping' &&
+        failure.errorText !== 'net::ERR_NAME_NOT_RESOLVED')
   )
   const others = failed.length - own.length
   return {
@@ -2259,6 +2264,8 @@ export function registerBrowserToolHandlers(
           { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
       } else if (name === 'browser_type') {
+        // Without one this would empty the box and report success. An empty string still clears it.
+        if (typeof args.value !== 'string') throw new Error('browser_type requires a value')
         raw = await manager.service.type(
           {
             sessionId: lease.sessionId,
@@ -2267,7 +2274,7 @@ export function registerBrowserToolHandlers(
               coordinates: false,
               preferredRoles: ['textbox', 'searchbox', 'combobox', 'spinbutton']
             })!,
-            text: typeof args.value === 'string' ? args.value : '',
+            text: args.value,
             clear: args.clear !== false,
             submit: args.submit === true
           },

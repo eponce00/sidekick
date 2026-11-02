@@ -302,7 +302,7 @@ export const RISKY_CONTROL =
 // The same words doing no harm: arranging a list, or undoing a filter on one. Asking about these on every
 // search teaches people to say yes without reading.
 const HARMLESS_PHRASES =
-  /\b(sort(ed)?\b.*\border|change\b.*\border|order (by|history|status|details)|in order|(remove|reset|delete) (all )?(filters?|selections?|sort))\b/gi
+  /\b(sort(ed)?\b.*\border|change\b.*\border|order (by|history|status|details)|in order|(remove|reset|delete) (all )?(filters?|selections?|sort)|submit (your )?(search|query))\b/gi
 
 /**
  * A control says what it does in a short name or its first words. Further into a long one it's describing

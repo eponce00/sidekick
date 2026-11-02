@@ -587,7 +587,7 @@ module.exports = {
   'trap-warning-before-leaving': async (page) => {
     await clear()
     await page.open(`${BENCH}/t/leave`)
-    await page.step('browser_type', { ref: await page.ref('Note', /textbox/), text: 'unsaved' })
+    await page.step('browser_type', { ref: await page.ref('Note', /textbox/), value: 'unsaved' })
     await page.click(await page.ref('Away', /link/))
     await wait(500)
     await page.click(await page.ref('Then this', /button/))
@@ -619,6 +619,20 @@ module.exports = {
     await page.open(`${BENCH}/t/then`)
     await page.click(await page.ref('Then this', /button/))
     return (await result('then')) ? '' : 'A new page was no use after the hang'
+  },
+  'trap-words-that-sound-like-a-human-check': async (page) => {
+    await page.open(`${BENCH}/t/not-a-check`)
+    const look = await page.step('browser_observe', { include_screenshot: false })
+    if (look.data.humanVerification)
+      return `Called a human check: ${JSON.stringify(look.data.humanVerification)}`
+    await page.open(`${BENCH}/t/a-check`)
+    const real = await page.step('browser_observe', { include_screenshot: false })
+    return real.data.humanVerification ? '' : 'A real check went unnoticed'
+  },
+  'trap-hidden-field-named-like-a-secret': async (page) => {
+    await page.open(`${BENCH}/t/hidden-field`)
+    const read = await page.step('browser_evaluate', { expression: 'document.title' })
+    return /hidden field/.test(JSON.stringify(read.data)) ? '' : `Read ${JSON.stringify(read.data)}`
   },
   'box-by-the-words-it-shows': async (page) => {
     await clear()
