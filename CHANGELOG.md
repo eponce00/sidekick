@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.27.1 — 2026-11-02
+
+- Fix Chrome setup stopping at the folder picker. When the picker showed a Type column, setup took a row for
+  a listed folder instead of the folder box, so the extension's folder never went in. It now finds the
+  picker's controls and Chrome's own by ids that don't change with language, so Chrome no longer has to be in
+  English, and it checks the box holds the folder before pressing Select Folder.
+
 ## 0.27.0 — 2026-11-02
 
 - Archive a chat from its menu, and put it back from a new Archived list in the sidebar. Chats started by
