@@ -26,6 +26,8 @@ export interface ComputerHighlightTarget {
   visible: () => Promise<boolean>
   /** Where the app's window is now, or null when there is nothing to outline. */
   bounds: () => Promise<ComputerWindowBounds | null>
+  /** Ends the agent's work from the picture's Stop button. Without it, the picture says Esc does. */
+  stop?: () => void
 }
 
 /** A glow and a label around a visible app. No script: the page only ever shows what it was given. */
@@ -77,17 +79,20 @@ window.setPicture = (source) => {
   picture.src = source
   picture.hidden = false
 }
-window.setStopKey = (held) => {
-  document.querySelector('.stop').hidden = !held
+for (const button of document.querySelectorAll('button')) {
+  button.addEventListener('click', () => { location.href = '${PICTURE_SCHEME}' + button.dataset.does })
 }
-document.querySelector('button').addEventListener('click', () => { location.href = '${PICTURE_SCHEME}close' })
 `
 
 /**
  * What the agent last saw, for when the app itself can't be seen. The user's to move, resize or close,
  * and only ever shows pictures it is handed.
  */
-export function computerPicturePage(appName: string, look: TrustedLook): string {
+export function computerPicturePage(
+  appName: string,
+  look: TrustedLook,
+  hasStopButton = false
+): string {
   const hash = createHash('sha256').update(PICTURE_SCRIPT).digest('base64')
   const name = escapeHtml(appName)
   return `<!doctype html>
@@ -116,11 +121,12 @@ button {
   cursor: pointer; -webkit-app-region: no-drag;
 }
 button:hover { color: var(--text); background: var(--surface-3); }
+button.end { width: auto; padding: 0 8px; color: var(--text); font-size: 12px; }
 </style>
 </head>
 <body>
 <img alt="" hidden>
-<div class="label"><span class="dot"></span><span class="text">SideKick is using ${name} <span class="stop">· Esc to stop</span></span><button type="button" title="Hide. The agent keeps working." aria-label="Hide. The agent keeps working.">×</button></div>
+<div class="label"><span class="dot"></span><span class="text">SideKick is using ${name}${hasStopButton ? '' : ' <span class="stop">· Esc to stop</span>'}</span>${hasStopButton ? '<button type="button" class="end" data-does="stop" title="Stop the agent">Stop</button>' : ''}<button type="button" data-does="close" title="Hide. The agent keeps working." aria-label="Hide. The agent keeps working.">×</button></div>
 <script>${PICTURE_SCRIPT}</script>
 </body>
 </html>`
@@ -316,7 +322,6 @@ export class ComputerUseHighlight {
   private page = ''
   private cursor: BrowserWindow | null = null
   private pictureFilled = false
-  private stopKeyHeld = true
   private cursorAt: { x: number; y: number } | null = null
   private gliding: ReturnType<typeof setInterval> | null = null
   /** Whoever is waiting for the pointer to arrive, as a step does before it clicks. */
@@ -442,7 +447,6 @@ export class ComputerUseHighlight {
     this.pictureAspect = 0
     this.pictureSized = false
     this.pictureFilled = false
-    this.stopKeyHeld = true
     for (const window of [this.window, this.cursor, this.picture]) {
       if (window && !window.isDestroyed()) window.destroy()
     }
@@ -472,9 +476,7 @@ export class ComputerUseHighlight {
     const source = this.pictureSource
     this.pictureSource = ''
     void window.webContents
-      .executeJavaScript(
-        `window.setPicture(${JSON.stringify(source)});window.setStopKey(${this.stopKeyHeld})`
-      )
+      .executeJavaScript(`window.setPicture(${JSON.stringify(source)})`)
       .catch(() => undefined)
     this.pictureFilled = true
     if (!this.pictureSized) {
@@ -482,14 +484,6 @@ export class ComputerUseHighlight {
       if (!savedPictureBounds()) window.setBounds(pictureBounds(this.pictureAspect))
     }
     if (!window.isVisible() && this.wantsPicture()) window.showInactive()
-  }
-
-  /** Whether Esc would stop the agent right now, as the picture's label says. */
-  setStopKeyHeld(held: boolean): void {
-    this.stopKeyHeld = held
-    const window = this.picture
-    if (!window || window.isDestroyed() || this.pictureOpening) return
-    void window.webContents.executeJavaScript(`window.setStopKey(${held})`).catch(() => undefined)
   }
 
   /** Whether anyone would see a new picture now, so that one isn't taken for nothing. */
@@ -510,7 +504,7 @@ export class ComputerUseHighlight {
       this.picture = null
     }
     if (!this.picture || this.picture.isDestroyed()) {
-      this.pictureOpening = this.openPicture(target.appName).finally(() => {
+      this.pictureOpening = this.openPicture(target).finally(() => {
         this.pictureOpening = null
       })
     }
@@ -528,7 +522,8 @@ export class ComputerUseHighlight {
     this.fillPicture()
   }
 
-  private async openPicture(appName: string): Promise<void> {
+  private async openPicture(target: ComputerHighlightTarget): Promise<void> {
+    const { appName } = target
     const look = await trustedLook(appState.mainWindowRef)
     if (!this.target) return
     const window = overlayWindow(`SideKick is using ${appName}`, true, {
@@ -554,6 +549,7 @@ export class ComputerUseHighlight {
     window.on('moved', remember)
     window.on('resized', remember)
     window.webContents.on('will-navigate', (_event, url) => {
+      if (url === `${PICTURE_SCHEME}stop`) return target.stop?.()
       if (url !== `${PICTURE_SCHEME}close`) return
       this.pictureClosed = true
       if (!window.isDestroyed()) window.hide()
@@ -563,7 +559,7 @@ export class ComputerUseHighlight {
     })
     await window
       .loadURL(
-        `data:text/html;charset=utf-8,${encodeURIComponent(computerPicturePage(appName, look))}`
+        `data:text/html;charset=utf-8,${encodeURIComponent(computerPicturePage(appName, look, Boolean(target.stop)))}`
       )
       .catch(() => undefined)
   }

@@ -21,16 +21,13 @@ function harness(url = 'https://shop.example/page', answer = true, everySite = t
   const confirmSite = vi.fn(async () => answer)
   const confirmSharedTab = vi.fn(async () => answer)
   const confirmPress = vi.fn(async () => answer)
-  const disarm = vi.fn()
   const overlay = {
     show: vi.fn(),
     hide: vi.fn(),
     preview: vi.fn(),
     wantsPreview: () => false,
     replyEnded: vi.fn(),
-    stopKeyHeld: vi.fn(),
     askForUser: vi.fn((_show: () => void) => undefined),
-    armStop: vi.fn((_stop: () => void) => disarm),
     notify: vi.fn(),
     accent: async () => '#86aee8'
   }
@@ -63,7 +60,6 @@ function harness(url = 'https://shop.example/page', answer = true, everySite = t
     send,
     page,
     overlay,
-    disarm,
     confirmSite,
     confirmSharedTab,
     confirmPress
@@ -218,17 +214,13 @@ describe('scripts that only look', () => {
 })
 
 describe('when it is driving', () => {
-  it('keeps the picture through a slow turn of the model, giving back only Esc', async () => {
-    const { service, inChat, surface, overlay, disarm, timers } = harness()
+  it('keeps the picture through a slow turn of the model', async () => {
+    const { service, inChat, surface, overlay, timers } = harness()
     await inChat(() => service.beforeStep(surface, signal))
     for (const run of timers.splice(0)) run()
-    expect(disarm).toHaveBeenCalled()
-    expect(overlay.stopKeyHeld).toHaveBeenLastCalledWith(false)
     expect(overlay.hide).not.toHaveBeenCalled()
-    // Still there to refresh on the next tick, and Esc comes back with the next step.
+    // Still there to refresh on the next tick.
     expect(timers.length).toBeGreaterThan(0)
-    await inChat(() => service.beforeStep(surface, signal))
-    expect(overlay.stopKeyHeld).toHaveBeenLastCalledWith(true)
   })
 
   it('asks the user over to its tab rather than taking the screen', async () => {
@@ -248,29 +240,26 @@ describe('when it is driving', () => {
     expect(overlay.notify).toHaveBeenCalledTimes(1)
   })
 
-  it('stops for good on Esc: the reply gets nowhere, and its approvals are gone', async () => {
-    const { service, inChat, surface, send, overlay, disarm, confirmSite } = harness()
+  it('stops for good: the reply gets nowhere, and its approvals are gone', async () => {
+    const { service, inChat, surface, send, overlay, confirmSite } = harness()
     await inChat(() => service.beforeStep(surface, signal))
-    expect(overlay.armStop).toHaveBeenCalledTimes(1)
-    overlay.armStop.mock.calls[0][0]()
-    expect(disarm).toHaveBeenCalled()
+    service.stop()
     expect(overlay.hide).toHaveBeenCalled()
     expect(sent(send, 'detachAll')).toBe(true)
-    await expect(inChat(() => service.beforeStep(surface, signal))).rejects.toThrow('pressed Esc')
+    await expect(inChat(() => service.beforeStep(surface, signal))).rejects.toThrow('user stopped')
     await expect(
       inChat(() => service.beforeNavigate('https://shop.example/', signal))
-    ).rejects.toThrow('pressed Esc')
-    await expect(inChat(() => service.ready(signal))).rejects.toThrow('pressed Esc')
+    ).rejects.toThrow('user stopped')
+    await expect(inChat(() => service.ready(signal))).rejects.toThrow('user stopped')
     service.runEnded('chat')
     await inChat(() => service.beforeStep(surface, signal))
     expect(confirmSite).toHaveBeenCalledTimes(2)
   })
 
   it('takes the marks off when the reply ends, keeping what the user allowed', async () => {
-    const { service, inChat, surface, send, overlay, disarm, confirmSite } = harness()
+    const { service, inChat, surface, send, overlay, confirmSite } = harness()
     await inChat(() => service.beforeStep(surface, signal))
     service.runEnded('chat')
-    expect(disarm).toHaveBeenCalled()
     expect(overlay.hide).toHaveBeenCalled()
     expect(sent(send, 'overlaysOff')).toBe(true)
     await inChat(() => service.beforeStep(surface, signal))
