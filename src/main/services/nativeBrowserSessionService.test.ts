@@ -186,6 +186,7 @@ class FakeSurface implements NativeBrowserSurface {
   readonly inputEvents: Array<Parameters<NativeBrowserSurface['sendInputEvent']>[0]> = []
   readonly commands: Array<{ method: string; params?: Record<string, unknown> }> = []
   clickInFrame?: NativeBrowserSurface['clickInFrame']
+  captureWindow?: NativeBrowserSurface['captureWindow']
   private guard: (url: string) => boolean = (url) => url === 'about:blank'
   private requestGuard: (url: string) => boolean = () => false
   private certificateGuard: (event: BrowserCertificateEvent) => boolean = () => false
@@ -1492,7 +1493,7 @@ describe('NativeBrowserSessionService', () => {
     const run = surface.executeJavaScript.bind(surface)
     surface.executeJavaScript = (async (source: string) =>
       source.includes(':hover') ? false : run(source)) as typeof surface.executeJavaScript
-    expect((await click()).note).toBeUndefined()
+    expect(String((await click()).note)).not.toContain('never reached the page')
     ;(runtime as unknown as { hasDialogsOfItsOwn: boolean }).hasDialogsOfItsOwn = true
     expect((await click()).note).toContain('never reached the page')
   })
@@ -1541,6 +1542,23 @@ describe('NativeBrowserSessionService', () => {
     })
     const methods = surface.commands.map(({ method }) => method)
     expect(methods).toContain('DOM.scrollIntoViewIfNeeded')
+  })
+
+  it('shows the whole window only once a page has given a reason to', async () => {
+    const { service, runtime } = await testService()
+    const { sessionId } = await service.open({ runId: 'window', url: 'https://example.com/' })
+    const look = () => service.screenshot({ sessionId, kind: 'window' })
+    await expect(look()).rejects.toThrow("isn't available")
+    const surface = runtime.surfaces[0]
+    const png = surface.captureViewport.bind(surface)
+    surface.captureWindow = async () => png()
+    await expect(look()).rejects.toThrow('only for when')
+    const clicked = await service.click({
+      sessionId,
+      target: { name: 'Save', preferredRoles: ['button'] }
+    })
+    expect(clicked.note).toContain('looks the same')
+    expect((await look()).kind).toBe('window')
   })
 
   it('stops printing from opening a dialog in its own tabs', async () => {

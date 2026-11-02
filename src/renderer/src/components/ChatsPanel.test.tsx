@@ -77,6 +77,40 @@ describe('ChatsPanel', () => {
     expect(onOpenChat).toHaveBeenCalledWith(done.conversationId)
   })
 
+  it('resumes a worker cut short, and archives one that is not running', async () => {
+    const onArchive = vi.fn()
+    const onResume = vi.fn()
+    await act(async () =>
+      root.render(
+        <ChatsPanel
+          conversationId="manager"
+          view={{
+            family,
+            role: 'manager',
+            self: manager,
+            messages: [],
+            statuses: statusMap([[schedules.conversationId, 'waiting', 'Approval: run npm test']])
+          }}
+          worktrees={worktrees}
+          onOpenChat={vi.fn()}
+          onMessageChat={vi.fn()}
+          onStop={vi.fn()}
+          onDetach={vi.fn()}
+          onArchive={onArchive}
+          onResume={onResume}
+          resumable={new Set([done.conversationId])}
+        />
+      )
+    )
+    const [waiting, finished] = [...container.querySelectorAll('.chats-panel-card')]
+    expect(button(waiting, 'Archive')).toBeUndefined()
+    expect(button(waiting, 'Resume')).toBeUndefined()
+    await act(async () => button(finished, 'Resume').click())
+    expect(onResume).toHaveBeenCalledWith(done.conversationId)
+    await act(async () => button(finished, 'Archive').click())
+    expect(onArchive).toHaveBeenCalledWith(done.conversationId)
+  })
+
   it('leads a worker to its manager, and detaches only after confirmation', async () => {
     const onOpenChat = vi.fn()
     const onDetach = vi.fn()

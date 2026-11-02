@@ -76,6 +76,7 @@ the agent can still press a named control, which brings the app forward for abou
 can draw before what you had in front goes back, but anything else takes real input. A covered web-based
 app can stop drawing, so the picture in the chat may lag behind until it is uncovered. The agent then chooses: it can tell you what it needs, or wait until
 you have stepped away for 10 seconds, bring the app to the front, and use your real mouse and keyboard.
+A notice in the corner of your screen says when it is waiting for that.
 SideKick's pointer stays the one to watch. Your real one goes to the spot only for as long as a step
 needs it and then goes back where you left it, and if you touch the mouse or keyboard the agent waits again.
 The app stays in front until the reply ends, and then what you had open comes back, unless you have
@@ -132,6 +133,10 @@ its text.
   one, as Chrome's sign-in dialog would block the page with nothing there to answer it. The site's own
   sign-in form still works, and so does Chrome filling it in. A page's Print button does nothing in the
   agent's own tabs, in Chrome or in the built-in browser.
+- **It can look at its own Chrome window when a page stops responding,** since Chrome's own dialogs don't
+  show in a picture of the page. That picture can show what Chrome shows there, such as your bookmarks
+  bar or the account a saved login is for. It's only allowed after a click had no effect or the page stopped
+  answering, and never for a tab you shared.
 - **It asks you before pressing things like Buy, Send or Delete,** in SideKick's own dialog. Names can't
   catch everything, and a page can label a button anything. Pressing Enter in a form counts as pressing its
   button.

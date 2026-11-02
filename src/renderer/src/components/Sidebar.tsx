@@ -1,5 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Archive,
+  ArchiveRestore,
   CalendarClock,
   Check,
   ChevronDown,
@@ -366,11 +368,16 @@ function Sidebar({
     }
   }, [query])
 
-  // Archived chats leave the list; search still finds them.
+  // Archived chats leave the list for a folded one of their own, and search still finds them.
   const liveConversations = useMemo(
     () => conversations.filter((conversation) => !conversation.archived_at),
     [conversations]
   )
+  const archivedConversations = useMemo(
+    () => conversations.filter((conversation) => conversation.archived_at),
+    [conversations]
+  )
+  const [archivedOpen, setArchivedOpen] = useState(false)
   const families = useMemo(() => indexSessionFamilies(liveConversations), [liveConversations])
   // Workers are listed under their manager, wherever each one's project is.
   const topLevelConversations = useMemo(
@@ -868,6 +875,15 @@ function Sidebar({
                     onClick={() => {
                       setOpenActionsMenu(null)
                       onForkConversation(conversation.id)
+                    }}
+                  />
+                  <MenuItem
+                    icon={<Archive size={14} />}
+                    label="Archive"
+                    disabled={isConversationBusy}
+                    onClick={() => {
+                      setOpenActionsMenu(null)
+                      void window.api.sessions.archive(conversation.id)
                     }}
                   />
                 </div>
@@ -1590,6 +1606,47 @@ function Sidebar({
                           <span>Standalone chats appear here</span>
                         </div>
                       )}
+                    </section>
+                  )}
+                  {!filtering && archivedConversations.length > 0 && (
+                    <section className="sidebar-section">
+                      <div className="section-heading sidebar-section-label">
+                        <button
+                          type="button"
+                          className="sidebar-section-toggle"
+                          onClick={() => setArchivedOpen((open) => !open)}
+                          aria-expanded={archivedOpen}
+                        >
+                          <ChevronDown
+                            size={12}
+                            className={`sidebar-section-chevron ${archivedOpen ? '' : 'is-collapsed'}`}
+                            aria-hidden="true"
+                          />
+                          <span>Archived · {archivedConversations.length}</span>
+                        </button>
+                      </div>
+                      {archivedOpen &&
+                        archivedConversations.map((conversation) => (
+                          <div className="sidebar-archived-row" key={conversation.id}>
+                            <button
+                              type="button"
+                              className="sidebar-archived-title"
+                              title={conversation.title}
+                              onClick={() => onSelectConversation(conversation.id)}
+                            >
+                              {conversation.title}
+                            </button>
+                            <button
+                              type="button"
+                              className="sidebar-archived-restore"
+                              title="Put back in the list"
+                              aria-label={`Put ${conversation.title} back in the list`}
+                              onClick={() => void window.api.sessions.unarchive(conversation.id)}
+                            >
+                              <ArchiveRestore size={14} />
+                            </button>
+                          </div>
+                        ))}
                     </section>
                   )}
                 </>

@@ -18,7 +18,7 @@ const PICTURE_LABEL_DIP = 36
 // Sharp enough for a window the user has made a good deal bigger.
 const PICTURE_SOURCE_WIDTH = 960
 const PICTURE_MARGIN_DIP = 12
-const PICTURE_BOUNDS_KEY = 'computerPictureBounds'
+const PICTURE_BOUNDS_KEY = 'computerPicturePlace'
 
 export interface ComputerHighlightTarget {
   appName: string
@@ -76,6 +76,9 @@ const picture = document.querySelector('img')
 window.setPicture = (source) => {
   picture.src = source
   picture.hidden = false
+}
+window.setStopKey = (held) => {
+  document.querySelector('.stop').hidden = !held
 }
 document.querySelector('button').addEventListener('click', () => { location.href = '${PICTURE_SCHEME}close' })
 `
@@ -289,13 +292,13 @@ function savedPictureBounds(): Electron.Rectangle | null {
   }
 }
 
-/** The corner of the screen the user is on, sized for a picture of this shape, or just the label. */
+/** The top corner of the screen the user is on, out of the way of what they're doing, sized for this picture. */
 function pictureBounds(aspect: number): Electron.Rectangle {
   const { workArea: area } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   const height = Math.round(PICTURE_WIDTH_DIP * aspect) + PICTURE_LABEL_DIP
   return {
     x: area.x + area.width - PICTURE_WIDTH_DIP - PICTURE_MARGIN_DIP,
-    y: area.y + area.height - height - PICTURE_MARGIN_DIP,
+    y: area.y + PICTURE_MARGIN_DIP,
     width: PICTURE_WIDTH_DIP,
     height
   }
@@ -312,8 +315,12 @@ export class ComputerUseHighlight {
   private following: ReturnType<typeof setTimeout> | null = null
   private page = ''
   private cursor: BrowserWindow | null = null
+  private pictureFilled = false
+  private stopKeyHeld = true
   private cursorAt: { x: number; y: number } | null = null
   private gliding: ReturnType<typeof setInterval> | null = null
+  /** Whoever is waiting for the pointer to arrive, as a step does before it clicks. */
+  private arrivals: Array<() => void> = []
   private center: { x: number; y: number } | null = null
   private mode: 'glow' | 'pill' = 'pill'
   private picture: BrowserWindow | null = null
@@ -427,14 +434,15 @@ export class ComputerUseHighlight {
     this.page = ''
     if (this.following) clearTimeout(this.following)
     this.following = null
-    if (this.gliding) clearInterval(this.gliding)
-    this.gliding = null
+    this.endGlide()
     this.cursorAt = null
     this.center = null
     this.mode = 'pill'
     this.pictureSource = ''
     this.pictureAspect = 0
     this.pictureSized = false
+    this.pictureFilled = false
+    this.stopKeyHeld = true
     for (const window of [this.window, this.cursor, this.picture]) {
       if (window && !window.isDestroyed()) window.destroy()
     }
@@ -464,11 +472,24 @@ export class ComputerUseHighlight {
     const source = this.pictureSource
     this.pictureSource = ''
     void window.webContents
-      .executeJavaScript(`window.setPicture(${JSON.stringify(source)})`)
+      .executeJavaScript(
+        `window.setPicture(${JSON.stringify(source)});window.setStopKey(${this.stopKeyHeld})`
+      )
       .catch(() => undefined)
-    if (this.pictureSized) return
-    this.pictureSized = true
-    if (!savedPictureBounds()) window.setBounds(pictureBounds(this.pictureAspect))
+    this.pictureFilled = true
+    if (!this.pictureSized) {
+      this.pictureSized = true
+      if (!savedPictureBounds()) window.setBounds(pictureBounds(this.pictureAspect))
+    }
+    if (!window.isVisible() && this.wantsPicture()) window.showInactive()
+  }
+
+  /** Whether Esc would stop the agent right now, as the picture's label says. */
+  setStopKeyHeld(held: boolean): void {
+    this.stopKeyHeld = held
+    const window = this.picture
+    if (!window || window.isDestroyed() || this.pictureOpening) return
+    void window.webContents.executeJavaScript(`window.setStopKey(${held})`).catch(() => undefined)
   }
 
   /** Whether anyone would see a new picture now, so that one isn't taken for nothing. */
@@ -495,7 +516,13 @@ export class ComputerUseHighlight {
     }
     await this.pictureOpening
     if (!this.target || this.pictureClosed) return
-    if (this.picture && !this.picture.isDestroyed() && !this.picture.isVisible()) {
+    // An empty box on the user's screen says nothing, so it waits for its first picture.
+    if (
+      this.pictureFilled &&
+      this.picture &&
+      !this.picture.isDestroyed() &&
+      !this.picture.isVisible()
+    ) {
       this.picture.showInactive()
     }
     this.fillPicture()
@@ -517,6 +544,7 @@ export class ComputerUseHighlight {
     })
     window.setIgnoreMouseEvents(false)
     this.picture = window
+    this.pictureFilled = false
     this.pictureName = appName
     this.pictureSized = this.pictureAspect > 0
     const remember = (): void => {
@@ -573,14 +601,11 @@ export class ComputerUseHighlight {
     const cursor = this.cursor
     if (!cursor.isVisible()) cursor.showInactive()
     const from = this.cursorAt ?? to
-    if (this.gliding) clearInterval(this.gliding)
+    this.endGlide()
     const started = Date.now()
     await new Promise<void>((arrive) => {
-      const finish = (): void => {
-        if (this.gliding) clearInterval(this.gliding)
-        this.gliding = null
-        arrive()
-      }
+      const finish = (): void => this.endGlide()
+      this.arrivals.push(arrive)
       this.gliding = setInterval(() => {
         if (cursor.isDestroyed()) return finish()
         const t = Math.min((Date.now() - started) / CURSOR_GLIDE_MS, 1)
@@ -593,6 +618,13 @@ export class ComputerUseHighlight {
         finish()
       }, CURSOR_FRAME_MS)
     })
+  }
+
+  /** A glide cut short still ends for whoever waited on it: a click stuck behind one held a step for minutes. */
+  private endGlide(): void {
+    if (this.gliding) clearInterval(this.gliding)
+    this.gliding = null
+    for (const arrive of this.arrivals.splice(0)) arrive()
   }
 
   private cursorBounds(at: { x: number; y: number }): Electron.Rectangle {

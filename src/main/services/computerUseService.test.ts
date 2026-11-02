@@ -111,6 +111,7 @@ function harness(apps: ComputerApp[], confirm = true) {
     async (_step: ComputerTeachStep, _signal: AbortSignal) => 'next' as 'next' | 'exit'
   )
   const hideTeachStep = vi.fn()
+  const waitingForUser = vi.fn()
   const service = new ComputerUseService({
     driverPath: 'C:\\driver\\cua-driver.exe',
     dataFolder: () => 'C:\\data',
@@ -123,6 +124,7 @@ function harness(apps: ComputerApp[], confirm = true) {
     startApp,
     armStop,
     notifyActive: vi.fn(),
+    waitingForUser,
     showActive,
     hideActive,
     moveCursor,
@@ -134,6 +136,7 @@ function harness(apps: ComputerApp[], confirm = true) {
   })
   return {
     service,
+    waitingForUser,
     call,
     startDriver,
     confirmApp,
@@ -1490,14 +1493,18 @@ describe('what the agent may reach', () => {
   it('waits for the user to step away, and gives up rather than type over them', async () => {
     vi.useFakeTimers()
     try {
-      const { service, call, userIdleSeconds } = harness([app('notes')])
+      const { service, call, userIdleSeconds, waitingForUser } = harness([app('notes')])
       needsForeground(call, 'type_text')
       userIdleSeconds.mockReturnValue(0)
       await service.requestApp('chat', 'notes', signal)
       const typing = service.type('chat', 'notes', 'x', undefined, signal, true)
       const refused = expect(typing).rejects.toThrow('still using')
-      await vi.advanceTimersByTimeAsync(76_000)
+      await vi.advanceTimersByTimeAsync(3_000)
+      // A step that seems stuck says what it's waiting for, and stops saying so when it's over.
+      expect(waitingForUser).toHaveBeenLastCalledWith('notes')
+      await vi.advanceTimersByTimeAsync(73_000)
       await refused
+      expect(waitingForUser).toHaveBeenLastCalledWith(null)
       expect(call).not.toHaveBeenCalledWith(
         'type_text',
         expect.objectContaining({ delivery_mode: 'foreground' }),

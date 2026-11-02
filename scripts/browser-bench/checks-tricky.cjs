@@ -646,6 +646,73 @@ module.exports = {
     const value = await page.page("document.querySelector('#max').value")
     return value === '600000' ? '' : `The field holds ${JSON.stringify(value)}`
   },
+  'click-that-changes-nothing-says-so-with-a-picture': async (page) => {
+    await page.open(`${BENCH}/t/dead-button`)
+    const button = await page.ref('Does nothing', /button/)
+    let dead = await page.click(button)
+    // Chrome only looks when a click is tried again, as its pictures are slow.
+    if (process.env.PROBE_BROWSER !== 'built_in') dead = await page.click(button)
+    if (!/looks the same/.test(JSON.stringify(dead.data)))
+      return `Nothing said so: ${JSON.stringify(dead.data).slice(0, 200)}`
+    if (!dead.pictures.length) return 'No picture came with it'
+    const live = await page.click(await page.ref('Does something', /button/))
+    return /looks the same/.test(JSON.stringify(live.data))
+      ? 'A click that worked was called dead'
+      : ''
+  },
+  'window-picture-only-when-stuck': async (page) => {
+    await page.open(`${BENCH}/t/dead-button`)
+    const early = await page.step('browser_screenshot', { window: true }).then(
+      () => 'allowed',
+      (error) => String(error.message)
+    )
+    if (process.env.PROBE_BROWSER === 'built_in') {
+      return /isn't available/.test(early) ? '' : `Built-in: ${early.slice(0, 160)}`
+    }
+    if (!/only for when/.test(early)) return `Taken with no reason: ${early.slice(0, 160)}`
+    const button = await page.ref('Does nothing', /button/)
+    await page.click(button)
+    await page.click(button)
+    const look = await page.step('browser_screenshot', { window: true, include_screenshot: true })
+    return look.pictures.length ? '' : 'No picture of the window'
+  },
+  'block-page-counts-and-the-site-rests': async (page) => {
+    await page.open(`${BENCH}/t/blocked`)
+    const look = await page.step('browser_observe', { include_screenshot: false })
+    if (!look.data.humanVerification) return 'The block page went unnoticed'
+    const again = await page
+      .step('browser_navigate', { action: 'url', url: `${BENCH}/t/blocked` })
+      .then(
+        () => 'opened',
+        (error) => String(error.message)
+      )
+    return /moments ago/.test(again) ? '' : `Went straight back: ${again.slice(0, 160)}`
+  },
+  'scrolling-a-dialog-finds-the-part-that-scrolls': async (page) => {
+    await page.open(`${BENCH}/t/panel-scroll`)
+    await page.step('browser_scroll', { selector: '#box', delta_y: 300 })
+    const named = await page.page("document.querySelector('#inner').scrollTop")
+    if (named <= 0) return 'Naming the dialog moved nothing'
+    await page.step('browser_scroll', { delta_y: 200 })
+    const plain = await page.page("document.querySelector('#inner').scrollTop")
+    return plain > named ? '' : 'A plain scroll over the dialog moved nothing'
+  },
+  'a-few-options-can-be-pressed-by-name': async (page) => {
+    await clear()
+    await page.open(`${BENCH}/t/few-options`)
+    await page.click(await page.ref('3 beds', /option/))
+    return (await result('few')) === '3' ? '' : 'The option was not pressed'
+  },
+  'real-upload-to-a-practice-site': async (page) => {
+    await page.open(`${INTERNET}/upload`)
+    await page.step('browser_upload', {
+      paths: ['bench-small.txt'],
+      selector: '#file-upload'
+    })
+    await page.click(await page.ref('Upload', /button/))
+    await wait(1500)
+    return expectText(page, /File Uploaded[\s\S]*bench-small\.txt/, 'after uploading')
+  },
   'box-by-the-words-it-shows': async (page) => {
     await clear()
     await page.open(`${BENCH}/t/placeholder`)

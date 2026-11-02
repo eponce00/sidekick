@@ -90,6 +90,7 @@ export const AGENT_WEBMCP_TOOL_NAMES = [
 const DEFAULT_MAX_CONVERSATION_SESSIONS = 2
 // How often the browser looks again while the user clears a human check.
 const HUMAN_CHECK_POLL_MS = 1_500
+const FEW_OPTIONS = 12
 const MAX_PERSISTED_SEMANTIC_LINES = 300
 const MAX_ACTION_SEMANTIC_LINES = 60
 const MAX_ACTION_SEMANTIC_LINE_CHARS = 480
@@ -308,10 +309,12 @@ function boundedSemanticLine(raw: string): string {
  */
 function compactSemanticSnapshot(snapshot: string, lineLimit: number): string {
   const lines = snapshot.split('\n')
-  const optionCount = lines.reduce(
+  const allOptions = lines.reduce(
     (count, line) => count + (semanticRole(line) === 'option' ? 1 : 0),
     0
   )
+  // A handful can be all there is to press, as with a row of bedroom counts. It's long lists that bloat.
+  const optionCount = allOptions > FEW_OPTIONS ? allOptions : 0
   const nonOptionLines = optionCount
     ? lines.filter((line) => semanticRole(line) !== 'option')
     : lines
@@ -322,7 +325,7 @@ function compactSemanticSnapshot(snapshot: string, lineLimit: number): string {
   const bounded = prioritized.split('\n').filter(Boolean).map(boundedSemanticLine)
   if (optionCount) {
     bounded.push(
-      `... ${optionCount} option nodes omitted; browser_select accepts an exact visible option label without expanding the list ...`
+      `... ${optionCount} option nodes omitted; browser_select accepts an exact visible option label without expanding the list, or click one by position in a picture ...`
     )
   }
   return bounded.join('\n')
@@ -885,7 +888,7 @@ function errorResult(
       message: 'The site requires human verification before automation can continue.',
       recoveryAction: 'change_strategy',
       recovery:
-        'Use another legitimate source if there is one. If this page is the only way to finish the task, call browser_request_human so the user clears the check in the Browser panel.'
+        "Use another legitimate source if there is one. If you're in the built-in browser and browser_open offers browser: 'chrome', the user's own Chrome may not be asked. If this page is the only way to finish the task, call browser_request_human so the user clears the check."
     })
   }
   if (isMissingSessionError(error)) {
@@ -924,7 +927,8 @@ function errorResult(
       message,
       retryable: true,
       recoveryAction: 'refresh_state',
-      recovery: 'Observe the current page and choose an unambiguous semantic ref.'
+      recovery:
+        'Observe the current page and choose an unambiguous semantic ref. If the control is not listed but a picture shows it, click it by position.'
     })
   }
   if (/file URL|file browsing|local browser file|escaped|project root/i.test(message)) {
@@ -2199,9 +2203,16 @@ export function registerBrowserToolHandlers(
         const artifact = await manager.service.screenshot(
           {
             sessionId: lease.sessionId,
-            kind: target || region ? 'element' : args.full_page === true ? 'fullPage' : 'viewport',
-            ...(target ? { target } : {}),
-            ...(region
+            kind:
+              args.window === true
+                ? 'window'
+                : target || region
+                  ? 'element'
+                  : args.full_page === true
+                    ? 'fullPage'
+                    : 'viewport',
+            ...(target && args.window !== true ? { target } : {}),
+            ...(region && args.window !== true
               ? {
                   zoom: {
                     screenshotId: stringArgument(args, 'screenshot_id'),
@@ -2511,7 +2522,8 @@ export function registerBrowserToolHandlers(
         const data = {
           value: evaluation.value,
           serializedBytes: evaluation.serializedBytes,
-          truncated: evaluation.truncated
+          truncated: evaluation.truncated,
+          ...(evaluation.note ? { note: evaluation.note } : {})
         }
         return boundedInspectionSuccess(outputs, title, data)
       } else if (name === 'browser_list_webmcp_tools') {

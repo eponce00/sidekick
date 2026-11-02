@@ -1,6 +1,6 @@
 # Roadmap
 
-SideKick `0.6.0` is in active development. The current codebase includes the local-first desktop
+SideKick is in active development. The current codebase includes the local-first desktop
 runtime, provider connections, agent tools, projects, permissions, plan mode, persistent goals,
 research, native visual browser automation, conversation forks, managed worktrees, chats that
 start and coordinate other chats, private workspace recovery, packaging, and a guarded public-release
@@ -31,9 +31,8 @@ The exact release contract is in [Releases](../development/RELEASES.md).
 - Add controlled extension points only after their provenance, permissions, updates, and failure
   isolation can be enforced as one architecture rather than ad hoc scripts.
 - Finish chats that start other chats ([current behavior](../user-guide/CHATS_THAT_WORK_TOGETHER.md)):
-  Archive and Resume buttons for worker chats (the main process already supports both), an optional
-  token or cost budget per family that pauses it when reached, and a Merge into base action for a
-  finished worker.
+  an optional token or cost budget per family that pauses it when reached, and a Merge into base
+  action for a finished worker.
 - Finish worktree isolation for parallel agents: cleanup on archive, snapshots before forced
   removal, and the other items in [Worktrees for parallel agents](WORKTREES.md).
 - Evolve the linear conversation/run lineage into a branch-aware session surface with explicit

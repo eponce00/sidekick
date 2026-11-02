@@ -43,6 +43,7 @@ interface ChromeTabInfo {
 }
 
 const CLOSE_WAIT_MS = 3_000
+const WINDOW_PICTURE_WIDTH = 1600
 const MODIFIER_BITS = { alt: 1, control: 2, ctrl: 2, meta: 4, shift: 8 } as const
 
 // Names as the browser tools write them, with what Chromium's input expects: key, code and Windows key code.
@@ -449,6 +450,30 @@ class ChromeSurface implements NativeBrowserSurface {
   }
 
   /** In CSS pixels, so a point on the picture is that same point for a click. */
+  /**
+   * The agent's own window, found by the title Windows gives it. Any doubt about which window that is
+   * refuses, since another could be the user's.
+   */
+  async captureWindow(): Promise<NativeBrowserSurfaceCapture> {
+    if (this.attached) throw new Error("A window of the user's isn't for the agent to capture.")
+    this.select(this.webContentsId)
+    const { desktopCapturer } = await import('electron')
+    const title = this.getTitle()
+    const windows = (
+      await desktopCapturer.getSources({
+        types: ['window'],
+        thumbnailSize: { width: WINDOW_PICTURE_WIDTH, height: WINDOW_PICTURE_WIDTH }
+      })
+    ).filter((each) => title && each.name.startsWith(`${title} - `) && /Chrome/.test(each.name))
+    if (windows.length !== 1) {
+      throw new Error('Could not tell which window is the one for this tab.')
+    }
+    const picture = windows[0].thumbnail
+    const { width, height } = picture.getSize()
+    if (!width || !height) throw new Error('That window has no picture to give.')
+    return { png: picture.toPNG(), width, height }
+  }
+
   async captureViewport(): Promise<NativeBrowserSurfaceCapture> {
     const metrics = await this.command<{
       cssVisualViewport?: { clientWidth: number; clientHeight: number }
