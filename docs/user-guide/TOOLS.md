@@ -121,9 +121,9 @@ its text.
   finish, SideKick shows you the steps. **Disconnect** in Settings removes the extension from Chrome,
   or the next time Chrome is open if it's closed. Developer mode stays on, in case you use it yourself.
 - **It goes where your Chrome goes,** plain HTTP sites included, though not to addresses on your own network without asking.
-- **It works in a separate Chrome window,** which opens without taking you off what you're doing. Say
+- **It works in one tab group named 🤖 SideKick, in your Chrome window,** behind the tab you're on, so you stay on what you're doing. If Chrome has no window open, it opens one. Say
   "continue in the tab I have open" and SideKick shows you which tab that is and asks you to share it. The
-  agent then picks up from what you've done there, and your tab stays where it is.
+  agent then picks up from what you've done there, and your tab joins the group. Drag it out whenever you like.
 - **It asks where it matters.** Turning this on covers ordinary sites. Sites for your email, money or account
   ask you once per chat, and you can choose to be asked about every site. Names can't catch everything,
   so a page could still try to steer the agent to another site you're signed in to. Sharing a tab of yours

@@ -309,13 +309,8 @@ describe('the line to the extension', () => {
   const manifest = JSON.parse(readFileSync(join(BUNDLED, 'manifest.json'), 'utf8')) as {
     key: string
     version: string
-    permissions: string[]
   }
   const origin = `chrome-extension://${chromeExtensionId(manifest.key)}`
-
-  it('can make no tab groups, which Chrome would keep among the saved ones for good', () => {
-    expect(manifest.permissions).not.toContain('tabGroups')
-  })
 
   async function line() {
     const folder = mkdtempSync(join(tmpdir(), 'sk-chrome-'))
