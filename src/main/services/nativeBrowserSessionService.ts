@@ -766,12 +766,20 @@ const BRING_CLEAR_SCRIPT = `function () {
   }
   let hit = top()
   if (hit && related(hit)) return undefined
-  shown.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
-  hit = top()
-  if (!hit || related(hit)) return undefined
+  // A bar can be anywhere, so somewhere else in the window may be clear of it.
+  for (const block of ['center', 'start', 'end']) {
+    shown.scrollIntoView({ block, inline: 'center', behavior: 'instant' })
+    hit = top()
+    if (!hit || related(hit)) return undefined
+  }
   const CONTROL = 'a, button, input, select, textarea, [role=button], [role=link]'
   const control = hit.closest?.(CONTROL)
-  if (!control || control.contains(this)) return undefined
+  if (control?.contains(this)) return undefined
+  // Not a control, so it may well be how this page draws the element. A click goes there, and the agent is told.
+  if (!control) {
+    const text = String(hit.getAttribute('aria-label') || hit.innerText || hit.tagName).replace(/\\s+/g, ' ').trim().slice(0, 60)
+    return { over: text }
+  }
   const nameOf = (element) =>
     String(element.getAttribute('aria-label') || element.innerText || element.value || '')
       .replace(/\\s+/g, ' ')
@@ -815,6 +823,13 @@ export interface BrowserEmulationOptions {
 export interface NativeBrowserRuntime {
   /** A browser with its own PDF viewer, which can't show SideKick's. */
   readonly showsPdfsItself?: boolean
+  /**
+   * A browser where a picture is slow enough to leave out of a step that doesn't need one. The built-in one
+   * keeps taking them: it's quick there, and until a tab has drawn a frame the first input to it is lost.
+   */
+  readonly picturesOnlyWhenAsked?: boolean
+  /** The user's own browser, which opens plain HTTP for them, and says so in its address bar. */
+  readonly opensPlainHttp?: boolean
   createSurface(options: {
     partition: string
     viewport: BrowserViewport
@@ -893,6 +908,9 @@ interface TabState {
   networkCursor: number
   lastPointer?: BrowserPointer
   urlAtActionStart?: string
+  /** Something the action did that the page's own changes don't show, as scrolling doesn't. */
+  actionMoved?: boolean
+  actionNote?: string
   lastViewportScreenshot?: {
     id: string
     imageWidth: number
@@ -988,6 +1006,8 @@ const SPARSE_TREE_NODES = 8
 const SPARSE_TREE_TEXT = 200
 const NEW_PAGE_QUIET_MS = 600
 const NEW_PAGE_WAIT_MS = 3_000
+const FIND_RETRIES = 3
+const FIND_RETRY_MS = 500
 const DRAG_STEPS = 8
 const DRAG_STEP_MS = 15
 const MAX_ZOOM = 4
@@ -1453,6 +1473,19 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
       for (const listener of this.failureListeners) listener(failure)
     })
     contents.debugger.on('message', (_event, method, params) => {
+      // A page's alert would freeze it, and everything waiting on it, until someone answered.
+      if (method === 'Page.javascriptDialogOpening') {
+        const dialog = (params ?? {}) as { type?: string; message?: string }
+        void contents.debugger
+          .sendCommand('Page.handleJavaScriptDialog', { accept: dialog.type === 'beforeunload' })
+          .catch(() => undefined)
+        for (const listener of this.consoleListeners) {
+          listener({
+            level: 'warning',
+            message: `The page showed a ${dialog.type ?? 'dialog'}, dismissed: ${String(dialog.message ?? '').slice(0, 300)}`
+          })
+        }
+      }
       for (const listener of this.debuggerListeners) {
         listener(method, (params ?? {}) as Record<string, unknown>)
       }
@@ -1564,6 +1597,33 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
 
   focus(): void {
     if (!this.contents.isDestroyed()) this.contents.focus()
+  }
+
+  /** By the debugger, as a drag and drop between a page's elements doesn't start from sendInputEvent. */
+  async drag(
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    button: 'left' | 'middle' | 'right'
+  ): Promise<void> {
+    const buttons = { left: 1, right: 2, middle: 4 }[button]
+    const mouse = (type: string, at: { x: number; y: number }, extra = {}): Promise<unknown> =>
+      this.sendDebuggerCommand('Input.dispatchMouseEvent', {
+        type,
+        ...at,
+        button,
+        buttons,
+        ...extra
+      })
+    await mouse('mouseMoved', from, { button: 'none', buttons: 0 })
+    await mouse('mousePressed', from, { clickCount: 1 })
+    for (let step = 1; step <= DRAG_STEPS; step++) {
+      await new Promise((resolve) => setTimeout(resolve, DRAG_STEP_MS))
+      await mouse('mouseMoved', {
+        x: from.x + ((to.x - from.x) * step) / DRAG_STEPS,
+        y: from.y + ((to.y - from.y) * step) / DRAG_STEPS
+      })
+    }
+    await mouse('mouseReleased', to, { buttons: 0, clickCount: 1 })
   }
 
   async insertText(text: string): Promise<void> {
@@ -2112,7 +2172,12 @@ export class NativeBrowserSessionService {
     this.openingReservations.add(reservation)
     try {
       signal?.throwIfAborted()
-      return await this.openReserved(input, signal, reservation, operation.look !== false)
+      return await this.openReserved(
+        input,
+        signal,
+        reservation,
+        operation.look !== false || !this.runtime.picturesOnlyWhenAsked
+      )
     } finally {
       reservation.abandoned = true
       if (this.openingReservations.has(reservation) && !reservation.creating) {
@@ -2317,6 +2382,7 @@ export class NativeBrowserSessionService {
   /** This computer, or a local-network origin the user approved. */
   private plainHttpAllowed(url: URL): boolean {
     if (loopbackHost(url.hostname)) return true
+    if (this.runtime.opensPlainHttp && !privateNetworkHost(url.hostname)) return true
     return Boolean(
       privateNetworkHost(url.hostname) &&
       this.options.networkPolicy?.approved(browserNetworkOrigin(url))
@@ -2805,7 +2871,7 @@ export class NativeBrowserSessionService {
     try {
       await abortable(previous, signal)
       this.assertCurrentSession(session)
-      session.lookAfterAction = operation.look !== false
+      session.lookAfterAction = operation.look !== false || !this.runtime.picturesOnlyWhenAsked
       session.quickAction = operation.quick === true
       return await body(signal)
     } finally {
@@ -3253,12 +3319,22 @@ export class NativeBrowserSessionService {
     let semanticSnapshot: string | undefined
     let semanticNodeCount: number | undefined
     if (options.includeSemanticSnapshot !== false) {
-      const semantic = await this.captureSemanticSnapshot(
+      let semantic = await this.captureSemanticSnapshot(
         tab,
         options.semanticDepth,
         signal,
         options.find
       )
+      // Finding nothing on a page that's still drawing itself isn't an answer.
+      for (let tries = 0; options.find && !semantic.count && tries < FIND_RETRIES; tries++) {
+        await delay(FIND_RETRY_MS, signal)
+        semantic = await this.captureSemanticSnapshot(
+          tab,
+          options.semanticDepth,
+          signal,
+          options.find
+        )
+      }
       semanticSnapshot = semantic.snapshot
       semanticNodeCount = semantic.count
     }
@@ -3426,6 +3502,8 @@ export class NativeBrowserSessionService {
     const wanted = find?.trim().toLowerCase() || undefined
     const shown = new Set<string>()
     let unreadFrames = 0
+    let framesOnPage = 0
+    let framesRead = 0
     const depth =
       requestedDepth === undefined ? undefined : boundedInteger(requestedDepth, 1, 30, 'depth')
     let allNodes: CDPAXNode[] = []
@@ -3459,6 +3537,7 @@ export class NativeBrowserSessionService {
       const name = valueOf(node.name)
       const ignored = node.ignored === true
       const isText = role === 'StaticText' || role === 'InlineTextBox'
+      if (!ignored && role === 'Iframe') framesOnPage++
       let ref = ''
       if (!ignored && node.backendDOMNodeId && !isText) {
         ref = `ax-${tab.refEpoch}-${node.backendDOMNodeId}`
@@ -3571,10 +3650,19 @@ export class NativeBrowserSessionService {
       }
       allNodes = inFrame.nodes ?? []
       nodes = new Map(allNodes.map((node) => [node.nodeId, node]))
+      framesRead++
       visitRoots(1)
     }
     if (emitted >= MAX_SEMANTIC_NODES || output.length >= MAX_SEMANTIC_CHARS) {
       output += '... semantic snapshot truncated ...\n'
+    }
+    // Chromium may not even list a frame from another site, so the page itself has to be counted.
+    const framesLeft = framesOnPage - framesRead - unreadFrames
+    if (framesLeft > 0) {
+      unreadFrames += framesLeft
+      if (wanted === undefined) {
+        output += `- note: ${framesLeft} frame(s) on this page can't be read, as they may be from another site. Use a screenshot and coordinates to click in them.\n`
+      }
     }
     if (wanted !== undefined && emitted === 0) {
       output = `- note: nothing on this page has ${quoteSnapshot(find ?? '')} in it.${unreadFrames ? ` ${unreadFrames} frame(s) can't be read, so it may be in one of those: use a screenshot and coordinates.` : ''}\n`
@@ -4207,13 +4295,16 @@ export class NativeBrowserSessionService {
       tab.surface.sendDebuggerCommand('DOM.scrollIntoViewIfNeeded', { backendNodeId }),
       signal
     ).catch(() => undefined)
-    const covering = await this.callOnNode<string | undefined>(
+    const covering = await this.callOnNode<string | { over?: string } | undefined>(
       tab,
       backendNodeId,
       BRING_CLEAR_SCRIPT,
       [],
       signal
     ).catch(() => undefined)
+    if (covering && typeof covering === 'object' && covering.over) {
+      tab.actionNote = `Something else was on top of the element at that point, "${covering.over}", so the click went to it. Look at the page to see whether it did what you wanted.`
+    }
     if (typeof covering === 'string') {
       throw new Error(
         `Browser element is covered by ${covering}, so nothing was pressed. Close it or use another way to the element.`
@@ -4331,6 +4422,7 @@ export class NativeBrowserSessionService {
         this.options.policy || byPosition ? await this.controlFacts(tab, target, signal) : undefined
       if (this.options.policy && control) {
         await this.options.policy.beforePress(control.name, tab.surface.getURL(), signal)
+        await this.checkWhatsAtThePoint(tab, target, control.name, signal)
       }
       const startedAt = this.now()
       this.setPointer(tab, target, 'click', startedAt)
@@ -4365,7 +4457,7 @@ export class NativeBrowserSessionService {
           signal
         )
       })
-      return { ...clicked, ...pressed }
+      return { ...clicked, ...pressed, ...(tab.actionNote ? { note: tab.actionNote } : {}) }
     })
   }
 
@@ -4392,6 +4484,43 @@ export class NativeBrowserSessionService {
   }
 
   /** The file input itself, or the one inside a drop zone or styled wrapper that was pointed at. */
+  /** A field's label stands for the field, which is what a search of the page's words often finds first. */
+  private async fieldBehindLabel<T extends { backendNodeId?: number; x: number; y: number }>(
+    tab: TabState,
+    target: T,
+    signal?: AbortSignal
+  ): Promise<T> {
+    if (!target.backendNodeId) return target
+    const objectId = await this.resolvedNodeObject(tab, target.backendNodeId, signal)
+    const found = await abortable(
+      tab.surface.sendDebuggerCommand<{ result?: { objectId?: string } }>(
+        'Runtime.callFunctionOn',
+        {
+          objectId,
+          functionDeclaration:
+            "function() { const label = this.closest?.('label'); return !this.labels && label?.control ? label.control : null }"
+        }
+      ),
+      signal
+    ).catch(() => null)
+    if (!found?.result?.objectId) return target
+    const described = await abortable(
+      tab.surface.sendDebuggerCommand<{ node?: { backendNodeId?: number } }>('DOM.describeNode', {
+        objectId: found.result.objectId
+      }),
+      signal
+    ).catch(() => null)
+    const backendNodeId = described?.node?.backendNodeId
+    if (!backendNodeId) return target
+    const rect = await this.elementRect(tab, backendNodeId, signal)
+    return {
+      ...target,
+      backendNodeId,
+      x: rect.x + rect.width / 2,
+      y: rect.y + rect.height / 2
+    }
+  }
+
   private async fileInputOf(
     tab: TabState,
     backendNodeId: number,
@@ -4506,6 +4635,7 @@ export class NativeBrowserSessionService {
       if (this.options.policy) {
         const control = await this.controlFacts(tab, target, signal)
         await this.options.policy.beforePress(control.name, tab.surface.getURL(), signal)
+        await this.checkWhatsAtThePoint(tab, target, control.name, signal)
       }
       // Press-and-hold is useful for ordinary canvas, map, slider, and test UI.
       // It is not an automated CAPTCHA solver; a detected anti-bot checkpoint
@@ -4587,6 +4717,25 @@ export class NativeBrowserSessionService {
    * What a step is about to touch, for the rules on it. A failure is the step's failure: going ahead without
    * knowing could be typing into a password field.
    */
+  /**
+   * The rules go by the name of what was asked for, and a click lands on whatever is at that spot. A page can
+   * put anything over a harmless element, so what's there has to pass as well.
+   */
+  private async checkWhatsAtThePoint(
+    tab: TabState,
+    target: { backendNodeId?: number; x: number; y: number },
+    asked: string,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (!target.backendNodeId) return
+    const there = await this.controlFacts(tab, { x: target.x, y: target.y }, signal).catch(
+      () => null
+    )
+    if (there?.name && there.name !== asked) {
+      await this.options.policy?.beforePress(there.name, tab.surface.getURL(), signal)
+    }
+  }
+
   private async controlFacts(
     tab: TabState,
     target: { backendNodeId?: number; x: number; y: number } | null,
@@ -4639,6 +4788,8 @@ export class NativeBrowserSessionService {
       signal
     ).catch(() => undefined)
     tab.urlAtActionStart = tab.surface.getURL()
+    tab.actionMoved = false
+    tab.actionNote = undefined
     tab.settleMark =
       typeof mark?.token === 'string' && typeof mark.id === 'string'
         ? { token: mark.token, id: mark.id, at }
@@ -4656,9 +4807,37 @@ export class NativeBrowserSessionService {
       this.guardRepeatedAction(tab, fingerprint)
       await this.ensureBaselineHash(session, tab, signal)
       await this.assertAutomatedMutationAllowed(tab, signal)
-      const target = await this.resolveTarget(tab, input.target, true, signal)
+      const target = await this.fieldBehindLabel(
+        tab,
+        await this.resolveTarget(tab, input.target, true, signal),
+        signal
+      )
       if (!target.backendNodeId) {
         throw new Error('Browser text entry requires a semantic or selector-backed field target')
+      }
+      // A native date or time box takes no typing, only a value in its own format.
+      const inspected = await this.inspectFormControl(tab, target.backendNodeId, signal).catch(
+        () => null
+      )
+      const native = nativeDateFormat(inspected?.inputType)
+      if (inspected && native) {
+        if (!native.pattern.test(input.text)) {
+          throw new Error(
+            `Unsupported value: a ${inspected.inputType} field takes ${native.example}`
+          )
+        }
+        const started = this.now()
+        await this.setNativeInputValue(tab, target.backendNodeId, input.text, signal)
+        return this.finishAction(
+          session,
+          tab,
+          'type',
+          target.mode,
+          target.fallbackUsed,
+          fingerprint,
+          started,
+          signal
+        )
       }
       if (this.options.policy) {
         const field = await this.controlFacts(tab, target, signal)
@@ -5183,7 +5362,11 @@ export class NativeBrowserSessionService {
         await this.assertAutomatedMutationAllowed(tab, signal)
         let target: ElementPoint | undefined
         try {
-          target = await this.resolveTarget(tab, field.target, false, signal)
+          target = await this.fieldBehindLabel(
+            tab,
+            await this.resolveTarget(tab, field.target, false, signal),
+            signal
+          )
           if (this.options.policy) {
             this.options.policy.beforeTyping(await this.controlFacts(tab, target, signal))
           }
@@ -6444,6 +6627,9 @@ export class NativeBrowserSessionService {
           signal
         )
       }
+      tab.actionMoved =
+        scrollEffect.before.x !== scrollEffect.after.x ||
+        scrollEffect.before.y !== scrollEffect.after.y
       const result = await this.finishAction(
         session,
         tab,
@@ -6792,7 +6978,7 @@ export class NativeBrowserSessionService {
       signal
     )
     // Without a picture to compare, what the page itself did says whether the action had an effect.
-    const moved = leftThePage || quiescence.mutationRevision > 0
+    const moved = leftThePage || tab.actionMoved === true || quiescence.mutationRevision > 0
     if (!look && !moved && !session.quickAction) {
       // Nothing to show for it, which is when the agent most needs to see what's there.
       const screenshot = await this.captureAndStore(

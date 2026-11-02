@@ -1918,6 +1918,7 @@ export function registerBrowserToolHandlers(
         return errorResult(title, error, context)
       }
       const result = await run(chrome.manager, input)
+      void chrome.service.refreshPreview(scope)
       if (name === 'browser_close') chrome.service.inChrome.delete(scope)
       return result
     })

@@ -946,7 +946,7 @@ const computer = definition(
 
 const browserOpen = definition(
   'browser_open',
-  "Open a URL in SideKick's bundled isolated Chromium browser, or reuse the current conversation browser. No extension, external browser, or MCP server is required. Returns a fresh semantic page snapshot and visual screenshot.",
+  "Open a URL in SideKick's bundled isolated Chromium browser, or reuse the current conversation browser. No extension, external browser, or MCP server is required. Returns a fresh semantic page snapshot.",
   {
     type: 'object',
     required: ['url'],
@@ -1392,7 +1392,7 @@ const browserWait = definition(
 
 const browserNavigate = definition(
   'browser_navigate',
-  'Navigate the current tab, go back, go forward, or reload, then return a fresh visual and semantic observation.',
+  'Navigate the current tab, go back, go forward, or reload, then return a fresh semantic observation.',
   {
     type: 'object',
     required: ['action'],

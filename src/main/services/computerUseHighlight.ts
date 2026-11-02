@@ -471,11 +471,14 @@ export class ComputerUseHighlight {
     if (!savedPictureBounds()) window.setBounds(pictureBounds(this.pictureAspect))
   }
 
+  /** Whether anyone would see a new picture now, so that one isn't taken for nothing. */
+  wantsPicture(): boolean {
+    return this.mode === 'pill' && !this.pictureClosed && BrowserWindow.getFocusedWindow() === null
+  }
+
   /** Shows it where the user last left it, unless they closed it or are in SideKick and can see for themselves. */
   private async syncPicture(target: ComputerHighlightTarget): Promise<void> {
-    const wanted =
-      this.mode === 'pill' && !this.pictureClosed && BrowserWindow.getFocusedWindow() === null
-    if (!wanted) {
+    if (!this.wantsPicture()) {
       if (this.picture && !this.picture.isDestroyed() && this.picture.isVisible()) {
         this.picture.hide()
       }

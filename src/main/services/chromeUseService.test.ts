@@ -26,6 +26,7 @@ function harness(url = 'https://shop.example/page', answer = true, everySite = t
     show: vi.fn(),
     hide: vi.fn(),
     preview: vi.fn(),
+    wantsPreview: () => false,
     replyEnded: vi.fn(),
     armStop: vi.fn((_stop: () => void) => disarm),
     notify: vi.fn(),
@@ -171,7 +172,8 @@ describe('scripts that only look', () => {
     "[...document.querySelectorAll('a[href]')].map((a) => a.href)",
     "(() => { const a = document.querySelector('a'); return { href: a?.getAttribute('href') } })()",
     'document.links[0].href',
-    "document.body['innerText'].length"
+    "document.body['innerText'].length",
+    '(() => { const b = document.body.getBoundingClientRect(); return [b.x, b.y] })()'
   ])('leaves %s to the browser’s own check', (script) => {
     expect(readsLikeALook(script)).toBe(true)
   })

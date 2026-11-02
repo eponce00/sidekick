@@ -31,6 +31,9 @@ async function send(name, files) {
 }
 </script>`
 
+// Records a result for a check, as a page's own script would send one.
+const GOT = `<script>const got = (task, value) => fetch('/got', { method: 'POST', body: JSON.stringify({ task, value }) })</script>`
+
 const PAGES = {
   '/': page('Browser bench', '<p>Pages for trying the browser tools.</p>'),
   '/u/plain': page(
@@ -96,12 +99,103 @@ const PAGES = {
     `<ol id="list"></ol><script>
     let n = 0
     const more = () => { for (let i = 0; i < 20; i++) { const li = document.createElement('li'); li.textContent = 'Item ' + ++n + (n === 137 ? ' secret word is walnut' : ''); list.append(li) } }
-    more(); addEventListener('scroll', () => { if (innerHeight + scrollY > document.body.scrollHeight - 200 && n < 200) more() })
+    more(); more(); more(); addEventListener('scroll', () => { if (innerHeight + scrollY > document.body.scrollHeight - 200 && n < 200) more() })
   </script>`
   ),
   '/h/slow': page(
     'Slow page',
     `<p id="s">Loading the report</p><script>setTimeout(() => { s.textContent = 'The report number is 4417' }, 6000)</script>`
+  ),
+  // What catches out automation, for the checks in checks-tricky.cjs.
+  '/t/trusted': page(
+    'Only a real click',
+    `<button onclick="if (event.isTrusted && event.detail > 0) got('trusted', 'real')">Press me</button>${GOT}`
+  ),
+  '/t/covered': page(
+    'Covered button',
+    `<div style="position:relative;width:200px;height:60px"><button id="green" style="width:200px;height:60px" onclick="got('covered', 'green'); blue.hidden = false">Green</button><button id="blue" hidden style="position:absolute;inset:0;width:200px;height:60px" onclick="got('covered', 'blue')">Blue</button></div>${GOT}`
+  ),
+  '/t/overlay-text': page(
+    'Text on top of a button',
+    `<div style="position:relative;width:240px;height:60px"><button style="width:240px;height:60px" onclick="got('overlay', 'button')">Details</button><div onclick="got('overlay', 'cover')" style="position:absolute;inset:0;background:#fffc">Buy now</div></div>${GOT}`
+  ),
+  '/t/sticky': page(
+    'Under a sticky footer',
+    `<div style="height:2400px"></div><button onclick="got('sticky', 'pressed')">Far down</button><div style="height:2400px"></div><div style="position:fixed;bottom:0;left:0;right:0;height:50%;background:#ddd"><a href="/leak?from=sticky">Sticky footer link</a></div>${GOT}`
+  ),
+  '/t/scrollbox': page(
+    'Button in a scrolling box',
+    `<div style="height:150px;overflow:auto;border:1px solid"><div style="height:1200px"></div><button onclick="got('scrollbox', 'pressed')">Inside the box</button></div>${GOT}`
+  ),
+  '/t/moving': page(
+    'Moving button',
+    `<style>@keyframes go { from { transform: translateX(0) } to { transform: translateX(400px) } } #m { animation: go 2s ease-in-out forwards }</style><button id="m" onclick="got('moving', 'pressed')">Moving target</button>${GOT}`
+  ),
+  '/t/late': page(
+    'Late button',
+    `<script>setTimeout(() => { const b = document.createElement('button'); b.textContent = 'Arrived late'; b.onclick = () => got('late', 'pressed'); document.body.append(b) }, 3000)</script>${GOT}`
+  ),
+  '/t/rename': page(
+    'Button renamed by a box',
+    `<label>New name <input id="n"></label> <button id="b" onclick="b.textContent = n.value; got('rename', n.value)">Old name</button>${GOT}`
+  ),
+  '/t/swap': page(
+    'Replaced as the pointer arrives',
+    `<div id="w"><a href="#" id="a">Count me</a></div><span id="c">0</span><script>
+    let n = 0
+    const fresh = () => { w.innerHTML = '<a href="#" id="a">Count me</a>'; a.onmouseenter = () => { if (!a.dataset.done) { const old = a; w.innerHTML = '<a href="#" id="a" data-done="1">Count me</a>'; a.onclick = (e) => { e.preventDefault(); n++; got('swap', String(n)) } } } }
+    fresh()
+  </script>${GOT}`
+  ),
+  '/t/open': page('Opens a new tab', `<a href="/h/slow" target="_blank">Open the report</a>${GOT}`),
+  '/t/dialogs': page(
+    'Dialogs',
+    `<button onclick="alert('hello'); got('dialogs', 'alert')">Alert</button><button onclick="got('dialogs', 'confirm ' + confirm('sure?'))">Confirm</button><button onclick="got('dialogs', 'prompt ' + prompt('name?'))">Prompt</button>${GOT}`
+  ),
+  '/t/nav-menu': page(
+    'Menu that goes somewhere',
+    `<label>Go to <select onchange="location.href = this.value"><option value="/t/nav-menu">Here</option><option value="/?went=1">Home</option></select></label>`
+  ),
+  '/t/spa': page(
+    'Changes address, then page',
+    `<a href="#" id="go" onclick="event.preventDefault(); history.pushState({}, '', '/t/spa-next'); setTimeout(() => { document.body.innerHTML = '<h1>The next page</h1>' }, 400)">Next page</a><p>The first page</p>`
+  ),
+  '/t/many': page(
+    'Thousands of elements',
+    `<ul>${Array.from({ length: 4000 }, (_, i) => `<li><a href="#${i}">Row ${i}</a></li>`).join('')}</ul><button onclick="got('many', 'pressed')">The last button</button>${GOT}`
+  ),
+  '/t/form': page(
+    'A whole form',
+    `<form onsubmit="event.preventDefault(); got('form', JSON.stringify(Object.fromEntries(new FormData(this))))"><label>Name <input name="name"></label><label>Size <select name="size"><option>Small</option><option>Large</option></select></label><label><input type="checkbox" name="news" value="yes"> News</label><label><input type="radio" name="pay" value="card"> Card</label><label><input type="radio" name="pay" value="cash"> Cash</label><button>Save the form</button></form>${GOT}`
+  ),
+  '/t/hidden-input': page(
+    'Hidden radio, visible label',
+    `<style>.h { position: absolute; width: 0; height: 0; opacity: 0 }</style><label><input class="h" type="radio" name="c" value="red" onchange="got('hidden-input', this.value)"><span style="padding:8px;border:1px solid">Red paint</span></label>${GOT}`
+  ),
+  '/t/closed-shadow': page(
+    'Closed shadow root',
+    `<div id="host"></div><script>
+    const r = host.attachShadow({ mode: 'closed' }); r.innerHTML = '<button id="in">Inside closed</button>'
+    r.getElementById('in').onclick = () => got('closed', 'pressed')
+  </script>${GOT}`
+  ),
+  '/t/canvas': page(
+    'Canvas',
+    `<canvas id="c" width="500" height="300" style="border:1px solid;display:block"></canvas><script>
+    const box = () => c.getBoundingClientRect()
+    let start = null
+    c.onmousedown = (e) => { start = [Math.round(e.clientX - box().x), Math.round(e.clientY - box().y)] }
+    c.onmouseup = (e) => got('canvas', JSON.stringify({ from: start, to: [Math.round(e.clientX - box().x), Math.round(e.clientY - box().y)] }))
+    c.getContext('2d').fillRect(120, 80, 40, 40)
+  </script>${GOT}`
+  ),
+  '/t/frame-far': page(
+    'Frame on another address',
+    `<iframe src="http://localhost:${PORT}/h/framed" width="500" height="120" title="Form"></iframe>`
+  ),
+  '/t/bad-link': page(
+    'A link to nowhere',
+    `<a href="https://nothing-here.invalid/">A dead link</a>`
   ),
   '/x/hidden': page(
     'Recipe: pancakes',

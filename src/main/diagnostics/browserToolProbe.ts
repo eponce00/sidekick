@@ -1,10 +1,15 @@
 // Development only: runs the Chrome tools with no model in the way, for scripts/browser-bench/probe.cjs, so what a
 // tool does can be measured apart from what a model chose to ask of it.
 import { app } from 'electron'
+import { mkdirSync } from 'fs'
 import { createServer } from 'http'
 import { join } from 'path'
+import {
+  AgentBrowserSessionManager,
+  registerBrowserToolHandlers
+} from '../services/agentBrowserToolHandlers'
 import { AgentToolHandlerRegistry } from '../services/agentToolHandlerRegistry'
-import { registerBrowserToolHandlers } from '../services/agentBrowserToolHandlers'
+import { NativeBrowserSessionService } from '../services/nativeBrowserSessionService'
 import { ToolOutputStore } from '../services/toolOutputStore'
 
 const CALL_LIMIT_MS = 120_000
@@ -22,6 +27,21 @@ export async function startBrowserToolProbe(port: number): Promise<void> {
       }
     }
   ).deps.bridge
+  // Run unattended: nothing here may wait on a person. Only the bench's own site, on this computer, gets a yes.
+  const answers = (
+    chrome.service as unknown as {
+      deps: Record<string, (...args: never[]) => Promise<boolean>>
+    }
+  ).deps
+  const onBenchSite = (address: unknown): boolean =>
+    /^https?:\/\/(127\.0\.0\.1:|the-internet\.herokuapp\.com|uitestingplayground\.com)/.test(
+      String(address)
+    )
+  answers.confirmSite = (async (origin: string) => onBenchSite(origin)) as never
+  answers.confirmSharedTab = (async () => false) as never
+  answers.confirmPress = (async (_name: string, origin: string) => onBenchSite(origin)) as never
+  answers.confirmDownload = (async (url: string) => onBenchSite(url)) as never
+  answers.confirmUpload = (async (_files: string[], origin: string) => onBenchSite(origin)) as never
   const send = bridge.send.bind(bridge)
   bridge.send = (op, args, signal) => {
     const at = Date.now()
@@ -35,9 +55,14 @@ export async function startBrowserToolProbe(port: number): Promise<void> {
     return answer
   }
   const registry = new AgentToolHandlerRegistry()
-  const outputs = new ToolOutputStore(join(app.getPath('temp'), 'sidekick-browser-probe'))
-  // Only Chrome is under test here: every call opens with browser "chrome".
-  registerBrowserToolHandlers(registry, chrome.manager, outputs, { chrome })
+  const root = join(app.getPath('temp'), 'sidekick-browser-probe')
+  const files = join(root, 'files')
+  mkdirSync(files, { recursive: true })
+  const outputs = new ToolOutputStore(join(root, 'outputs'))
+  const builtIn = new AgentBrowserSessionManager(
+    new NativeBrowserSessionService({ artifactRoot: join(root, 'artifacts'), maxTotalSessions: 6 })
+  )
+  registerBrowserToolHandlers(registry, builtIn, outputs, { chrome })
   const server = createServer((request, response) => {
     const chunks: Buffer[] = []
     request.on('data', (chunk) => chunks.push(chunk))
@@ -56,6 +81,7 @@ export async function startBrowserToolProbe(port: number): Promise<void> {
         context: {
           runId: `probe-${chat ?? 'chat'}`,
           conversationId: `probe-${chat ?? 'chat'}`,
+          workspaceRoot: files,
           signal: AbortSignal.timeout(CALL_LIMIT_MS)
         }
       })
