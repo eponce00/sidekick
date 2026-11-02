@@ -1,5 +1,5 @@
 import { useId, useState } from 'react'
-import { ArrowLeft, ChevronRight, GitBranch, MessageSquare } from 'lucide-react'
+import { ArrowLeft, ChevronRight, GitBranch } from 'lucide-react'
 import {
   sessionIsActive,
   type SessionFamilyMember,
@@ -10,7 +10,6 @@ import { worktreeBranchLabel, type ManagedWorktreeSummary } from '../../../share
 import { memberName } from '../hooks/useSessionFamily'
 import { sessionStateLabel } from '../utils/sessionLabels'
 import { SessionStateDot } from './SessionChip'
-import { MessageMarkdown } from './MessageMarkdown'
 import { StopGlyph } from './StopGlyph'
 import './ChatFamily.css'
 
@@ -84,46 +83,6 @@ export function WorkerChatHeader({
         )}
       </span>
     </header>
-  )
-}
-
-/** A worker's first message, written by its manager: a task, not something the user said. */
-export function BriefCard({
-  brief,
-  managerTitle,
-  workspaceRoot
-}: {
-  brief: SessionMessage
-  managerTitle: string
-  workspaceRoot?: string | null
-}): React.JSX.Element {
-  const [expanded, setExpanded] = useState(true)
-  const bodyId = useId()
-  return (
-    <section className="family-brief" aria-label={`Brief from ${managerTitle}`}>
-      <button
-        type="button"
-        className="family-brief-toggle"
-        aria-expanded={expanded}
-        aria-controls={expanded ? bodyId : undefined}
-        onClick={() => setExpanded((current) => !current)}
-      >
-        <MessageSquare size={14} aria-hidden="true" />
-        <span>
-          Brief from <strong>{managerTitle}</strong>
-        </span>
-        <ChevronRight
-          size={14}
-          className={`family-chevron${expanded ? ' is-expanded' : ''}`}
-          aria-hidden="true"
-        />
-      </button>
-      {expanded && (
-        <div className="family-brief-body message-content" id={bodyId}>
-          <MessageMarkdown content={brief.body} workspaceRoot={workspaceRoot} />
-        </div>
-      )}
-    </section>
   )
 }
 

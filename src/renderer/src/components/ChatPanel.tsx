@@ -25,7 +25,8 @@ import { sessionTimeline, workerBriefIds, type SessionTimelineRow } from '../uti
 import { latestRunTodos } from '../utils/runTodos'
 import { FamilyStrip, ReceivedMessagesRow, StartedChatsRow } from './ManagerChatRows'
 import { SessionTodoList } from './SessionTodoList'
-import { BriefCard, SessionMessageRow, WorkerChatHeader } from './WorkerChatParts'
+import { AgentTaskMessage } from './AgentTaskMessage'
+import { SessionMessageRow, WorkerChatHeader } from './WorkerChatParts'
 import { SidekickPeek } from './SidekickPeek'
 import { workerWorkplace } from '../utils/sessionLabels'
 import { WorkerChatContext } from './sessionChatContext'
@@ -1738,10 +1739,10 @@ function ChatPanel({
         return <ReceivedMessagesRow key={row.key} messages={row.messages} {...familyContext} />
       case 'brief':
         return (
-          <BriefCard
+          <AgentTaskMessage
             key={row.key}
-            brief={row.message}
-            managerTitle={chatFamily?.manager.title ?? 'its manager'}
+            from={chatFamily?.manager.title ?? 'its manager'}
+            content={row.message.body}
             workspaceRoot={filesFolder}
           />
         )
