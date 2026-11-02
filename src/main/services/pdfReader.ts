@@ -200,6 +200,42 @@ function pageHeading(reading: PageReading, totalPages: number, imageBudget: numb
   return `--- Page ${reading.number} of ${totalPages}${notes.length ? ` (${notes.join('; ')})` : ''} ---`
 }
 
+/** A whole PDF's words, page by page, as a browser page's text is read. Pictures have no words. */
+export async function readPdfWords(
+  bytes: Uint8Array,
+  signal?: AbortSignal
+): Promise<{ totalPages: number; text: string }> {
+  const runtime = await loadPdfRuntime()
+  const task = runtime.pdfjs.getDocument({
+    data: new Uint8Array(bytes),
+    useSystemFonts: false,
+    ...runtime.dataOptions
+  })
+  try {
+    let document: import('pdfjs-dist').PDFDocumentProxy
+    try {
+      document = await task.promise
+    } catch (error) {
+      if ((error as { name?: string }).name === 'PasswordException')
+        throw new PdfReadError('password', 'This PDF is password protected.')
+      throw new PdfReadError('invalid', 'This file could not be opened as a PDF.')
+    }
+    const parts: string[] = []
+    for (let number = 1; number <= document.numPages; number++) {
+      if (signal?.aborted) throw new DOMException('PDF read cancelled', 'AbortError')
+      const content = await (await document.getPage(number)).getTextContent()
+      let words = ''
+      for (const item of content.items) {
+        if ('str' in item) words += item.str + (item.hasEOL ? '\n' : '')
+      }
+      parts.push(`--- Page ${number} of ${document.numPages} ---\n${words.trim()}`)
+    }
+    return { totalPages: document.numPages, text: parts.join('\n\n') }
+  } finally {
+    await task.destroy().catch(() => undefined)
+  }
+}
+
 /**
  * Read a PDF the way the model providers' own PDF support does: each page's text, and an image of
  * the pages whose text alone misses something. A scanned page's text comes from the computer's own

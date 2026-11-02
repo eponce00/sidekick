@@ -331,6 +331,8 @@ export function chromeBrowser(): {
   manager ??= new AgentBrowserSessionManager(
     new NativeBrowserSessionService({
       artifactRoot: join(app.getPath('userData'), 'chrome-browser-artifacts'),
+      // Comparing a few sites at once is ordinary here, and these are tabs in the user's own browser.
+      maxTabsPerSession: 12,
       pdfOutputRoot: join(app.getPath('userData'), 'chrome-browser-pdfs'),
       networkPolicy: browserNetworkApprovals,
       certificatePolicy: browserCertificateApprovals,

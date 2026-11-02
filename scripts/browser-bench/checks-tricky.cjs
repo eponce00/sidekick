@@ -511,6 +511,70 @@ module.exports = {
     if (!look.pictures.length) return 'No picture from a look'
     return ''
   },
+  'print-button-leaves-the-page-working': async (page) => {
+    await clear()
+    await page.open(`${BENCH}/t/print`)
+    await page.click(await page.ref('Print this page', /button/))
+    await page.click(await page.ref('Then this', /button/))
+    const seen = await results('print')
+    return seen.includes('still works') ? '' : `The page stopped responding: ${seen}`
+  },
+  'print-button-in-another-sites-frame': async (page) => {
+    await clear()
+    await page.open(`${BENCH}/t/print-frame`)
+    const box = await page.page(
+      "[document.querySelector('iframe').getBoundingClientRect().x, document.querySelector('iframe').getBoundingClientRect().y]"
+    )
+    for (const across of [40, 150]) {
+      const look = await page.step('browser_observe', {})
+      const picture = look.full.screenshot
+      const scale = picture.width / look.full.viewport.width
+      await page.step('browser_click', {
+        x: (box[0] + across) * scale,
+        y: (box[1] + 92) * scale,
+        screenshot_id: picture.id
+      })
+      await wait(500)
+    }
+    const seen = await results('print')
+    return seen.includes('after print') && seen.includes('still works')
+      ? ''
+      : `Printing held the frame up, or the press missed: ${seen}`
+  },
+  'box-by-the-words-it-shows': async (page) => {
+    await clear()
+    await page.open(`${BENCH}/t/placeholder`)
+    await page.step('browser_fill_form', {
+      fields: [{ kind: 'textbox', text: 'Enter max', value: '600000' }]
+    })
+    return (await results('placeholder')).includes('600000') ? '' : 'The box was not filled'
+  },
+  'pdf-read-search-and-scroll': async (page) => {
+    await page.open('https://www.irs.gov/pub/irs-pdf/i1040gi.pdf')
+    const words = (await page.step('browser_observe', { text: true })).full
+    if (!(words.pages > 50) || !/Page 1 of/.test(words.text)) {
+      return `The PDF's words did not come: ${JSON.stringify(words).slice(0, 200)}`
+    }
+    const found = (await page.step('browser_observe', { text: true, find: 'Filing Requirements' }))
+      .full
+    if (!(found.found > 0)) return 'Searching the PDF found nothing'
+    const shot = async () =>
+      require('fs')
+        .readFileSync((await page.step('browser_screenshot', {})).pictures[0])
+        .toString('base64')
+    const before = await shot()
+    const scrolled = await page.step('browser_scroll', { delta_y: 1500 })
+    if (scrolled.full?.effect?.changed === false) return 'Scrolling the PDF did nothing'
+    await wait(1000)
+    return before !== (await shot()) ? '' : 'The PDF looks the same after scrolling'
+  },
+  'wikipedia-search-the-words': async (page) => {
+    await page.open('https://en.wikipedia.org/wiki/Reno,_Nevada')
+    const found = await page.step('browser_observe', { text: true, find: 'Biggest Little City' })
+    return found.full.found > 0 && /Biggest Little City/i.test(found.full.text)
+      ? ''
+      : `Nothing around the phrase: ${JSON.stringify(found.full).slice(0, 200)}`
+  },
   'wikipedia-back-and-forward': async (page) => {
     await page.open('https://en.wikipedia.org/wiki/Reno,_Nevada')
     await page.click(await page.ref('Sparks, Nevada', /link/))

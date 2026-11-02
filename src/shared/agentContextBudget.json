@@ -2,7 +2,7 @@
   "conversation": {
     "systemPromptBytes": 16693,
     "toolCount": 61,
-    "toolJsonBytes": 50672,
+    "toolJsonBytes": 50665,
     "toolBytes": {
       "apply_patch": 1850,
       "ask_user": 1358,
@@ -19,7 +19,7 @@
       "browser_list_webmcp_tools": 575,
       "browser_navigate": 379,
       "browser_network": 271,
-      "browser_observe": 1026,
+      "browser_observe": 1019,
       "browser_open": 841,
       "browser_press": 489,
       "browser_request_human": 926,

@@ -111,6 +111,19 @@ const PAGES = {
     'Only a real click',
     `<button onclick="if (event.isTrusted && event.detail > 0) got('trusted', 'real')">Press me</button>${GOT}`
   ),
+  '/t/print': page(
+    'Print button',
+    `<button onclick="got('print', 'before print'); print(); got('print', 'after print')">Print this page</button>
+     <button onclick="got('print', 'still works')">Then this</button>${GOT}`
+  ),
+  '/t/print-frame': page(
+    'Print button in a frame on another address',
+    `<iframe src="http://localhost:${PORT}/t/print" width="500" height="200" title="Form"></iframe>`
+  ),
+  '/t/placeholder': page(
+    'Box named one thing, showing another',
+    `<input aria-label="Maximum price" placeholder="Enter max" oninput="got('placeholder', this.value)">${GOT}`
+  ),
   '/t/covered': page(
     'Covered button',
     `<div style="position:relative;width:200px;height:60px"><button id="green" style="width:200px;height:60px" onclick="got('covered', 'green'); blue.hidden = false">Green</button><button id="blue" hidden style="position:absolute;inset:0;width:200px;height:60px" onclick="got('covered', 'blue')">Blue</button></div>${GOT}`

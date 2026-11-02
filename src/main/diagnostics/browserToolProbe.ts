@@ -34,9 +34,7 @@ export async function startBrowserToolProbe(port: number): Promise<void> {
     }
   ).deps
   const onBenchSite = (address: unknown): boolean =>
-    /^https?:\/\/(127\.0\.0\.1:|the-internet\.herokuapp\.com|uitestingplayground\.com)/.test(
-      String(address)
-    )
+    /^https?:\/\/(127\.0\.0\.1:|the-internet\.herokuapp\.com|httpbin\.org)/.test(String(address))
   answers.confirmSite = (async (origin: string) => onBenchSite(origin)) as never
   answers.confirmSharedTab = (async () => false) as never
   answers.confirmPress = (async (_name: string, origin: string) => onBenchSite(origin)) as never

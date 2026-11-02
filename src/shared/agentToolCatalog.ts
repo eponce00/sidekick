@@ -1010,9 +1010,10 @@ const browserObserve = definition(
       },
       text: {
         type: 'boolean',
-        description: "Read the page's text instead, 20,000 characters at a time."
+        description:
+          "Read the page's text instead, 20,000 characters at a time; with find, only the parts around that word."
       },
-      text_from: { type: 'number', description: 'With text: where to carry on from.' },
+      text_from: { type: 'number' },
       full_page: {
         type: 'boolean',
         description: 'Capture the whole page.'

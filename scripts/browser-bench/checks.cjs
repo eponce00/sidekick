@@ -170,6 +170,23 @@ module.exports = {
       ? `The dates did not take: ${chosen.data.semanticSnapshot.slice(0, 200)}`
       : ''
   },
+  'walmart-product-from-results': async (page) => {
+    await page.open('https://www.walmart.com/search?q=intel+arc+pro+b60')
+    const blocked = await humanCheck(page)
+    if (blocked) return blocked
+    const links = await page.step('browser_observe', {
+      find: 'Intel Arc Pro B60',
+      include_screenshot: false
+    })
+    const link = /- link [^\n]*\[ref=([^\]\s]+)/.exec(links.data.semanticSnapshot)?.[1]
+    if (!link) return 'No product link listed'
+    const clicked = await page.click(link)
+    await new Promise((done) => setTimeout(done, 3000))
+    const now = await page.step('browser_observe', { include_screenshot: false })
+    return /\/ip\//.test(now.full.tab.url)
+      ? ''
+      : `Still on ${now.full.tab.url}. ${JSON.stringify(clicked?.full?.note ?? '').slice(0, 160)}`
+  },
   'tesla-configurator': async (page) => {
     await page.open('https://www.tesla.com/model3/design')
     const blocked = await humanCheck(page)
