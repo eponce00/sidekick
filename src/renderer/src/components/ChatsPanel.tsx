@@ -28,6 +28,10 @@ interface ChatsPanelProps {
   onMessageChat: (conversationId: string) => void
   onStop: (conversationId: string) => void | Promise<void>
   onDetach: (conversationId: string) => void | Promise<void>
+  onArchive?: (conversationId: string) => void | Promise<void>
+  onResume?: (conversationId: string) => void | Promise<void>
+  /** Chats whose last run was cut short and can pick up where it stopped. */
+  resumable?: ReadonlySet<string>
 }
 
 function worktreeOf(
@@ -76,14 +80,20 @@ function WorkerCard({
   manager,
   onOpenChat,
   onMessageChat,
-  onStop
+  onStop,
+  onArchive,
+  onResume,
+  resumable
 }: {
   worker: SessionFamilyMember
   status: SessionStatus | undefined
   state: SessionFamilyMember['state']
   worktree: ManagedWorktreeSummary | null
   manager: SessionFamilyMember
-} & Pick<ChatsPanelProps, 'onOpenChat' | 'onMessageChat' | 'onStop'>): React.JSX.Element {
+} & Pick<
+  ChatsPanelProps,
+  'onOpenChat' | 'onMessageChat' | 'onStop' | 'onArchive' | 'onResume' | 'resumable'
+>): React.JSX.Element {
   const name = memberName(worker)
   return (
     <li className={`chats-panel-card is-${state}`}>
@@ -116,6 +126,16 @@ function WorkerCard({
             onClick={() => void onStop(worker.conversationId)}
           >
             Stop
+          </button>
+        )}
+        {onResume && resumable?.has(worker.conversationId) && (
+          <button type="button" onClick={() => void onResume(worker.conversationId)}>
+            Resume
+          </button>
+        )}
+        {onArchive && !sessionIsActive(state) && (
+          <button type="button" onClick={() => void onArchive(worker.conversationId)}>
+            Archive
           </button>
         )}
       </div>
@@ -166,6 +186,19 @@ export function ChatsTab({
         .map((member) => `${member.conversationId}:${memberState(member, view.statuses)}`)
         .join('|')
     : ''
+  const [resumable, setResumable] = useState<ReadonlySet<string>>(new Set())
+  useEffect(() => {
+    let current = true
+    void window.api.sessions
+      .interrupted(conversationId)
+      .then((sessions) => {
+        if (current) setResumable(new Set(sessions.map((each) => each.conversationId)))
+      })
+      .catch(() => undefined)
+    return () => {
+      current = false
+    }
+  }, [conversationId, familyKey])
   // A worker that finishes has usually committed; its branch line should say so.
   useEffect(() => {
     if (familyKey) void refreshWorktrees()
@@ -187,6 +220,15 @@ export function ChatsTab({
         await window.api.sessions.detach(id)
         await view.reload()
       }}
+      onArchive={async (id) => {
+        await window.api.sessions.archive(id)
+        await view.reload()
+      }}
+      onResume={async (id) => {
+        await window.api.sessions.resume(id)
+        await view.reload()
+      }}
+      resumable={resumable}
     />
   )
 }
@@ -202,7 +244,10 @@ export function ChatsPanel({
   onOpenChat,
   onMessageChat,
   onStop,
-  onDetach
+  onDetach,
+  onArchive,
+  onResume,
+  resumable
 }: ChatsPanelProps): React.JSX.Element {
   const [confirmDetach, setConfirmDetach] = useState(false)
   const { family, role, self, statuses, messages } = view
@@ -233,6 +278,9 @@ export function ChatsPanel({
               onOpenChat={onOpenChat}
               onMessageChat={onMessageChat}
               onStop={onStop}
+              onArchive={onArchive}
+              onResume={onResume}
+              resumable={resumable}
             />
           ))}
         </ul>

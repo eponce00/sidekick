@@ -2,7 +2,7 @@
   "conversation": {
     "systemPromptBytes": 16693,
     "toolCount": 61,
-    "toolJsonBytes": 50665,
+    "toolJsonBytes": 50848,
     "toolBytes": {
       "apply_patch": 1850,
       "ask_user": 1358,
@@ -22,9 +22,9 @@
       "browser_observe": 1019,
       "browser_open": 841,
       "browser_press": 489,
-      "browser_request_human": 926,
+      "browser_request_human": 943,
       "browser_resize": 1125,
-      "browser_screenshot": 506,
+      "browser_screenshot": 672,
       "browser_scroll": 522,
       "browser_select": 1510,
       "browser_sign_in": 1087,

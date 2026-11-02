@@ -143,7 +143,7 @@ export interface BrowserObservationOptions {
   find?: string
 }
 
-export type BrowserScreenshotKind = 'viewport' | 'fullPage' | 'element'
+export type BrowserScreenshotKind = 'viewport' | 'fullPage' | 'element' | 'window'
 
 export interface BrowserScreenshotArtifact {
   id: string
@@ -533,6 +533,8 @@ export interface BrowserEvaluateResult {
   value: unknown
   serializedBytes: number
   truncated: boolean
+  /** Something about how it's going that the agent should know. */
+  note?: string
 }
 
 export type BrowserVerificationAssertion =
@@ -654,6 +656,8 @@ export interface NativeBrowserSurface {
   focus(): void
   insertText(text: string): Promise<void>
   sendInputEvent(event: MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent): void
+  /** The whole window around the page, with what the browser itself is showing over it. */
+  captureWindow?(): Promise<NativeBrowserSurfaceCapture>
   /** A click for where sendInputEvent can't reach into a frame at that point. */
   clickInFrame?(
     at: { x: number; y: number },
@@ -749,7 +753,9 @@ const QUIET_SCRIPT_TIMEOUT_MS = 5_000
  * What a person would press for an element. Many sites hide the real radio button or checkbox and show its
  * label, so the element itself has no size, and pressing the label is how it gets chosen.
  */
-const SHOWN_BY_SCRIPT = `const shownBy = (element) => {
+// A ref can be to the page itself, or to a run of text, which have no box of their own.
+const SHOWN_BY_SCRIPT = `const shownBy = (node) => {
+  const element = node.nodeType === 1 ? node : (node.parentElement ?? node.documentElement)
   const box = element.getBoundingClientRect()
   if (box.width > 0 && box.height > 0) return element
   return element.labels?.[0] ?? element.closest?.('label') ?? element
@@ -929,6 +935,10 @@ interface TabState {
   /** Something the action did that the page's own changes don't show, as scrolling doesn't. */
   actionMoved?: boolean
   actionNote?: string
+  /** When something last suggested the browser itself may be in the way, which opens up a look at its window. */
+  stuckAt?: number
+  /** Scripts run since the last action on the page. */
+  scriptsInARow?: number
   lastViewportScreenshot?: {
     id: string
     imageWidth: number
@@ -1040,12 +1050,22 @@ const NO_BROWSER_DIALOGS_SCRIPT = `(() => {
   }
 })()`
 const BROWSER_DIALOG_NOTE =
-  "That click never reached the page. The browser itself is showing something over it, such as a sign-in or payment dialog, which pictures of the page don't show. Don't try it again: open the page again, and if the same thing happens tell the user that a browser dialog is in the way."
+  "That click never reached the page. The browser itself is showing something over it, such as a sign-in or payment dialog, which pictures of the page don't show, though browser_screenshot with window: true does. Don't try it again: open the page again, and if the same thing happens tell the user that a browser dialog is in the way."
 const NEW_PAGE_DRAWING_MS = 8_000
 const PAGE_CHECK_MS = 5_000
 const PAGE_ANSWER_MS = 30_000
 const PAGE_NOT_ANSWERING =
   "This page isn't answering: its own script may be keeping it busy, or a dialog of the browser's own may be holding it up. What was just done may or may not have gone through. Wait and look again, or close the tab and open the page again."
+const STUCK_LOOK_MS = 5 * 60_000
+const HOVER_SETTLE_MS = 250
+const CHECKED_SITE_REST_MS = 10 * 60_000
+const SCRIPTS_BEFORE_A_NUDGE = 3
+const NO_EFFECT_NOTE =
+  'The page looks the same after this click. Look at the picture before trying again: something may be in the way, or it may take pressing by position in the picture.'
+const WINDOW_LOOK_NOTE =
+  " If the picture doesn't explain it, browser_screenshot with window: true shows Chrome's own dialogs, which pictures of the page can't."
+const SCRIPT_NUDGE =
+  "That's several scripts in a row. If you're after a control to press rather than text to read, a picture is quicker: look, then click it by position."
 const DRAG_STEPS = 8
 const DRAG_STEP_MS = 15
 const MAX_ZOOM = 4
@@ -1062,14 +1082,24 @@ const HUMAN_VERIFICATION_PATTERNS: readonly RegExp[] = [
   /\b(?:verify|confirm)\s+(?:that\s+)?(?:you(?:'re|\s+are)|yourself)\s+(?:a\s+)?human\b/i,
   /\bi(?:'m|\s+am)\s+not\s+a\s+robot\b/i,
   /\b(?:solve|complete|enter)\b[^\n]{0,40}\bcaptcha\b/i,
-  /\bcomplete\s+(?:the\s+)?security\s+check\b/i
+  /\bcomplete\s+(?:the\s+)?security\s+check\b/i,
+  /\bare\s+you\s+a\s+(?:human|robot)\b/i,
+  /\bpardon\s+our\s+interruption\b/i,
+  /\baccess\s+to\s+this\s+page\s+has\s+been\s+denied\b/i,
+  /\bsorry,\s+you\s+have\s+been\s+blocked\b/i,
+  /\bunusual\s+traffic\b[\s\S]{0,200}\b(?:computer\s+network|robot|automated)\b/i,
+  /\bunblockrequest@/i,
+  /\btaking\s+longer\s+than\s+usual\b[\s\S]{0,300}\brequest[_\s]?id\b/i
 ]
 
 const LONG_PAGE_TEXT = 16_000
 const HUMAN_VERIFICATION_TITLE_PATTERNS: readonly RegExp[] = [
   /\bcaptcha\b/i,
   /\bsecurity\s+check\b/i,
-  /\b(?:verify|confirm)\b[\s\S]{0,80}\bhuman\b/i
+  /\b(?:verify|confirm)\b[\s\S]{0,80}\bhuman\b/i,
+  /^just\s+a\s+moment\b/i,
+  /^attention\s+required\b/i,
+  /^access\s+denied\b/i
 ]
 
 class BrowserHumanVerificationError extends Error {
@@ -2153,6 +2183,8 @@ export class NativeBrowserSessionService {
   private readonly maxRepeatedNoChangeActions: number
   private readonly defaultViewport: BrowserViewport
   private readonly now: () => number
+  /** Sites that showed a human check, by chat, and when. */
+  private readonly checkedSites = new Map<string, number>()
   private artifactTail: Promise<void> = Promise.resolve()
 
   constructor(private readonly options: NativeBrowserSessionServiceOptions) {
@@ -2985,7 +3017,13 @@ export class NativeBrowserSessionService {
           return
         }
         timer = setTimeout(() => {
-          reject(new Error(PAGE_NOT_ANSWERING))
+          const stuck = session.tabs.get(session.activeTabId)
+          if (stuck) stuck.stuckAt = this.now()
+          reject(
+            new Error(
+              PAGE_NOT_ANSWERING + (this.runtime.hasDialogsOfItsOwn ? WINDOW_LOOK_NOTE : '')
+            )
+          )
           abandon.abort()
         }, PAGE_ANSWER_MS)
         const answered = (): void => {
@@ -3136,6 +3174,7 @@ export class NativeBrowserSessionService {
     url: string,
     signal?: AbortSignal
   ): Promise<BrowserQuiescenceResult> {
+    this.assertSiteNotResting(session, url)
     await this.options.policy?.beforeNavigate(url, signal)
     tab.lastPointer = undefined
     this.invalidateSemanticRefs(tab)
@@ -3633,19 +3672,51 @@ export class NativeBrowserSessionService {
         .catch(() => undefined),
       signal
     )
-    if (domState?.unresolvedMarker) {
-      return {
-        required: true,
-        kind: 'captcha_or_bot_challenge',
-        message:
-          'This site requires a human verification step before browser automation can continue.',
-        detectedBy: 'dom_marker'
-      }
+    const found: BrowserHumanVerification | null = domState?.unresolvedMarker
+      ? {
+          required: true,
+          kind: 'captcha_or_bot_challenge',
+          message:
+            'This site requires a human verification step before browser automation can continue.',
+          detectedBy: 'dom_marker'
+        }
+      : detectTextualHumanVerification(
+          tab.surface.getTitle(),
+          [semanticSnapshot, domState?.pageText].filter(Boolean).join('\n'),
+          domState?.solvedKnownWidget === true
+        )
+    if (found) this.rememberCheckedSite(tab)
+    return found
+  }
+
+  private checkedSiteKey(session: { runId: string }, url: string): string | undefined {
+    try {
+      return `${session.runId} ${new URL(url).hostname.replace(/^www\./, '')}`
+    } catch {
+      return undefined
     }
-    return detectTextualHumanVerification(
-      tab.surface.getTitle(),
-      [semanticSnapshot, domState?.pageText].filter(Boolean).join('\n'),
-      domState?.solvedKnownWidget === true
+  }
+
+  private rememberCheckedSite(tab: TabState): void {
+    const session = [...this.sessions.values()].find((each) => each.tabs.get(tab.id) === tab)
+    const key = session && this.checkedSiteKey(session, tab.surface.getURL())
+    if (key) this.checkedSites.set(key, this.now())
+  }
+
+  /**
+   * Going back to a site that has just asked is the behaviour its check looks for, and tends to keep it
+   * there. It rests for a while, unless the user has cleared the check.
+   */
+  private assertSiteNotResting(session: SessionState, url: string): void {
+    const key = this.checkedSiteKey(session, url)
+    const at = key && this.checkedSites.get(key)
+    if (!key || !at) return
+    if (this.now() - at > CHECKED_SITE_REST_MS) {
+      this.checkedSites.delete(key)
+      return
+    }
+    throw new Error(
+      `This site showed a human check or block page moments ago in this chat, and going back tends to keep it there, so nothing was opened. Use another source, or if this site is the only way, open it once the user can help and call browser_request_human.`
     )
   }
 
@@ -3823,7 +3894,7 @@ export class NativeBrowserSessionService {
       }
     }
     if (wanted !== undefined && emitted === 0) {
-      output = `- note: nothing on this page has ${quoteSnapshot(find ?? '')} in it.${unreadFrames ? ` ${unreadFrames} frame(s) can't be read, so it may be in one of those: use a screenshot and coordinates.` : ''}\n`
+      output = `- note: nothing on this page has ${quoteSnapshot(find ?? '')} in it.${unreadFrames ? ` ${unreadFrames} frame(s) can't be read, so it may be in one of those: use a screenshot and coordinates.` : ' If a picture shows it, click it by position.'}\n`
     }
     return { snapshot: output.trimEnd(), count: emitted }
   }
@@ -3968,7 +4039,9 @@ export class NativeBrowserSessionService {
     const session = this.getSession(input.sessionId)
     return this.withSessionLock(session, operation, async (signal) => {
       const tab = this.getTab(session, input.tabId)
-      if (await this.secretShownAsText(tab, signal)) throw new Error(SECRET_SHOWN_MESSAGE)
+      if (input.kind === 'window') this.assertMayLookAtWindow(tab)
+      // Chrome holds none of SideKick's stored sign-ins to show, and a stuck page couldn't answer anyway.
+      else if (await this.secretShownAsText(tab, signal)) throw new Error(SECRET_SHOWN_MESSAGE)
       return this.captureAndStore(
         session,
         tab,
@@ -3978,6 +4051,21 @@ export class NativeBrowserSessionService {
         input.zoom
       )
     })
+  }
+
+  /**
+   * The window can show what the user's Chrome holds, such as the account a saved login is for, so it
+   * isn't another way to look at a page: only for when the page gave a reason to, and never a tab of theirs.
+   */
+  private assertMayLookAtWindow(tab: TabState): void {
+    if (!tab.surface.captureWindow || tab.surface.attached) {
+      throw new Error("A picture of the whole window isn't available in this browser or tab.")
+    }
+    if (tab.stuckAt === undefined || this.now() - tab.stuckAt > STUCK_LOOK_MS) {
+      throw new Error(
+        "A picture of the whole window is only for when a page isn't responding: a click had no effect, or the page stopped answering. Use a picture of the page."
+      )
+    }
   }
 
   private async captureAndStore(
@@ -4103,6 +4191,10 @@ export class NativeBrowserSessionService {
     signal?: AbortSignal,
     zoom?: BrowserScreenshotInput['zoom']
   ): Promise<NativeBrowserSurfaceCapture> {
+    if (kind === 'window') {
+      if (!tab.surface.captureWindow) throw new Error('This browser has no window to show')
+      return abortable(tab.surface.captureWindow(), signal)
+    }
     if (kind === 'viewport') {
       let lastError: unknown
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -4685,6 +4777,14 @@ export class NativeBrowserSessionService {
       const clickCount = input.clickCount ?? 1
       const pressed = byPosition && control?.name ? { pressed: control.name } : {}
       const urlBefore = tab.surface.getURL()
+      // The page can be busy with something else, which says nothing about this click. Its picture does,
+      // taken with the pointer already there, as what's under a pointer often lights up by itself.
+      let pictureBefore: string | undefined
+      if (!session.quickAction) {
+        tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
+        await delay(HOVER_SETTLE_MS, signal)
+        pictureBefore = await this.pictureHash(session, tab, signal)
+      }
       const inFrame =
         byPosition && tab.surface.clickInFrame && (await this.frameAtPoint(tab, target, signal))
       const clicked = await this.catchingFileChooser(tab, async () => {
@@ -4718,11 +4818,60 @@ export class NativeBrowserSessionService {
           signal
         )
       })
+      const seen = await this.pictureIfUnchanged(
+        session,
+        tab,
+        clicked,
+        pictureBefore,
+        urlBefore,
+        signal
+      )
       if (await this.browserDialogInTheWay(session, tab, target, urlBefore, signal)) {
         tab.actionNote = BROWSER_DIALOG_NOTE
+        tab.stuckAt = this.now()
+      } else if (seen.observation.screenshotChanged === false && !session.quickAction) {
+        tab.stuckAt = this.now()
+        tab.actionNote ??=
+          NO_EFFECT_NOTE +
+          (this.runtime.hasDialogsOfItsOwn && !tab.surface.attached ? WINDOW_LOOK_NOTE : '')
       }
-      return { ...clicked, ...pressed, ...(tab.actionNote ? { note: tab.actionNote } : {}) }
+      return { ...seen, ...pressed, ...(tab.actionNote ? { note: tab.actionNote } : {}) }
     })
+  }
+
+  private async pictureHash(
+    session: SessionState,
+    tab: TabState,
+    signal?: AbortSignal
+  ): Promise<string | undefined> {
+    const capture = await this.captureRaw(session, tab, 'viewport', undefined, signal).catch(
+      () => undefined
+    )
+    return capture && createHash('sha256').update(capture.png).digest('hex')
+  }
+
+  /** A click that moved nothing the page shows gets the picture that says so, as if it had moved nothing at all. */
+  private async pictureIfUnchanged(
+    session: SessionState,
+    tab: TabState,
+    clicked: BrowserActionResult,
+    before: string | undefined,
+    urlBefore: string,
+    signal?: AbortSignal
+  ): Promise<BrowserActionResult> {
+    if (!before || tab.surface.getURL() !== urlBefore) return clicked
+    if ((await this.pictureHash(session, tab, signal)) !== before) return clicked
+    const screenshot =
+      clicked.observation.screenshot ??
+      (await this.captureAndStore(session, tab, 'viewport', undefined, signal).catch(
+        () => undefined
+      ))
+    const last = tab.actionHistory.at(-1)
+    if (last) last.changed = false
+    return {
+      ...clicked,
+      observation: { ...clicked.observation, screenshot, screenshotChanged: false }
+    }
   }
 
   private async frameAtPoint(
@@ -5759,6 +5908,7 @@ export class NativeBrowserSessionService {
               }
             })
             stopReason = 'field_failed'
+            tab.stuckAt = this.now()
             continue
           }
           fields.push({
@@ -6918,11 +7068,28 @@ export class NativeBrowserSessionService {
           tab,
           target.backendNodeId,
           `function(dx, dy) {
-            const before = { x: this.scrollLeft, y: this.scrollTop };
-            this.scrollBy({ left: dx, top: dy, behavior: 'instant' });
+            const moves = (element) => {
+              const x = element.scrollLeft;
+              const y = element.scrollTop;
+              element.scrollBy({ left: dx, top: dy, behavior: 'instant' });
+              return element.scrollLeft !== x || element.scrollTop !== y ? { x, y, element } : null;
+            };
+            const scrolls = (element) =>
+              /auto|scroll|overlay/.test(getComputedStyle(element).overflowY + getComputedStyle(element).overflowX);
+            // What was named often only holds the part that scrolls, or sits inside it.
+            let moved = moves(this);
+            for (const inner of moved ? [] : this.querySelectorAll?.('*') ?? []) {
+              moved = scrolls(inner) ? moves(inner) : null;
+              if (moved) break;
+            }
+            for (let outer = this.parentElement; !moved && outer && outer !== document.body; outer = outer.parentElement) {
+              moved = scrolls(outer) ? moves(outer) : null;
+            }
+            const before = moved ? { x: moved.x, y: moved.y } : { x: this.scrollLeft, y: this.scrollTop };
+            const scrolled = moved?.element ?? this;
             return {
               before,
-              after: { x: this.scrollLeft, y: this.scrollTop },
+              after: { x: scrolled.scrollLeft, y: scrolled.scrollTop },
               overFrame:
                 document.contentType === 'application/pdf' ||
                 /^(EMBED|IFRAME|OBJECT)$/.test(this.tagName)
@@ -6939,6 +7106,20 @@ export class NativeBrowserSessionService {
             after: { x: number; y: number }
             overFrame: boolean
           }>(`(() => {
+            // As a wheel does: the innermost part under the point that can still move, then the page.
+            for (
+              let part = document.elementFromPoint(${JSON.stringify(point.x)}, ${JSON.stringify(point.y)});
+              part && part !== document.body && part !== document.documentElement;
+              part = part.parentElement
+            ) {
+              const style = getComputedStyle(part);
+              if (!/auto|scroll|overlay/.test(style.overflowY + style.overflowX)) continue;
+              const inner = { x: part.scrollLeft, y: part.scrollTop };
+              part.scrollBy({ left: ${JSON.stringify(deltaX)}, top: ${JSON.stringify(input.deltaY)}, behavior: 'instant' });
+              if (part.scrollLeft !== inner.x || part.scrollTop !== inner.y) {
+                return { before: inner, after: { x: part.scrollLeft, y: part.scrollTop }, overFrame: false };
+              }
+            }
             const before = { x: window.scrollX, y: window.scrollY };
             window.scrollBy({ left: ${JSON.stringify(deltaX)}, top: ${JSON.stringify(input.deltaY)}, behavior: 'instant' });
             const under = document.elementFromPoint(${JSON.stringify(point.x)}, ${JSON.stringify(point.y)});
@@ -7297,6 +7478,7 @@ export class NativeBrowserSessionService {
     signal?: AbortSignal,
     settledQuiescence?: BrowserQuiescenceResult
   ): Promise<BrowserActionResult> {
+    tab.scriptsInARow = 0
     let quiescence = settledQuiescence ?? (await this.waitForQuiescence(tab, {}, signal))
     // A site that swaps its pages itself changes the address first and the page a moment later, with a gap
     // in between that looks like quiet. What's read in that gap is the page it just left.
@@ -7610,6 +7792,7 @@ export class NativeBrowserSessionService {
           : null
         : await this.evaluateExpression(tab, input.expression, signal)
       if (!envelope) throw new Error(policy?.scriptRefusal)
+      tab.scriptsInARow = (tab.scriptsInARow ?? 0) + 1
       let value: unknown = envelope.json
       if (!envelope.truncated) {
         try {
@@ -7623,7 +7806,8 @@ export class NativeBrowserSessionService {
         tabId: tab.id,
         value,
         serializedBytes: Buffer.byteLength(envelope.json, 'utf8'),
-        truncated: envelope.truncated
+        truncated: envelope.truncated,
+        ...(tab.scriptsInARow % SCRIPTS_BEFORE_A_NUDGE === 0 ? { note: SCRIPT_NUDGE } : {})
       }
     })
   }
@@ -7884,6 +8068,8 @@ export class NativeBrowserSessionService {
     return this.lockSession(session, operation, async (signal) => {
       const tab = this.getTab(session)
       if (await this.detectHumanVerification(tab, undefined, signal)) return true
+      const key = this.checkedSiteKey(session, tab.surface.getURL())
+      if (key) this.checkedSites.delete(key)
       this.invalidateSemanticRefs(tab)
       await this.waitForQuiescence(tab, { idleMs: 200, maxWaitMs: 2_000 }, signal)
       return false

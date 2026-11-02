@@ -137,6 +137,65 @@
   width: 168px;
 }
 
+.sidebar-archived-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: var(--sidebar-row-height);
+  padding-left: 22px;
+  border-radius: var(--radius-sm);
+}
+
+.sidebar-archived-row:hover {
+  background: var(--surface-2);
+}
+
+.sidebar-archived-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sidebar-archived-row:hover .sidebar-archived-title {
+  color: var(--text-primary);
+}
+
+.sidebar-archived-restore {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.sidebar-archived-restore:hover {
+  background: var(--surface-4);
+  color: var(--text-primary);
+}
+
+/* A row's actions are a stacking context of their own, so the rows after it would paint over an open
+   menu and take its clicks. */
+.sidebar
+  :is(.conversation-item, .project-row):has(.sidebar-overflow-menu, .conversation-move-menu) {
+  position: relative;
+  z-index: 91;
+}
+
 .sidebar .conversation-move-menu {
   z-index: 50;
   top: 32px;

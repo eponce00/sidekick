@@ -830,7 +830,7 @@ export class AgentToolRuntime {
                 const session = await browserOf(conversationId).reserveForHumanCheck(conversationId)
                 // It's the user's to do, and they may not be looking at Chrome.
                 if (browserOf(conversationId) !== this.browser) {
-                  await input.chrome?.service.showToUser(conversationId)
+                  input.chrome?.service.showToUser(conversationId)
                 }
                 return session
               },

@@ -80,6 +80,8 @@ export interface ComputerUseDependencies {
   hideTeachStep: () => void
   /** Seconds since the user last touched the mouse or keyboard. */
   userIdleSeconds: () => number
+  /** Says the agent is waiting for them to step away, or with null that it no longer is. */
+  waitingForUser?: (appName: string | null) => void
   /** What the driver can't do: input with no focus, and handing the front back. */
   appWindows: Pick<
     ComputerUseWindows,
@@ -227,6 +229,8 @@ const SENT: Partial<Record<Parameters<ComputerDriver['call']>[0], string>> = {
 // is doing, so this waits until they have stepped away. It stops short of the tool's two minutes.
 const TAKEOVER_IDLE_SECONDS = 10
 const TAKEOVER_WAIT_MS = 75_000
+// All this shows otherwise is a step that seems stuck.
+const TAKEOVER_NOTICE_AFTER_MS = 2_000
 // A window just brought back from minimized takes a moment to be there.
 const RESTORE_SETTLE_MS = 400
 // Windows counts idle time in whole seconds, so input just after the agent's can't be told from it.
@@ -1659,14 +1663,24 @@ export class ComputerUseService {
       )
     }
     const deadline = Date.now() + TAKEOVER_WAIT_MS
-    while (this.userIsActive()) {
-      if (Date.now() >= deadline) {
-        throw new ComputerUseRefusal(
-          'The user is still using this computer, so nothing was sent. Try later, or tell them what you need done.'
-        )
+    const noticeAt = Date.now() + TAKEOVER_NOTICE_AFTER_MS
+    let noticed = false
+    try {
+      while (this.userIsActive()) {
+        if (Date.now() >= deadline) {
+          throw new ComputerUseRefusal(
+            'The user is still using this computer, so nothing was sent. Try later, or tell them what you need done.'
+          )
+        }
+        signal.throwIfAborted()
+        if (!noticed && Date.now() >= noticeAt) {
+          noticed = true
+          this.deps.waitingForUser?.(app.name)
+        }
+        await new Promise((resolve) => setTimeout(resolve, POLL_MS))
       }
-      signal.throwIfAborted()
-      await new Promise((resolve) => setTimeout(resolve, POLL_MS))
+    } finally {
+      if (noticed) this.deps.waitingForUser?.(null)
     }
   }
 

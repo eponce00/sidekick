@@ -2,6 +2,7 @@ import { app, Notification, powerMonitor } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { appState } from '../ipc/state'
+import { showAttentionToast } from './attentionToast'
 import type { ComputerApp } from './computerUseApps'
 import { armEscape, computerOverlay as highlight } from './computerUseOverlay'
 import { ComputerUseRememberedApps } from './computerUseRememberedApps'
@@ -9,6 +10,7 @@ import { ComputerUseService } from './computerUseService'
 import { ComputerUseWindows } from './computerUseWindows'
 import { whileWaitingForUser } from './toolExecutionPipeline'
 import { showTrustedDialog } from './trustedDialog'
+import { trustedLook } from './trustedLook'
 
 const ALLOW_FOR_CHAT = 'Allow for this chat'
 const ALWAYS_ALLOW = 'Always allow'
@@ -112,6 +114,24 @@ const appWindows = new ComputerUseWindows()
 export function computerUseService(): ComputerUseService | null {
   const driverPath = bundledDriverPath()
   if (!existsSync(driverPath)) return null
+  let closeNotice: (() => void) | null = null
+  let noticeFor: string | null = null
+  const showWaitingNotice = async (appName: string | null): Promise<void> => {
+    noticeFor = appName
+    closeNotice?.()
+    closeNotice = null
+    if (!appName) return
+    const look = await trustedLook(appState.mainWindowRef)
+    if (noticeFor !== appName) return
+    closeNotice = showAttentionToast({
+      title: `SideKick is waiting to use ${appName}`,
+      message:
+        'This step needs your real mouse and keyboard. It goes ahead once you leave them alone for 10 seconds.',
+      warning: false,
+      look,
+      onOpen: () => appState.mainWindowRef?.show()
+    })
+  }
   service ??= new ComputerUseService({
     showActive: (target) => highlight.show(target),
     hideActive: () => highlight.hide(),
@@ -127,6 +147,7 @@ export function computerUseService(): ComputerUseService | null {
     confirmApp,
     confirmAccess,
     userIdleSeconds: () => powerMonitor.getSystemIdleTime(),
+    waitingForUser: (appName) => void showWaitingNotice(appName),
     appWindows,
     startApp: (path) => void appWindows.launch(path),
     armStop: armEscape,

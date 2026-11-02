@@ -173,6 +173,23 @@ const PAGES = {
      </div>
      <button style="position:fixed;right:0;bottom:0;width:420px;height:90px" onclick="got('sticky', 'pressed')">See homes</button>${GOT}`
   ),
+  '/t/dead-button': page(
+    'Two controls on a busy page',
+    `<button>Does nothing</button><button onclick="document.title = 'Changed'; this.textContent = 'Pressed'">Does something</button><div hidden id="tick"></div>
+     <script>setInterval(() => { document.querySelector('#tick').textContent = Date.now() }, 100)</script>`
+  ),
+  '/t/blocked': page(
+    'Blocked',
+    `<p>This is taking longer than usual.</p><button>Refresh page</button><p>Request ID: abc123. If you need help, email unblockrequest@example.invalid</p>`
+  ),
+  '/t/panel-scroll': page(
+    'A dialog that scrolls inside',
+    `<div id="box" role="dialog" aria-label="Filters" style="position:fixed;inset:40px;background:#fff;border:1px solid"><div id="wrap"><div id="inner" style="height:200px;overflow:auto"><div style="height:1500px">Top of the panel</div></div></div></div>`
+  ),
+  '/t/few-options': page(
+    'Choosing from a few',
+    `<div role="listbox" aria-label="Beds">${[1, 2, 3, 4].map((n) => `<div role="option" tabindex="0" onclick="got('few', '${n}')">${n} beds</div>`).join('')}</div>${GOT}`
+  ),
   '/t/print-frame': page(
     'Print button in a frame on another address',
     `<iframe src="http://localhost:${PORT}/t/print" width="500" height="200" title="Form"></iframe>`

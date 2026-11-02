@@ -28,6 +28,8 @@ function harness(url = 'https://shop.example/page', answer = true, everySite = t
     preview: vi.fn(),
     wantsPreview: () => false,
     replyEnded: vi.fn(),
+    stopKeyHeld: vi.fn(),
+    askForUser: vi.fn(),
     armStop: vi.fn((_stop: () => void) => disarm),
     notify: vi.fn(),
     accent: async () => '#86aee8'
@@ -211,6 +213,14 @@ describe('scripts that only look', () => {
 })
 
 describe('when it is driving', () => {
+  it('tells the user once in a while, not once for every chat', async () => {
+    const { service, surface, overlay } = harness()
+    for (const chat of ['one', 'two', 'three']) {
+      await service.runInChat(chat, () => service.beforeStep(surface, signal))
+    }
+    expect(overlay.notify).toHaveBeenCalledTimes(1)
+  })
+
   it('stops for good on Esc: the reply gets nowhere, and its approvals are gone', async () => {
     const { service, inChat, surface, send, overlay, disarm, confirmSite } = harness()
     await inChat(() => service.beforeStep(surface, signal))

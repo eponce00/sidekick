@@ -1,4 +1,4 @@
-import { app, nativeImage, Notification } from 'electron'
+import { app, BrowserWindow, nativeImage, Notification } from 'electron'
 import { existsSync, promises as fs } from 'fs'
 import { basename, join } from 'path'
 import type { ChromeUseStatus } from '../../shared/computerUse'
@@ -22,6 +22,9 @@ import { NativeBrowserSessionService } from './nativeBrowserSessionService'
 import { showTrustedDialog, type TrustedDialogOptions } from './trustedDialog'
 import { trustedLook } from './trustedLook'
 
+// The direct checks open Chrome hundreds of times, with no one needing to be told.
+const UNATTENDED_TESTS = Boolean(process.env.SIDEKICK_TOOL_PROBE)
+const heldNotifications = new Set<Notification>()
 const ALLOW_FOR_CHAT = 'Allow for this chat'
 const DONT_ALLOW = 'Don’t allow'
 const INSTALL_MARK = 'installed-profile'
@@ -253,16 +256,35 @@ export function chromeBrowser(): {
           bounds: async () => null
         }),
       hide: () => computerOverlay.hide(),
-      preview: (image) => computerOverlay.showPreview(image),
-      wantsPreview: () => computerOverlay.wantsPicture(),
+      preview: (image) => {
+        if (!UNATTENDED_TESTS) computerOverlay.showPreview(image)
+      },
+      wantsPreview: () => !UNATTENDED_TESTS && computerOverlay.wantsPicture(),
       replyEnded: () => computerOverlay.replyEnded(),
+      stopKeyHeld: (held) => computerOverlay.setStopKeyHeld(held),
       armStop: armEscape,
       notify: () => {
-        if (!Notification.isSupported()) return
+        if (UNATTENDED_TESTS || !Notification.isSupported()) return
+        // They can see it for themselves in SideKick.
+        if (BrowserWindow.getFocusedWindow()) return
         new Notification({
           title: 'SideKick is using Chrome',
           body: 'The agent is working in Chrome. Press Esc to stop it.'
         }).show()
+      },
+      askForUser: (show) => {
+        if (UNATTENDED_TESTS) return
+        // Not by taking the screen from whatever they're typing in, unless they're watching the agent.
+        if (BrowserWindow.getFocusedWindow() || !Notification.isSupported()) return show()
+        const asking = new Notification({
+          title: 'SideKick needs you in Chrome',
+          body: 'A site wants a person to clear a check. Click to go there. The agent carries on once it is done.'
+        })
+        asking.on('click', show)
+        // A notification no one holds on to loses its click.
+        heldNotifications.add(asking)
+        asking.on('close', () => heldNotifications.delete(asking))
+        asking.show()
       },
       accent: async () => (await trustedLook(appState.mainWindowRef)).accent
     },

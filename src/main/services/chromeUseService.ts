@@ -6,6 +6,7 @@ const WAIT_FOR_CHROME_MS = 35_000
 const PREVIEW_EVERY_MS = 3_000
 // As for computer use: long enough to outlast a slow model's turn. Esc stays the user's otherwise.
 const STOP_KEY_HELD_MS = 60_000
+const NOTIFY_EVERY_MS = 30 * 60_000
 
 // Web vaults of what is blocked as an app: the same passwords, in a page.
 const NEVER_SITES = new Set([
@@ -84,9 +85,13 @@ export interface ChromeUseDependencies {
     /** Whether the picture of the tab is showing, so that a new one would be seen. */
     wantsPreview: () => boolean
     replyEnded: () => void
+    /** Whether the picture should say that Esc stops the agent. */
+    stopKeyHeld: (held: boolean) => void
     /** Esc from anywhere, for as long as the agent can act. Returns how to take it back. */
     armStop: (stop: () => void) => () => void
     notify: () => void
+    /** Asks the user to come and do something on the tab, which `show` brings forward. */
+    askForUser: (show: () => void) => void
     /** The colour of the glow and pointer inside a page. */
     accent: () => Promise<string>
   }
@@ -98,7 +103,6 @@ interface ChromeChat {
   /** Tabs this chat has used, for taking its marks off them. */
   tabs: Set<number>
   current?: number
-  notified?: boolean
 }
 
 function originOf(url: string): string {
@@ -141,6 +145,9 @@ export class ChromeUseService implements NativeBrowserPolicy {
   private readonly stopped = new Set<string>()
   private disarm: (() => void) | null = null
   private lastPreviewAt = 0
+  private previewTimer: ReturnType<typeof setTimeout> | null = null
+  private stepsRunning = 0
+  private notifiedAt = 0
   private disarmTimer: ReturnType<typeof setTimeout> | null = null
   private readonly quiet = new AbortController().signal
 
@@ -155,8 +162,13 @@ export class ChromeUseService implements NativeBrowserPolicy {
   constructor(private readonly deps: ChromeUseDependencies) {}
 
   /** Runs a browser tool as this chat's, so the rules know whose answers apply. */
-  runInChat<T>(chat: string, work: () => Promise<T>): Promise<T> {
-    return this.running.run(chat, work)
+  async runInChat<T>(chat: string, work: () => Promise<T>): Promise<T> {
+    this.stepsRunning++
+    try {
+      return await this.running.run(chat, work)
+    } finally {
+      this.stepsRunning--
+    }
   }
 
   private currentChat(): string {
@@ -187,31 +199,51 @@ export class ChromeUseService implements NativeBrowserPolicy {
     this.driving.add(id)
     chat.tabs.add(tabId)
     chat.current = tabId
-    if (!chat.notified) {
-      chat.notified = true
+    // Once in a while rather than per chat: the picture says so every time, and this interrupts.
+    if (Date.now() - this.notifiedAt >= NOTIFY_EVERY_MS) {
+      this.notifiedAt = Date.now()
       this.deps.overlay.notify()
     }
     this.disarm ??= this.deps.overlay.armStop(() => this.stop())
+    this.deps.overlay.stopKeyHeld(true)
     this.deps.overlay.show()
+    this.keepPictureFresh()
     if (this.disarmTimer) clearTimeout(this.disarmTimer)
-    // The debugger stays until the reply ends: a slow model's turn is no reason to cut the tab off.
-    this.disarmTimer = (this.deps.setTimer ?? setTimeout)(
-      () => this.takeMarksOff(false),
-      STOP_KEY_HELD_MS
-    )
+    // The marks and the debugger stay until the reply ends: a slow model's turn is no reason to take the
+    // picture away and start it over. Only Esc goes back, as it belongs to whatever the user is doing.
+    this.disarmTimer = (this.deps.setTimer ?? setTimeout)(() => {
+      this.disarmTimer = null
+      this.disarm?.()
+      this.disarm = null
+      this.deps.overlay.stopKeyHeld(false)
+    }, STOP_KEY_HELD_MS)
     const accent = await this.deps.overlay.accent()
     await this.deps.bridge.send('overlay', { tabId, accent }, this.quiet).catch(() => undefined)
   }
 
-  private takeMarksOff(letGo = true): void {
+  private takeMarksOff(): void {
     if (this.disarmTimer) clearTimeout(this.disarmTimer)
     this.disarmTimer = null
+    if (this.previewTimer) clearTimeout(this.previewTimer)
+    this.previewTimer = null
     this.disarm?.()
     this.disarm = null
     this.deps.overlay.hide()
     const tabIds = [...this.chats.values()].flatMap((chat) => [...chat.tabs])
     void this.deps.bridge.send('overlaysOff', { tabIds }, this.quiet).catch(() => undefined)
-    if (letGo) void this.deps.bridge.send('detachAll', {}, this.quiet).catch(() => undefined)
+    void this.deps.bridge.send('detachAll', {}, this.quiet).catch(() => undefined)
+  }
+
+  /** The model can think for a long while between steps, and the page goes on changing. */
+  private keepPictureFresh(): void {
+    if (this.previewTimer) return
+    this.previewTimer = (this.deps.setTimer ?? setTimeout)(() => {
+      this.previewTimer = null
+      if (!this.driving.size) return
+      // A step gets its own picture when it's done, and a capture would only hold it up.
+      if (!this.stepsRunning) for (const id of this.driving) void this.refreshPreview(id)
+      this.keepPictureFresh()
+    }, PREVIEW_EVERY_MS)
   }
 
   /** Esc: everything those chats were allowed ends now, and asking again takes the user's answer. */
@@ -350,12 +382,13 @@ export class ChromeUseService implements NativeBrowserPolicy {
     }
   }
 
-  /** Brings the chat's tab forward, for what only the user can do on it. */
-  async showToUser(id: string): Promise<void> {
+  /** Asks the user over to the chat's tab, for what only they can do on it. */
+  showToUser(id: string): void {
     const tabId = this.chats.get(id)?.current
-    if (tabId !== undefined) {
-      await this.deps.bridge.send('showTab', { tabId }, this.quiet).catch(() => undefined)
-    }
+    if (tabId === undefined) return
+    this.deps.overlay.askForUser(() => {
+      void this.deps.bridge.send('showTab', { tabId }, this.quiet).catch(() => undefined)
+    })
   }
 
   /**

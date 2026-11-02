@@ -1043,6 +1043,11 @@ const browserScreenshot = definition(
     type: 'object',
     properties: {
       full_page: { type: 'boolean' },
+      window: {
+        type: 'boolean',
+        description:
+          "Chrome only: the whole window, with Chrome's own dialogs. Only after a click had no effect or the page stopped answering."
+      },
       ref: { type: 'string' },
       selector: { type: 'string' },
       region: {
@@ -1154,7 +1159,7 @@ const browserHold = definition(
 
 const browserRequestHuman = definition(
   'browser_request_human',
-  "Last resort when a CAPTCHA, anti-bot checkpoint, login confirmation, or another human-only step blocks the one page that can finish the task. First use another legitimate source if there is one, such as another search engine or site. SideKick shows the page in the user's Browser panel and waits, with the same cookies, DOM state, and history, until the check is gone, then returns so you observe the page and continue. Never try to complete the check yourself.",
+  'Last resort when a CAPTCHA, anti-bot checkpoint, login confirmation, or another human-only step blocks the one page that can finish the task. First use another legitimate source if there is one, such as another search engine or site. SideKick shows the page to the user, in the Browser panel or Chrome, and waits, with the same cookies, DOM state, and history, until the check is gone, then returns so you observe the page and continue. Never try to complete the check yourself.',
   {
     type: 'object',
     required: ['reason'],
