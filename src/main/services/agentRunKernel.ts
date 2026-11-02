@@ -57,13 +57,6 @@ import {
 const learnedImageLimits = new Map<string, number>()
 
 /**
- * Context windows a provider reported about itself, keyed by provider:model.
- * A configured length that is too large is worse than none: compaction frees
- * against the wrong budget and the retry trips the same limit.
- */
-const learnedContextLengths = new Map<string, number>()
-
-/**
  * Reply limits a provider stated when it refused a larger one, keyed by provider:model. Hosted
  * APIs such as Groq cap a reply below what SideKick's default asks for, and many do not report
  * the cap in their model list.
@@ -1376,7 +1369,8 @@ The user approved this exact plan revision. Act capabilities are now available a
     messages: ProviderChatMessage[],
     tools: readonly unknown[],
     signal: AbortSignal,
-    reason: 'preflight_budget' | 'provider_context_window_exceeded'
+    reason: 'preflight_budget' | 'provider_context_window_exceeded',
+    windowNow?: number
   ): Promise<{ messages: ProviderChatMessage[]; compacted: boolean }> {
     if (!contextManager) return { messages, compacted: false }
     this.transition(input.id, 'compacting')
@@ -1394,7 +1388,7 @@ The user approved this exact plan revision. Act capabilities are now available a
     // Record the window the budget was computed against. A compaction that
     // fires early is almost always an unknown context length falling back to
     // the default, and the transcript should say so rather than look random.
-    const contextLength = Number(input.promptContext?.contextLength)
+    const contextLength = Number(windowNow ?? input.promptContext?.contextLength)
     const contextReliable = input.promptContext?.contextReliable !== false
     this.append(input.id, 'compaction.completed', {
       previousMessageCount: messages.length,
@@ -1453,21 +1447,20 @@ The user approved this exact plan revision. Act capabilities are now available a
     // later request, so one screenshot-heavy session does not fail the same way
     // turn after turn. Seeded from what earlier runs on this model learned.
     const learnedKey = learnedLimitKey(input.provider, input.model)
-    // A window an earlier run saw the provider report outranks configuration,
-    // so the very first request of a later run is already budgeted correctly.
-    const rememberedContextLength = learnedContextLengths.get(learnedKey)
     let imageBudget: number | null = learnedImageLimits.get(learnedKey) ?? null
     let activeRequest = input.request
     /**
      * Believe the provider over the configuration when it states its own
      * window, and shrink the output reservation to match: a 32k reservation
      * inside a 49k window leaves almost nothing for the conversation.
+     * For this run only. What's behind an address can change, and a window remembered from a smaller
+     * model went on compacting chats far from full, with nothing refusing them. Asking again costs
+     * one quick refusal.
      */
     const applyReportedContextLength = (reported?: number): void => {
       if (!reported || !Number.isFinite(reported) || reported <= 0) return
       const configured = Number(activeRequest.target.contextLength) || reported
       if (reported >= configured) return
-      learnedContextLengths.set(learnedKey, reported)
       // The smaller window gets the default share; never more than was asked for before.
       const maxOutputTokens = Math.min(
         resolveMaxOutputTokens(reported),
@@ -1552,7 +1545,6 @@ The user approved this exact plan revision. Act capabilities are now available a
         )
       }
     }
-    if (rememberedContextLength) applyReportedContextLength(rememberedContextLength)
     const rememberedOutputLimit = learnedOutputLimits.get(learnedKey)
     if (rememberedOutputLimit) applyOutputLimit(rememberedOutputLimit)
     try {
@@ -1608,7 +1600,8 @@ The user approved this exact plan revision. Act capabilities are now available a
             requestMessages,
             toolDefinitions,
             signal,
-            'preflight_budget'
+            'preflight_budget',
+            activeRequest.target.contextLength
           )
           requestMessages = prepared.messages
           messages = requestMessages
@@ -1762,14 +1755,24 @@ The user approved this exact plan revision. Act capabilities are now available a
               reason: 'context_window_exceeded',
               ...overflow
             })
+            const windowBefore = activeRequest.target.contextLength
             applyReportedContextLength(overflow.contextLength)
+            // Often only the reply's room went over, as with a 33 token prompt and a 100,000 token
+            // limit. The smaller limit fixes that, and summarizing would lose work for nothing.
+            if (
+              activeRequest.target.contextLength !== windowBefore &&
+              !activeContextManager.shouldCompact(requestMessages, toolDefinitions)
+            ) {
+              continue
+            }
             const prepared = await this.compactContext(
               input,
               activeContextManager,
               requestMessages,
               toolDefinitions,
               signal,
-              'provider_context_window_exceeded'
+              'provider_context_window_exceeded',
+              activeRequest.target.contextLength
             )
             if (prepared.compacted) {
               messages = prepared.messages

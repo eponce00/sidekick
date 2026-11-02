@@ -19,8 +19,11 @@
 - Rest a site for 10 minutes in a chat after it shows a human check or block page, as going back tends to
   keep it there, and recognize more block pages. In Chrome, a check that needs you now sends a notification
   to click rather than taking your screen.
-- Show the size that set off a compaction while it runs. The meter could still show the previous turn's
-  count, so a chat seemed to compact while far from full.
+- Stop chats compacting while far from full. Once a model server said its window was smaller, SideKick
+  remembered that for the model until it restarted, even after a bigger model took over at the same address,
+  so chats compacted at about 47K of 262K and lost working context. It now asks again in each run, and
+  doesn't summarize at all when only the reply's room was over. The meter also goes by what the server said,
+  and shows the size that set off a compaction while it runs.
 - Fix the chat menu, which rows showed through and took the clicks of. Scrolling in a dialog now finds the
   part that scrolls, and short lists of options can be pressed by name.
 

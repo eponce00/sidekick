@@ -144,7 +144,7 @@ interface ChatPanelProps {
   selectedModel: string
   planningModelId?: string
   onModelChange: (modelId: string) => void
-  onTokenCountUpdate?: (currentTokens: number, maxTokens: number) => void
+  onTokenCountUpdate?: (currentTokens: number, maxTokens: number, narrowedTo?: number) => void
   onConversationCostUpdate?: (totalCost: number) => void
   onFocusChainUpdate: (conversationId: string, todos: TodoItem[]) => void
   autoCompactEnabled?: boolean
@@ -304,7 +304,8 @@ function ChatPanel({
     }
     tokenCountUpdateRef.current?.(
       latestUsage ? contextTokens(latestUsage) : 0,
-      selectedContextLength
+      selectedContextLength,
+      latestUsage?.contextLength
     )
   }, [messages, openSubAgent, selectedContextLength])
   // A chat's panel mounts when it is opened, so what was left unsent there is restored once.
@@ -430,7 +431,11 @@ function ChatPanel({
     onConversationCreated,
     onProjection: (projection) => {
       if (!openSubAgent)
-        onTokenCountUpdate?.(contextTokens(projection.tokenUsage), selectedContextLength)
+        onTokenCountUpdate?.(
+          contextTokens(projection.tokenUsage),
+          selectedContextLength,
+          projection.tokenUsage.contextLength
+        )
     }
   })
   const { goal, createGoal, pauseGoal, resumeGoal, clearGoal } = useConversationGoal(conversationId)

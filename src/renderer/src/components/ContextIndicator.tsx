@@ -17,6 +17,8 @@ interface ContextIndicatorProps {
   autoCompactEnabled?: boolean
   autoCompactThreshold?: number
   conversationCost?: number
+  /** The window the model server said it has for this reply, when that's less than configured. */
+  narrowedTo?: number
 }
 
 function ContextIndicator({
@@ -26,7 +28,8 @@ function ContextIndicator({
   model,
   autoCompactEnabled = true,
   autoCompactThreshold = 0.8,
-  conversationCost = 0
+  conversationCost = 0,
+  narrowedTo
 }: ContextIndicatorProps): React.JSX.Element {
   const contextKey = `${model?.providerInstanceId || ''}|${model?.providerModelId || selectedModel}`
   const [fetchedContext, setFetchedContext] = useState<{
@@ -41,7 +44,11 @@ function ContextIndicator({
     resolvedForModel,
     maxTokens
   )
-  const modelContextWindow = contextDisplay.contextWindow
+  // Compaction goes by what the server said, so this has to as well, or a chat compacts while reading healthy.
+  const modelContextWindow =
+    narrowedTo && narrowedTo < contextDisplay.contextWindow
+      ? narrowedTo
+      : contextDisplay.contextWindow
   const [hovering, setHovering] = useState(false)
   const [focused, setFocused] = useState(false)
   const tooltipOpen = hovering || focused
