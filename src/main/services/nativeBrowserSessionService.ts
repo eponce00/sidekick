@@ -5579,20 +5579,27 @@ export class NativeBrowserSessionService {
     target: ElementPoint,
     signal?: AbortSignal
   ): Promise<void> {
-    this.setPointer(tab, target, 'click')
+    // A bar stuck over a field takes the click: filling Redfin's price box pressed its "See homes" button.
+    let at = target
+    if (target.backendNodeId) {
+      await this.bringClear(tab, target.backendNodeId, signal)
+      const rect = await this.elementRect(tab, target.backendNodeId, signal)
+      at = { ...target, x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+    }
+    this.setPointer(tab, at, 'click')
     tab.surface.focus()
-    tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
+    tab.surface.sendInputEvent({ type: 'mouseMove', x: at.x, y: at.y })
     tab.surface.sendInputEvent({
       type: 'mouseDown',
-      x: target.x,
-      y: target.y,
+      x: at.x,
+      y: at.y,
       button: 'left',
       clickCount: 1
     })
     tab.surface.sendInputEvent({
       type: 'mouseUp',
-      x: target.x,
-      y: target.y,
+      x: at.x,
+      y: at.y,
       button: 'left',
       clickCount: 1
     })

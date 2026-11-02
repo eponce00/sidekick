@@ -164,6 +164,15 @@ const PAGES = {
     'A hidden field with a name like a secret',
     `<form><input type="hidden" name="ssne" value="abcd"><input aria-label="City"></form>`
   ),
+  '/t/sticky-bar': page(
+    'Field under a bar stuck to a panel',
+    `<div style="position:fixed;top:0;right:0;bottom:0;width:420px;overflow:auto;background:#fff;border-left:1px solid">
+       <div style="height:calc(100vh - 60px)">Panel</div>
+       <input id="max" placeholder="Enter max" style="display:block;width:300px;height:24px">
+       <div style="height:600px"></div>
+     </div>
+     <button style="position:fixed;right:0;bottom:0;width:420px;height:90px" onclick="got('sticky', 'pressed')">See homes</button>${GOT}`
+  ),
   '/t/print-frame': page(
     'Print button in a frame on another address',
     `<iframe src="http://localhost:${PORT}/t/print" width="500" height="200" title="Form"></iframe>`

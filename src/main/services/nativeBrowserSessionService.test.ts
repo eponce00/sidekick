@@ -1530,6 +1530,19 @@ describe('NativeBrowserSessionService', () => {
     }
   })
 
+  it('brings a field clear of what may cover it before clicking it to fill it', async () => {
+    const { service, runtime } = await testService()
+    const { sessionId } = await service.open({ runId: 'covered', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    surface.commands.length = 0
+    await service.fillForm({
+      sessionId,
+      fields: [{ kind: 'textbox', target: { name: 'Email', role: 'textbox' }, value: 'a' }]
+    })
+    const methods = surface.commands.map(({ method }) => method)
+    expect(methods).toContain('DOM.scrollIntoViewIfNeeded')
+  })
+
   it('stops printing from opening a dialog in its own tabs', async () => {
     const { service, runtime } = await testService()
     await service.open({ runId: 'print', url: 'https://example.com/' })
