@@ -335,6 +335,24 @@ export function chromeBrowser(): {
       certificatePolicy: browserCertificateApprovals,
       runtime: new ChromeBrowserRuntime(bridgeOf(), {
         showPointer: (tabId, x, y) => rules.showPointer(tabId, x, y),
+        showLook: (tabId, data) => rules.showLook(tabId, data),
+        cropPicture: (picture, viewportWidth, box, scale) => {
+          const whole = nativeImage.createFromBuffer(picture)
+          const pixels = whole.getSize().width / viewportWidth
+          return whole
+            .crop({
+              x: Math.round(box.x * pixels),
+              y: Math.round(box.y * pixels),
+              width: Math.round(box.width * pixels),
+              height: Math.round(box.height * pixels)
+            })
+            .resize({
+              width: Math.round(box.width * scale),
+              height: Math.round(box.height * scale),
+              quality: 'best'
+            })
+            .toPNG()
+        },
         fitPicture: (picture, width, height) =>
           nativeImage.createFromBuffer(picture).resize({ width, height, quality: 'best' }).toPNG()
       }),

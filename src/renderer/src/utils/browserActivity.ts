@@ -505,6 +505,7 @@ export function applyBrowserActivityEvent(
     (status === 'success' || status === 'partial') &&
     [
       'browser_open',
+      'browser_batch',
       'browser_click',
       'browser_hold',
       'browser_type',

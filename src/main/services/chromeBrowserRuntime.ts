@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs'
 import { basename } from 'path'
 import type { KeyboardInputEvent, MouseInputEvent, MouseWheelInputEvent } from 'electron'
+import type { BrowserCaptureBox } from './browserScreenshotCapture'
 import type {
   BrowserEmulationOptions,
   BrowserViewport,
@@ -18,6 +19,14 @@ export type ChromeEvent =
   | { kind: 'removed'; tabId: number }
   | { kind: 'detached'; tabId: number; reason: string }
   | { kind: 'popup'; tabId: number; openerTabId: number; url: string; title: string }
+
+/** Part of a picture of the viewport, enlarged, as a PNG. */
+type CropPicture = (
+  picture: Buffer,
+  viewportWidth: number,
+  box: BrowserCaptureBox,
+  scale: number
+) => Buffer
 
 export interface ChromeLine {
   send: <T>(op: string, args: Record<string, unknown>, signal: AbortSignal) => Promise<T>
@@ -163,7 +172,10 @@ class ChromeSurface implements NativeBrowserSurface {
     /** The user's own tab, which is theirs to close and is never treated as ours. */
     readonly attached: boolean,
     private readonly showMark: (tabId: number, x: number, y: number) => void,
-    private readonly fitPicture: (picture: Buffer, width: number, height: number) => Buffer
+    private readonly fitPicture: (picture: Buffer, width: number, height: number) => Buffer,
+    private readonly showLook: (tabId: number, data: string) => void,
+    private readonly cropPicture: CropPicture,
+    private readonly select: (tabId: number) => void
   ) {
     this.webContentsId = tab.id
     this.url = tab.url
@@ -311,7 +323,17 @@ class ChromeSurface implements NativeBrowserSurface {
   }
 
   focus(): void {
-    // Never: the page counts as focused anyway, and the user keeps theirs.
+    // Not the window, which stays out of the user's way: the tab, unless it's one the user shared.
+    if (!this.attached) this.select(this.webContentsId)
+  }
+
+  async drag(
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    button: 'left' | 'middle' | 'right'
+  ): Promise<void> {
+    await this.inputs
+    await this.line.send('drag', { tabId: this.webContentsId, from, to, button }, this.quiet)
   }
 
   async insertText(text: string): Promise<void> {
@@ -366,7 +388,8 @@ class ChromeSurface implements NativeBrowserSurface {
       x: mouse.x,
       y: mouse.y,
       button,
-      buttons: type === 'mousePressed' ? (pressed[button] ?? 0) : 0,
+      // A move with a button named is a drag, which a page only follows with the button held down.
+      buttons: type === 'mouseReleased' ? 0 : (pressed[button] ?? 0),
       clickCount: mouse.clickCount ?? (type === 'mouseMoved' ? 0 : 1)
     })
   }
@@ -433,8 +456,30 @@ class ChromeSurface implements NativeBrowserSurface {
       format: 'jpeg',
       quality: 90
     })
+    this.showLook(this.webContentsId, shot.data)
     const png = this.fitPicture(Buffer.from(shot.data, 'base64'), width, height)
     return { png, width, height }
+  }
+
+  /** From the same picture as captureViewport: drawing it larger would mean resizing the user's tab. */
+  async captureViewportPart(
+    box: BrowserCaptureBox,
+    scale: number
+  ): Promise<NativeBrowserSurfaceCapture> {
+    const metrics = await this.command<{
+      cssVisualViewport?: { clientWidth: number; clientHeight: number }
+    }>('Page.getLayoutMetrics')
+    const shot = await this.command<{ data: string }>('Page.captureScreenshot', {
+      format: 'jpeg',
+      quality: 95
+    })
+    const png = this.cropPicture(
+      Buffer.from(shot.data, 'base64'),
+      Math.round(metrics.cssVisualViewport?.clientWidth ?? 1280),
+      box,
+      scale
+    )
+    return { png, width: Math.round(box.width * scale), height: Math.round(box.height * scale) }
   }
 
   async attachDebugger(): Promise<void> {
@@ -582,6 +627,7 @@ export class ChromeBrowserRuntime implements NativeBrowserRuntime {
   readonly showsPdfsItself = true
   private readonly surfaces = new Map<number, ChromeSurface>()
   private windowId: number | undefined
+  private selected: number | undefined
   private readonly quiet = new AbortController().signal
 
   constructor(
@@ -590,6 +636,9 @@ export class ChromeBrowserRuntime implements NativeBrowserRuntime {
       showPointer: (tabId: number, x: number, y: number) => void
       /** A picture at the screen's pixels, as a PNG of the size the page counts in. */
       fitPicture: (picture: Buffer, width: number, height: number) => Buffer
+      /** The agent's latest look at a tab, for the user. */
+      showLook: (tabId: number, data: string) => void
+      cropPicture: CropPicture
     }
   ) {
     line.onEvent((event) => {
@@ -616,7 +665,14 @@ export class ChromeBrowserRuntime implements NativeBrowserRuntime {
       tab,
       attached,
       this.marks.showPointer,
-      this.marks.fitPicture
+      this.marks.fitPicture,
+      this.marks.showLook,
+      this.marks.cropPicture,
+      (tabId) => {
+        if (this.selected === tabId) return
+        this.selected = tabId
+        void this.line.send('selectTab', { tabId }, this.quiet).catch(() => undefined)
+      }
     )
     this.surfaces.set(tab.id, surface)
     surface.onDestroyed(() => this.surfaces.delete(tab.id))
@@ -630,6 +686,7 @@ export class ChromeBrowserRuntime implements NativeBrowserRuntime {
       this.quiet
     )
     this.windowId = tab.windowId
+    this.selected = tab.id
     return this.remember(tab, false)
   }
 

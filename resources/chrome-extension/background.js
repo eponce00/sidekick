@@ -5,8 +5,12 @@
 const instance = crypto.randomUUID()
 const version = chrome.runtime.getManifest().version
 const GROUP_TITLE = '🤖 SideKick'
-const LOAD_WAIT_MS = 15_000
-const CAPTURE_WAIT_MS = 6_000
+const LOAD_WAIT_MS = 8_000
+const CAPTURE_WAIT_MS = 4_000
+const TABS_BUSY_TRIES = 25
+const TABS_BUSY_WAIT_MS = 200
+const DRAG_STEPS = 8
+const DRAG_STEP_MS = 15
 const WINDOW_WIDTH = 1100
 const WINDOW_HEIGHT = 800
 const attached = new Set()
@@ -136,38 +140,66 @@ function loaded(tabId) {
   })
 }
 
+/**
+ * Chrome turns tab changes away for a moment while a window is closing or a tab is being dragged, and says
+ * so. That's a wait, not a failure: a user dragging a tab shouldn't stop the agent.
+ */
+async function whenTabsFree(work) {
+  for (let tries = 0; ; tries++) {
+    try {
+      return await work()
+    } catch (error) {
+      if (tries >= TABS_BUSY_TRIES || !/cannot be edited right now/i.test(error.message))
+        throw error
+      await new Promise((done) => setTimeout(done, TABS_BUSY_WAIT_MS))
+    }
+  }
+}
+
 async function inGroup(tabId, windowId) {
   const [existing] = await chrome.tabGroups.query({ windowId, title: GROUP_TITLE })
-  const groupId = await chrome.tabs.group({
-    tabIds: [tabId],
-    ...(existing ? { groupId: existing.id } : { createProperties: { windowId } })
-  })
-  if (!existing) await chrome.tabGroups.update(groupId, { title: GROUP_TITLE, color: 'blue' })
+  const groupId = await whenTabsFree(() =>
+    chrome.tabs.group({
+      tabIds: [tabId],
+      ...(existing ? { groupId: existing.id } : { createProperties: { windowId } })
+    })
+  )
+  if (!existing) {
+    await whenTabsFree(() =>
+      chrome.tabGroups.update(groupId, { title: GROUP_TITLE, color: 'blue' })
+    )
+  }
 }
 
 /**
- * A tab in the SideKick group, in the window the chat already uses or the user's latest one. Never the
- * selected tab: created selected, it brought the whole window in front of what the user was doing, and
- * with focus emulation an unselected tab works as well as any.
+ * A tab in the SideKick group, selected in a window of its own that doesn't take focus. Measured on real
+ * pages: an unselected tab in the user's window could take seconds to draw a picture or stall altogether,
+ * and a slider dragged there stopped at the first notch, even with the page counting itself visible.
  */
 async function open({ url, windowId }) {
-  const window =
-    (windowId ? await chrome.windows.get(windowId).catch(() => null) : null) ??
-    (await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => null))
-  let tab
-  if (window) {
-    tab = await chrome.tabs.create({ windowId: window.id, url, active: false })
-  } else {
-    const created = await chrome.windows.create({
-      url,
-      focused: false,
-      width: WINDOW_WIDTH,
-      height: WINDOW_HEIGHT
-    })
+  const window = windowId ? await chrome.windows.get(windowId).catch(() => null) : null
+  // A window on its way out can still be found, and then not take a tab.
+  let tab = window
+    ? await whenTabsFree(() =>
+        chrome.tabs.create({ windowId: window.id, url, active: true })
+      ).catch(() => null)
+    : null
+  if (!tab) {
+    const created = await whenTabsFree(() =>
+      chrome.windows.create({
+        url,
+        focused: false,
+        width: WINDOW_WIDTH,
+        height: WINDOW_HEIGHT
+      })
+    )
     tab = created.tabs[0]
   }
-  await inGroup(tab.id, tab.windowId)
   tracked.add(tab.id)
+  // The group is only a label, and no reason to fail a tab that's open and works.
+  await inGroup(tab.id, tab.windowId).catch(() => undefined)
+  // Selected before it counted as the agent's, and nothing here is the user's to give back.
+  selectedTabs.delete(tab.windowId)
   // A page that thinks it's hidden may not even draw.
   await debug(tab.id, 'Page.enable')
   await loaded(tab.id)
@@ -312,10 +344,25 @@ async function capture(tabId, params) {
   }
 }
 
-/** For the corner label. It keeps the glow, being for the user to see. */
-async function screenshot({ tabId }) {
+/**
+ * All of a drag from here, with no trip to SideKick between moves. A page that redraws as a slider's value
+ * changes loses a drag that arrives slowly.
+ */
+async function drag({ tabId, from, to, button = 'left' }) {
   await webTab(tabId)
-  return capturing(() => capture(tabId, { format: 'jpeg', quality: 80 }))
+  const buttons = { left: 1, right: 2, middle: 4 }[button] ?? 1
+  const mouse = (type, at, extra) =>
+    debug(tabId, 'Input.dispatchMouseEvent', { type, ...at, button, buttons, ...extra })
+  await mouse('mouseMoved', from, { button: 'none', buttons: 0 })
+  await mouse('mousePressed', from, { clickCount: 1 })
+  for (let step = 1; step <= DRAG_STEPS; step++) {
+    await new Promise((done) => setTimeout(done, DRAG_STEP_MS))
+    await mouse('mouseMoved', {
+      x: from.x + ((to.x - from.x) * step) / DRAG_STEPS,
+      y: from.y + ((to.y - from.y) * step) / DRAG_STEPS
+    })
+  }
+  await mouse('mouseReleased', to, { buttons: 0, clickCount: 1 })
 }
 
 async function navigate({ tabId, url }) {
@@ -323,6 +370,11 @@ async function navigate({ tabId, url }) {
   await chrome.tabs.update(tabId, { url })
   await loaded(tabId)
   return tabInfo(tabId)
+}
+
+/** Brings a tab to the front of the agent's window, where only the selected tab draws properly. */
+async function selectTab({ tabId }) {
+  await whenTabsFree(() => chrome.tabs.update(tabId, { active: true }))
 }
 
 async function showTab({ tabId }) {
@@ -454,9 +506,10 @@ const OPERATIONS = {
   activeTab,
   tabInfo: ({ tabId }) => tabInfo(tabId),
   navigate,
-  screenshot,
+  drag,
+  selectTab,
   showTab,
-  closeTab: ({ tabId }) => chrome.tabs.remove(tabId),
+  closeTab: ({ tabId }) => whenTabsFree(() => chrome.tabs.remove(tabId)),
   detachAll,
   cdp,
   fetchFile,

@@ -490,7 +490,30 @@ describe('native browser agent tool handlers', () => {
       runId: 'run-1',
       allowedFileRoots: ['C:\\project']
     })
-    expect(service.open.mock.calls[0][1]).toEqual({ signal })
+    expect(service.open.mock.calls[0][1]).toEqual({ signal, look: false })
+  })
+
+  it('keeps uploads and scripts out of a batch, and stops one at the first failure', async () => {
+    const { registry, service } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    for (const tool of ['browser_upload', 'browser_evaluate', 'browser_sign_in']) {
+      const refused = await execute(registry, 'browser_batch', {
+        steps: [{ tool: 'browser_click', ref: 'ax-1-1' }, { tool }]
+      })
+      expect(refused.status).toBe('error')
+    }
+    expect(service.click).not.toHaveBeenCalled()
+
+    vi.mocked(service.click).mockRejectedValueOnce(new Error('Browser element is not visible'))
+    const stopped = await execute(registry, 'browser_batch', {
+      steps: [
+        { tool: 'browser_click', ref: 'ax-1-1' },
+        { tool: 'browser_click', ref: 'ax-1-2' }
+      ]
+    })
+    expect(stopped).toMatchObject({ status: 'error' })
+    expect(stopped.modelContent).toContain('Step 1 of 2')
+    expect(service.click).toHaveBeenCalledTimes(1)
   })
 
   it('shows the chat a reduced copy of the screenshot the model was shown, not the model', async () => {

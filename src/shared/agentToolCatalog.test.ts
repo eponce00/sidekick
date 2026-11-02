@@ -119,7 +119,6 @@ describe('canonical agent tool catalog', () => {
     })
     const hold = tool('browser_hold')
     expect(hold?.definition.function.parameters).toMatchObject({
-      required: ['duration_ms'],
       properties: { duration_ms: { minimum: 100, maximum: 10_000 } }
     })
     expect(hold?.definition.function.description).toContain('Never use it for CAPTCHA')

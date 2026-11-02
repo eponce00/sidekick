@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getBrowserPdfSession } from '../bootstrap/browserPdfSessionRegistry'
 import type { BrowserWorkspaceRequest } from '../../shared/browserWorkspace'
 import { AgentBrowserSessionManager } from './agentBrowserToolHandlers'
+import { credentialRedactor } from './credentialRedaction'
 import {
   BrowserCertificateError,
   type BrowserCertificateEvent,
@@ -104,7 +105,6 @@ class FakeSurface implements NativeBrowserSurface {
   loading = false
   screenshot = Buffer.from('same-png')
   fullPageScreenshot = Buffer.from('full-page-png')
-  mutationRevision = 0
   scrollX = 0
   scrollY = 0
   bodyText = 'Welcome to SideKick'
@@ -141,7 +141,6 @@ class FakeSurface implements NativeBrowserSurface {
   captureFailures = 0
   captureAttempts = 0
   captureErrorMessage = 'UnknownVizError'
-  mutateDuringCapture = false
   scrollDuringCapture = false
   navigateDuringCapture = false
   revertStandaloneSelect = false
@@ -342,8 +341,7 @@ class FakeSurface implements NativeBrowserSurface {
         viewportWidth: this.viewport.width,
         viewportHeight: this.viewport.height,
         scrollX: this.scrollX,
-        scrollY: this.scrollY,
-        mutationRevision: this.mutationRevision
+        scrollY: this.scrollY
       } as T
     }
     if (source.includes('window.innerWidth')) {
@@ -352,9 +350,6 @@ class FakeSurface implements NativeBrowserSurface {
         height: this.viewport.height,
         deviceScaleFactor: this.viewport.deviceScaleFactor ?? 1
       } as T
-    }
-    if (source.includes("Symbol.for('io.sidekick.browser.mutation-state')")) {
-      return this.mutationRevision as T
     }
     if (source.includes('document.body.innerText.includes')) {
       const encoded = source.match(/includes\((.*)\) : false/)?.[1]
@@ -369,10 +364,6 @@ class FakeSurface implements NativeBrowserSurface {
     if (this.captureFailures > 0) {
       this.captureFailures--
       throw new Error(this.captureErrorMessage)
-    }
-    if (this.mutateDuringCapture) {
-      this.mutateDuringCapture = false
-      this.mutationRevision++
     }
     if (this.scrollDuringCapture) {
       this.scrollDuringCapture = false
@@ -1903,7 +1894,7 @@ describe('NativeBrowserSessionService', () => {
     })
     expect(hovered.observation.pointer).toMatchObject({ x: 640, y: 400 })
 
-    surface.mutationRevision++
+    surface.scrollY += 100
     await expect(
       service.hover({
         sessionId: opened.sessionId,
@@ -1927,11 +1918,7 @@ describe('NativeBrowserSessionService', () => {
       })
     ).rejects.toThrow('require the screenshot_id')
 
-    for (const instability of [
-      'mutateDuringCapture',
-      'scrollDuringCapture',
-      'navigateDuringCapture'
-    ] as const) {
+    for (const instability of ['scrollDuringCapture', 'navigateDuringCapture'] as const) {
       surface[instability] = true
       const unstable = await service.observe(opened.sessionId)
       await expect(
@@ -1940,6 +1927,58 @@ describe('NativeBrowserSessionService', () => {
           target: { screenshotId: unstable.screenshot!.id, coordinates: { x: 10, y: 10 } }
         })
       ).rejects.toThrow('screenshot is stale')
+    }
+  })
+
+  it('finds what lies past the listed part of a long page, and never confirms a stored secret', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'find-long-page', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    surface.extraAxNodes = [
+      ...Array.from({ length: 900 }, (_, index) => ({
+        nodeId: `filler-${index}`,
+        parentId: 'root',
+        role: { value: 'link' },
+        name: { value: `Filler ${index}` },
+        backendDOMNodeId: 1000 + index
+      })),
+      {
+        nodeId: 'label-holder',
+        parentId: 'root',
+        ignored: true,
+        role: { value: 'none' },
+        backendDOMNodeId: 5000,
+        childIds: ['label']
+      },
+      {
+        nodeId: 'label',
+        parentId: 'label-holder',
+        role: { value: 'StaticText' },
+        name: { value: '3M' }
+      },
+      {
+        nodeId: 'token',
+        parentId: 'root',
+        role: { value: 'StaticText' },
+        name: { value: 'shown-token-value' }
+      }
+    ]
+
+    const whole = await service.observe(opened.sessionId)
+    expect(whole.semanticSnapshot).not.toContain('"3M"')
+
+    const found = await service.observe(opened.sessionId, { find: '3m', screenshot: 'none' })
+    expect(found.semanticSnapshot).toMatch(/^- StaticText "3M" \[ref=ax-\d+-5000\]/)
+
+    credentialRedactor.setSecrets([{ alias: 'shop', value: 'shown-token-value' }])
+    try {
+      const guessed = await service.observe(opened.sessionId, {
+        find: 'shown-token',
+        screenshot: 'none'
+      })
+      expect(guessed.semanticNodeCount).toBe(0)
+    } finally {
+      credentialRedactor.setSecrets([])
     }
   })
 
@@ -2060,7 +2099,7 @@ describe('NativeBrowserSessionService', () => {
         target: { role: 'combobox', name: 'Language' },
         values: ['Spanish']
       })
-    ).rejects.toThrow('changed the page')
+    ).resolves.toMatchObject({ note: expect.stringContaining('could not be read back') })
   })
 
   it('verifies a select rendered through the local PDF logical URL', async () => {

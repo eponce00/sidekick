@@ -141,7 +141,10 @@ function presentationTitle(
     return {
       kind,
       title:
-        args.action === 'url' ? `Navigate to ${url || 'page'}` : `Browser ${String(args.action)}`,
+        // The action defaults to url, and may not have arrived yet while the call streams in.
+        !args.action || args.action === 'url'
+          ? `Navigate to ${url || 'page'}`
+          : `Browser ${String(args.action)}`,
       subject: url
     }
   if (name === 'browser_resize')
@@ -996,21 +999,31 @@ const browserUseMyTab = definition(
 
 const browserObserve = definition(
   'browser_observe',
-  'Inspect the current browser state. Returns the screenshot as real vision input plus URL, title, viewport, semantic interactive elements, accessibility information, console errors, failed requests, screenshot hash, and whether the visual state changed. Use after UI changes and before claiming visual verification.',
+  'Inspect the current browser state: screenshot as real vision input, URL, title, viewport, elements with refs, console errors, failed requests, and whether it changed. Use after UI changes and before claiming visual verification.',
   {
     type: 'object',
     properties: {
+      find: {
+        type: 'string',
+        description:
+          'List only elements with this in their text or role, across the whole page, with refs. Skips the screenshot unless asked.'
+      },
+      text: {
+        type: 'boolean',
+        description: "Read the page's text instead, 20,000 characters at a time."
+      },
+      text_from: { type: 'number', description: 'With text: where to carry on from.' },
       full_page: {
         type: 'boolean',
-        description: 'Capture the complete page instead of only the viewport.'
+        description: 'Capture the whole page.'
       },
       include_screenshot: {
         type: 'boolean',
-        description: 'Include a visual screenshot. Defaults to true.'
+        description: 'Defaults to true.'
       },
       include_accessibility: {
         type: 'boolean',
-        description: 'Include the bounded accessibility tree. Defaults to true.'
+        description: 'Defaults to true.'
       },
       max_elements: {
         type: 'number',
@@ -1024,16 +1037,42 @@ const browserObserve = definition(
 
 const browserScreenshot = definition(
   'browser_screenshot',
-  'Capture the current page or one semantic element as real vision input. Use browser_observe when semantic page state and diagnostics are also needed.',
+  'Capture the page, one element, or a zoomed region as real vision input.',
   {
     type: 'object',
     properties: {
       full_page: { type: 'boolean' },
-      ref: { type: 'string', description: 'Element reference from the latest observation.' },
-      selector: { type: 'string', description: 'CSS selector fallback.' },
-      description: {
-        type: 'string',
-        description: 'What the screenshot is intended to verify.'
+      ref: { type: 'string' },
+      selector: { type: 'string' },
+      region: {
+        type: 'object',
+        properties: {
+          x: { type: 'number' },
+          y: { type: 'number' },
+          width: { type: 'number' },
+          height: { type: 'number' }
+        },
+        description: 'Zoom into this part of the latest image.'
+      },
+      description: { type: 'string' }
+    }
+  }
+)
+
+const browserBatch = definition(
+  'browser_batch',
+  'Run several browser actions in order, in one call: far faster than one at a time when you can already predict them, such as opening a menu and choosing from it. Stops at the first that fails. Only the last step reports back in full, so make it a look if you want to see the result.',
+  {
+    type: 'object',
+    required: ['steps'],
+    properties: {
+      steps: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 20,
+        description:
+          "Each has tool, one of browser_click, browser_type, browser_press, browser_select, browser_fill_form, browser_scroll, browser_hover, browser_hold, browser_wait, browser_navigate, browser_tabs, browser_observe or browser_screenshot, and that tool's arguments. A ref from your last look can go stale if an earlier step changes the page.",
+        items: { type: 'object' }
       }
     }
   }
@@ -1078,10 +1117,9 @@ const browserClick = definition(
 
 const browserHold = definition(
   'browser_hold',
-  'Press and hold an ordinary browser control with real mouse down/up events, then return compact verified page state. Use for legitimate sliders, maps, canvases, and application controls. Never use it for CAPTCHA, anti-bot, or human-verification challenges; call browser_request_human instead. Coordinate targets require the current viewport screenshot_id.',
+  'Press and hold a control, or drag it to to_x and to_y, using real mouse events. For sliders, maps, canvases and the like. Start from a ref when there is one: small handles are easy to miss by eye. Never use it for CAPTCHA, anti-bot, or human-verification challenges; call browser_request_human instead.',
   {
     type: 'object',
-    required: ['duration_ms'],
     anyOf: [
       { required: ['ref'] },
       { required: ['selector'] },
@@ -1105,16 +1143,10 @@ const browserHold = definition(
         description: 'ID of the current viewport screenshot used to choose x and y.'
       },
       button: { type: 'string', enum: ['left', 'middle', 'right'] },
-      duration_ms: {
-        type: 'integer',
-        minimum: 100,
-        maximum: 10000,
-        description: 'How long to hold the pointer down before release.'
-      },
-      include_screenshot: {
-        type: 'boolean',
-        description: 'Attach a fresh image when visual state is needed. Defaults to auto.'
-      }
+      to_x: { type: 'number', minimum: 0, description: 'Drag to here, on the latest image.' },
+      to_y: { type: 'number', minimum: 0 },
+      duration_ms: { type: 'integer', minimum: 100, maximum: 10000 },
+      include_screenshot: { type: 'boolean', description: 'Defaults to auto.' }
     }
   }
 )
@@ -1531,6 +1563,7 @@ const browserTools = [
   browserOpen,
   browserObserve,
   browserScreenshot,
+  browserBatch,
   browserClick,
   browserHold,
   browserRequestHuman,

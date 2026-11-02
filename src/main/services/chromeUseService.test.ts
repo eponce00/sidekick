@@ -151,6 +151,17 @@ describe('what the agent may reach in Chrome', () => {
     )
     await service.beforePress('Details', 'https://shop.example/', signal)
     expect(confirmPress).toHaveBeenCalledTimes(1)
+    // What a control does comes first, however long its name; a calendar day only describes itself.
+    await service
+      .beforePress('Buy now for $99 with free delivery by Friday', 'https://shop.example/', signal)
+      .catch(() => undefined)
+    expect(confirmPress).toHaveBeenCalledTimes(2)
+    await service.beforePress(
+      '12, Thursday, November 2026. This day is only available for checkout.',
+      'https://stays.example/',
+      signal
+    )
+    expect(confirmPress).toHaveBeenCalledTimes(2)
   })
 })
 
@@ -237,7 +248,12 @@ describe('the browser tools in Chrome', () => {
     const fitPicture = vi.fn((picture: Buffer) => picture)
     const runtime = new ChromeBrowserRuntime(
       { send: send as never, onEvent: () => () => undefined },
-      { showPointer: () => undefined, fitPicture }
+      {
+        showPointer: () => undefined,
+        fitPicture,
+        showLook: () => undefined,
+        cropPicture: () => Buffer.alloc(0)
+      }
     )
     const surface = await runtime.createSurface()
     expect(await surface.captureViewport()).toMatchObject({ width: 800, height: 600 })

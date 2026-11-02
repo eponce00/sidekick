@@ -119,7 +119,7 @@ the text.
   mode and loads its extension from your computer. There's no store and nothing to maintain, and it updates by itself along with SideKick. It takes about 10 seconds, with the same glow and pointer as when the agent works in an app, and Esc stops it. Work profiles aren't offered. If it can't
   finish, SideKick shows you the steps. **Disconnect** in Settings removes the extension from Chrome,
   or the next time Chrome is open if it's closed. Developer mode stays on, in case you use it yourself.
-- **It works in a tab group named 🤖 SideKick,** in your Chrome window, without taking you off your tab. Say
+- **It works in a separate Chrome window,** in a tab group named 🤖 SideKick, which opens without taking you off what you're doing. Say
   "continue in the tab I have open" and SideKick shows you which tab that is and asks you to share it. The
   agent then picks up from what you've done there, and your tab stays where it is.
 - **It asks where it matters.** Turning this on covers ordinary sites. Sites for your email, money or account
@@ -156,7 +156,7 @@ boxes are checked and what is open or closed. In an app with a very long list, t
 the outline and reads the rest as it needs it.
 
 The native browser catalog includes `browser_open`, `browser_observe`, `browser_screenshot`,
-`browser_click`, `browser_type`, `browser_sign_in`, `browser_select`, `browser_fill_form`, `browser_scroll`, `browser_hover`,
+`browser_batch`, `browser_click`, `browser_type`, `browser_sign_in`, `browser_select`, `browser_fill_form`, `browser_scroll`, `browser_hover`,
 `browser_wait`, `browser_navigate`, `browser_tabs`, `browser_console`, `browser_network`,
 inspection-only `browser_evaluate`, `browser_verify`, `browser_list_webmcp_tools` and
 `browser_call_webmcp_tool` for [tools a website offers](BROWSER.md#tools-that-websites-offer), and
