@@ -950,6 +950,7 @@ export class AgentToolRuntime {
     if (name === 'browser_click')
       return `Click ${stringArg(args, 'text') || stringArg(args, 'selector') || stringArg(args, 'ref') || 'browser element'}`
     if (name === 'browser_hold') return 'Press and hold browser control'
+    if (name === 'browser_batch') return 'Run browser steps'
     if (name === 'browser_request_human') {
       const reason = stringArg(args, 'reason')
       return reason ? `Waiting for you in the browser: ${reason}` : 'Waiting for you in the browser'

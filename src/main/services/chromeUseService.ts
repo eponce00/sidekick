@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'async_hooks'
-import { ComputerUseRefusal, RISKY_CONTROL } from './computerUseService'
+import { ComputerUseRefusal, soundsRisky } from './computerUseService'
 import type { NativeBrowserPolicy, NativeBrowserSurface } from './nativeBrowserSessionService'
 
 const WAIT_FOR_CHROME_MS = 35_000
@@ -227,15 +227,11 @@ export class ChromeUseService implements NativeBrowserPolicy {
       .catch(() => undefined)
   }
 
-  /** The latest look at the tab, for the corner label. It keeps the glow: it's for the user to see. */
-  async refreshPreview(id: string): Promise<void> {
-    const tabId = this.chats.get(id)?.current
-    if (tabId === undefined || !this.driving.has(id)) return
-    const shot = await this.deps.bridge
-      .send<{ data: string }>('screenshot', { tabId }, this.quiet)
-      .catch(() => null)
-    // It may have been stopped while the picture was on its way.
-    if (shot?.data && this.driving.has(id)) this.deps.overlay.preview(shot)
+  /** The picture the agent just took of a tab, for the corner label. A second capture just for that held up the next action. */
+  showLook(tabId: number, data: string): void {
+    for (const id of this.driving) {
+      if (this.chats.get(id)?.current === tabId) return this.deps.overlay.preview({ data })
+    }
   }
 
   /** Chrome open with the extension in it, or the question that gets it there. */
@@ -287,7 +283,7 @@ export class ChromeUseService implements NativeBrowserPolicy {
 
   /** Things that can't be taken back ask the user, not the model: a page can talk a model into anything. */
   async beforePress(name: string, pageUrl: string, signal?: AbortSignal): Promise<void> {
-    if (!RISKY_CONTROL.test(name)) return
+    if (!soundsRisky(name)) return
     if (!(await this.deps.confirmPress(name, originOf(pageUrl), signal ?? this.quiet))) {
       throw new ComputerUseRefusal(
         `The user did not allow pressing "${name}", so nothing was sent. Do not try to do it another way.`

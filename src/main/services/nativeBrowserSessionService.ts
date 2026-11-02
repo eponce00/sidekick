@@ -14,6 +14,7 @@ import {
 } from './browserCertificatePolicy'
 import { createHash, randomUUID } from 'crypto'
 import { browserTextTargetOwnsFocus } from './browserTextFocus'
+import { credentialRedactor } from './credentialRedaction'
 import { locateWorkspacePath, resolveSecureWorkspacePath } from '../utils/workspacePaths'
 import { atomicNewFile } from '../utils/atomicNewFile'
 import { capturePublicationDirectory } from '../utils/publicationDirectory'
@@ -91,6 +92,13 @@ export interface BrowserOperationOptions {
   signal?: AbortSignal
   /** Absolute Unix time in milliseconds. */
   deadlineAt?: number
+  /**
+   * False: an action comes back without a picture, unless it had no effect. A picture is the slowest thing
+   * a step can ask of a browser, and stalls on some pages, so it waits until someone wants to see one.
+   */
+  look?: boolean
+  /** A step inside a batch: only the last says what it found, so the rest skip reading the page. */
+  quick?: boolean
   /** Relative timeout. The earliest of timeoutMs and deadlineAt wins. */
   timeoutMs?: number
 }
@@ -128,6 +136,8 @@ export interface BrowserObservationOptions {
   screenshot?: BrowserScreenshotKind | 'none'
   includeSemanticSnapshot?: boolean
   semanticDepth?: number
+  /** List only the elements whose text or role has this in it, wherever they are on the page. */
+  find?: string
 }
 
 export type BrowserScreenshotKind = 'viewport' | 'fullPage' | 'element'
@@ -239,6 +249,10 @@ export interface BrowserActionResult {
   durationMs: number
   /** The page asked for a file, and is waiting on browser_upload. */
   fileChooserOpened?: boolean
+  /** What a click by position landed on, since the page may have moved after the screenshot. */
+  pressed?: string
+  /** Something about how it went that the agent should know. */
+  note?: string
   quiescence: BrowserQuiescenceResult
   loopProtection: {
     unchangedRepeatCount: number
@@ -259,6 +273,8 @@ export interface BrowserScreenshotInput {
   tabId?: string
   kind?: BrowserScreenshotKind
   target?: BrowserTarget
+  /** A part of the current viewport image, drawn again larger, for what's too small to read in it. */
+  zoom?: { screenshotId?: string; x: number; y: number; width: number; height: number }
 }
 
 export interface BrowserNavigateInput {
@@ -284,6 +300,8 @@ export interface BrowserHoldInput {
   button?: 'left' | 'middle' | 'right'
   /** Bounded duration for ordinary press-and-hold UI controls. */
   durationMs: number
+  /** Moves here while held, on the viewport image the target's screenshotId names. */
+  dragTo?: { x: number; y: number }
 }
 
 export interface BrowserTypeInput {
@@ -645,6 +663,14 @@ export interface NativeBrowserSurface {
   clearAgentViewport?(): Promise<void>
   executeJavaScript<T>(source: string): Promise<T>
   captureViewport(): Promise<NativeBrowserSurfaceCapture>
+  /** A whole drag in one go, for a browser where each input event is a trip away. */
+  drag?(
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    button: 'left' | 'middle' | 'right'
+  ): Promise<void>
+  /** Enlarged from what's on screen, for a tab that can't be resized to draw it again larger. */
+  captureViewportPart?(box: BrowserCaptureBox, scale: number): Promise<NativeBrowserSurfaceCapture>
   attachDebugger(): Promise<void>
   detachDebugger(): void
   sendDebuggerCommand<T>(method: string, params?: Record<string, unknown>): Promise<T>
@@ -708,6 +734,55 @@ const POLICY_CONTROL_SCRIPT = `function () {
 }`
 
 const QUIET_SCRIPT_TIMEOUT_MS = 5_000
+
+/**
+ * What a person would press for an element. Many sites hide the real radio button or checkbox and show its
+ * label, so the element itself has no size, and pressing the label is how it gets chosen.
+ */
+const SHOWN_BY_SCRIPT = `const shownBy = (element) => {
+  const box = element.getBoundingClientRect()
+  if (box.width > 0 && box.height > 0) return element
+  return element.labels?.[0] ?? element.closest?.('label') ?? element
+}`
+
+/** What's on top of an element, if it's a control of its own, after moving the element to the middle. */
+const BRING_CLEAR_SCRIPT = `function () {
+  ${SHOWN_BY_SCRIPT}
+  const shown = shownBy(this)
+  const root = this.getRootNode()
+  const related = (hit) =>
+    hit === this ||
+    this.contains(hit) ||
+    hit.contains(this) ||
+    hit.closest?.('label')?.control === this ||
+    Array.from(this.labels ?? []).some((label) => label.contains(hit))
+  const top = () => {
+    const box = shown.getBoundingClientRect()
+    return (root.elementFromPoint ?? document.elementFromPoint).call(
+      root,
+      box.x + box.width / 2,
+      box.y + box.height / 2
+    )
+  }
+  let hit = top()
+  if (hit && related(hit)) return undefined
+  shown.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
+  hit = top()
+  if (!hit || related(hit)) return undefined
+  const CONTROL = 'a, button, input, select, textarea, [role=button], [role=link]'
+  const control = hit.closest?.(CONTROL)
+  if (!control || control.contains(this)) return undefined
+  const nameOf = (element) =>
+    String(element.getAttribute('aria-label') || element.innerText || element.value || '')
+      .replace(/\\s+/g, ' ')
+      .trim()
+      .slice(0, 60)
+  const own = this.closest?.(CONTROL) ?? this
+  // A list row often lays a second link to the same place over its first: the same control, as far as a person can tell.
+  if (nameOf(control) === nameOf(own) || (control.href && control.href === own.href)) return undefined
+  const name = nameOf(control)
+  return name ? JSON.stringify(name) : 'another control'
+}`
 
 /** Whether a filled-in secret field is on the page, and what a script reading cookies would find. */
 const PAGE_SECRETS_SCRIPT = `(() => {
@@ -797,7 +872,6 @@ interface CoordinateCaptureState {
   viewportHeight: number
   scrollX: number
   scrollY: number
-  mutationRevision: number
 }
 
 interface TabState {
@@ -818,6 +892,7 @@ interface TabState {
   consoleCursor: number
   networkCursor: number
   lastPointer?: BrowserPointer
+  urlAtActionStart?: string
   lastViewportScreenshot?: {
     id: string
     imageWidth: number
@@ -853,6 +928,9 @@ interface OpeningReservation {
 
 interface SessionState {
   id: string
+  /** Whether the action holding the session's lock is to come back with a picture. */
+  lookAfterAction?: boolean
+  quickAction?: boolean
   runId: string
   partition: string
   allowedFileRoots: string[]
@@ -905,6 +983,16 @@ const DEFAULT_MAX_TELEMETRY = 2_000
 const DEFAULT_MAX_REPEATED_NO_CHANGE = 3
 const MAX_SEMANTIC_NODES = 800
 const MAX_SEMANTIC_CHARS = 96 * 1024
+const MAX_TREE_TRIES = 12
+const SPARSE_TREE_NODES = 8
+const SPARSE_TREE_TEXT = 200
+const NEW_PAGE_QUIET_MS = 600
+const NEW_PAGE_WAIT_MS = 3_000
+const DRAG_STEPS = 8
+const DRAG_STEP_MS = 15
+const MAX_ZOOM = 4
+const MAX_PAGE_TEXT = 20_000
+const MAX_ZOOM_WIDTH = 1600
 const MAX_EVALUATION_BYTES = 64 * 1024
 const MIN_HOLD_MS = 100
 const MAX_HOLD_MS = 10_000
@@ -2024,7 +2112,7 @@ export class NativeBrowserSessionService {
     this.openingReservations.add(reservation)
     try {
       signal?.throwIfAborted()
-      return await this.openReserved(input, signal, reservation)
+      return await this.openReserved(input, signal, reservation, operation.look !== false)
     } finally {
       reservation.abandoned = true
       if (this.openingReservations.has(reservation) && !reservation.creating) {
@@ -2096,7 +2184,8 @@ export class NativeBrowserSessionService {
   private async openReserved(
     input: BrowserOpenInput,
     signal: AbortSignal | undefined,
-    reservation: OpeningReservation
+    reservation: OpeningReservation,
+    look: boolean
   ): Promise<BrowserObservation> {
     const viewport = this.normalizeViewport(input.viewport ?? this.defaultViewport)
     const allowedFileRoots = await this.resolveFileRoots(input.allowedFileRoots ?? [])
@@ -2169,7 +2258,7 @@ export class NativeBrowserSessionService {
         session,
         {
           tabId: tab.id,
-          screenshot: 'viewport',
+          screenshot: look ? 'viewport' : 'none',
           includeSemanticSnapshot: true
         },
         signal
@@ -2716,6 +2805,8 @@ export class NativeBrowserSessionService {
     try {
       await abortable(previous, signal)
       this.assertCurrentSession(session)
+      session.lookAfterAction = operation.look !== false
+      session.quickAction = operation.quick === true
       return await body(signal)
     } finally {
       release()
@@ -3162,7 +3253,12 @@ export class NativeBrowserSessionService {
     let semanticSnapshot: string | undefined
     let semanticNodeCount: number | undefined
     if (options.includeSemanticSnapshot !== false) {
-      const semantic = await this.captureSemanticSnapshot(tab, options.semanticDepth, signal)
+      const semantic = await this.captureSemanticSnapshot(
+        tab,
+        options.semanticDepth,
+        signal,
+        options.find
+      )
       semanticSnapshot = semantic.snapshot
       semanticNodeCount = semantic.count
     }
@@ -3176,7 +3272,11 @@ export class NativeBrowserSessionService {
         screenshot = await this.captureAndStore(session, tab, screenshotKind, undefined, signal)
       } catch (error) {
         signal?.throwIfAborted()
-        if (!isTransientViewportCaptureError(error) || tab.surface.isDestroyed()) throw error
+        // A step's outcome doesn't depend on a picture of it. One that's stalled can be asked for again.
+        const stalled = /no picture of this tab in time/i.test(String(error))
+        if ((!stalled && !isTransientViewportCaptureError(error)) || tab.surface.isDestroyed()) {
+          throw error
+        }
         screenshotError =
           'Screenshot temporarily unavailable; no image was captured. The tab remains open. Observe again before making visual claims.'
       }
@@ -3320,30 +3420,47 @@ export class NativeBrowserSessionService {
   private async captureSemanticSnapshot(
     tab: TabState,
     requestedDepth?: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    find?: string
   ): Promise<{ snapshot: string; count: number }> {
+    const wanted = find?.trim().toLowerCase() || undefined
+    const shown = new Set<string>()
+    let unreadFrames = 0
     const depth =
       requestedDepth === undefined ? undefined : boundedInteger(requestedDepth, 1, 30, 'depth')
-    const response = await abortable(
-      tab.surface.sendDebuggerCommand<{ nodes: CDPAXNode[] }>(
-        'Accessibility.getFullAXTree',
-        depth ? { depth } : undefined
-      ),
-      signal
-    )
-    let allNodes = response.nodes ?? []
+    let allNodes: CDPAXNode[] = []
+    // Just after a navigation the tree can be all but empty, with the page already on screen.
+    for (let attempt = 0; attempt < MAX_TREE_TRIES; attempt++) {
+      if (attempt) await delay(250, signal)
+      const response = await abortable(
+        tab.surface.sendDebuggerCommand<{ nodes: CDPAXNode[] }>(
+          'Accessibility.getFullAXTree',
+          depth ? { depth } : undefined
+        ),
+        signal
+      )
+      allNodes = response.nodes ?? []
+      if (allNodes.length >= SPARSE_TREE_NODES) break
+      const textLength = await abortable(
+        tab.surface.executeJavaScript<number>('document.body?.innerText.length ?? 0'),
+        signal
+      ).catch(() => 0)
+      if (!(textLength > SPARSE_TREE_TEXT)) break
+    }
     let nodes = new Map(allNodes.map((node) => [node.nodeId, node]))
     tab.refs.clear()
     tab.semanticNodes = []
     let emitted = 0
     let output = ''
-    const visit = (node: CDPAXNode, level: number): void => {
-      if (emitted >= MAX_SEMANTIC_NODES || output.length >= MAX_SEMANTIC_CHARS) return
+    // The whole page gets refs even past what the list shows, so a control further down can still be
+    // named or found.
+    const visit = (node: CDPAXNode, level: number, element?: number): void => {
       const role = valueOf(node.role) || 'generic'
       const name = valueOf(node.name)
       const ignored = node.ignored === true
+      const isText = role === 'StaticText' || role === 'InlineTextBox'
       let ref = ''
-      if (!ignored && node.backendDOMNodeId && role !== 'StaticText' && role !== 'InlineTextBox') {
+      if (!ignored && node.backendDOMNodeId && !isText) {
         ref = `ax-${tab.refEpoch}-${node.backendDOMNodeId}`
         const semanticRef: SemanticRef = {
           ref,
@@ -3355,7 +3472,33 @@ export class NativeBrowserSessionService {
         tab.refs.set(ref, semanticRef)
         tab.semanticNodes.push(semanticRef)
       }
-      if (!ignored && (role !== 'generic' || name || ref)) {
+      // Matched once any stored secret is out of it, so a guess can't confirm one.
+      const matches =
+        wanted !== undefined &&
+        role !== 'InlineTextBox' &&
+        credentialRedactor
+          .redact(`${role} ${name} ${valueOf(node.description)}`)
+          .toLowerCase()
+          .includes(wanted)
+      // Plain text has no ref of its own, and a label like "3M" is often all a custom tab has. The
+      // element holding it is what a click wants, and it may be ignored in the tree.
+      if (matches && isText && element) {
+        ref = `ax-${tab.refEpoch}-${element}`
+        if (!tab.refs.has(ref)) {
+          tab.refs.set(ref, {
+            ref,
+            backendNodeId: element,
+            role: 'generic',
+            name,
+            epoch: tab.refEpoch
+          })
+        }
+      }
+      const listed =
+        wanted === undefined ? !ignored && (role !== 'generic' || name || ref) : matches && !ignored
+      const room = emitted < MAX_SEMANTIC_NODES && output.length < MAX_SEMANTIC_CHARS
+      if (listed && room && !(wanted !== undefined && ref && shown.has(ref))) {
+        if (ref) shown.add(ref)
         const attributes: string[] = []
         if (ref) attributes.push(`ref=${ref}`)
         for (const property of node.properties ?? []) {
@@ -3378,7 +3521,8 @@ export class NativeBrowserSessionService {
         if (value && value !== name) attributes.push(`value=${quoteSnapshot(value)}`)
         const description = valueOf(node.description)
         if (description) attributes.push(`description=${quoteSnapshot(description)}`)
-        const line = `${'  '.repeat(Math.min(level, 20))}- ${role}${name ? ` ${quoteSnapshot(name)}` : ''}${attributes.length ? ` [${attributes.join(' ')}]` : ''}\n`
+        const indent = wanted === undefined ? '  '.repeat(Math.min(level, 20)) : ''
+        const line = `${indent}- ${role}${name ? ` ${quoteSnapshot(name)}` : ''}${attributes.length ? ` [${attributes.join(' ')}]` : ''}\n`
         if (output.length + line.length <= MAX_SEMANTIC_CHARS) {
           output += line
           emitted++
@@ -3386,7 +3530,13 @@ export class NativeBrowserSessionService {
       }
       for (const childId of node.childIds ?? []) {
         const child = nodes.get(childId)
-        if (child) visit(child, level + (ignored ? 0 : 1))
+        if (child) {
+          visit(
+            child,
+            level + (ignored ? 0 : 1),
+            !isText && node.backendDOMNodeId ? node.backendDOMNodeId : element
+          )
+        }
       }
     }
     const visitRoots = (level: number): void => {
@@ -3405,12 +3555,18 @@ export class NativeBrowserSessionService {
       ).catch(() => null)
       if (!inFrame) {
         // On another site, where the debugger on this tab can't see.
-        output += `- note: the frame from ${quoteSnapshot(frame.url)} can't be read. Use a screenshot and coordinates to click in it.\n`
+        unreadFrames++
+        if (wanted === undefined) {
+          output += `- note: the frame from ${quoteSnapshot(frame.url)} can't be read. Use a screenshot and coordinates to click in it.\n`
+        }
         continue
       }
       // A sign-in or card form in a frame stays out of the agent's reach, all of it.
       if (await this.holdsSecretField(tab, inFrame.nodes ?? [], signal)) {
-        output += `- note: the frame from ${quoteSnapshot(frame.url)} holds a sign-in or payment form, so it isn't read. Ask the user to fill it.\n`
+        unreadFrames++
+        if (wanted === undefined) {
+          output += `- note: the frame from ${quoteSnapshot(frame.url)} holds a sign-in or payment form, so it isn't read. Ask the user to fill it.\n`
+        }
         continue
       }
       allNodes = inFrame.nodes ?? []
@@ -3419,6 +3575,9 @@ export class NativeBrowserSessionService {
     }
     if (emitted >= MAX_SEMANTIC_NODES || output.length >= MAX_SEMANTIC_CHARS) {
       output += '... semantic snapshot truncated ...\n'
+    }
+    if (wanted !== undefined && emitted === 0) {
+      output = `- note: nothing on this page has ${quoteSnapshot(find ?? '')} in it.${unreadFrames ? ` ${unreadFrames} frame(s) can't be read, so it may be in one of those: use a screenshot and coordinates.` : ''}\n`
     }
     return { snapshot: output.trimEnd(), count: emitted }
   }
@@ -3467,6 +3626,31 @@ export class NativeBrowserSessionService {
     return frames
   }
 
+  /** The text a person reads on the page, a part at a time. */
+  async pageText(
+    sessionId: string,
+    from: number,
+    operation: BrowserOperationOptions = {}
+  ): Promise<{ url: string; title: string; text: string; from: number; total: number }> {
+    const session = this.getSession(sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, undefined)
+      if (await this.secretShownAsText(tab, signal)) throw new Error(SECRET_SHOWN_MESSAGE)
+      const whole = await abortable(
+        tab.surface.executeJavaScript<string>("document.body ? document.body.innerText : ''"),
+        signal
+      )
+      const text = typeof whole === 'string' ? whole : ''
+      return {
+        url: this.tabUrl(tab),
+        title: tab.surface.getTitle(),
+        text: text.slice(from, from + MAX_PAGE_TEXT),
+        from,
+        total: text.length
+      }
+    })
+  }
+
   async screenshot(
     input: BrowserScreenshotInput,
     operation: BrowserOperationOptions = {}
@@ -3480,7 +3664,8 @@ export class NativeBrowserSessionService {
         tab,
         input.kind ?? (input.target ? 'element' : 'viewport'),
         input.target,
-        signal
+        signal,
+        input.zoom
       )
     })
   }
@@ -3490,13 +3675,14 @@ export class NativeBrowserSessionService {
     tab: TabState,
     kind: BrowserScreenshotKind,
     target: BrowserTarget | undefined,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    zoom?: BrowserScreenshotInput['zoom']
   ): Promise<BrowserScreenshotArtifact> {
     const createdAt = this.now()
     const id = randomUUID()
     const captureStateBefore =
       kind === 'viewport' ? await this.coordinateCaptureState(tab, signal) : undefined
-    const capture = await this.captureRaw(tab, kind, target, signal)
+    const capture = await this.captureRaw(tab, kind, target, signal, zoom)
     const captureStateAfter =
       kind === 'viewport' ? await this.coordinateCaptureState(tab, signal) : undefined
     const stableCaptureState =
@@ -3603,7 +3789,8 @@ export class NativeBrowserSessionService {
     tab: TabState,
     kind: BrowserScreenshotKind,
     target: BrowserTarget | undefined,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    zoom?: BrowserScreenshotInput['zoom']
   ): Promise<NativeBrowserSurfaceCapture> {
     if (kind === 'viewport') {
       let lastError: unknown
@@ -3623,7 +3810,37 @@ export class NativeBrowserSessionService {
     }
 
     let elementBox: BrowserCaptureBox | undefined
-    if (kind === 'element') {
+    let scale: number | undefined
+    if (zoom) {
+      const screenshotId = zoom.screenshotId ?? tab.lastViewportScreenshot?.id
+      const from = await this.coordinatePoint(tab, screenshotId, zoom, signal)
+      const screenshot = tab.lastViewportScreenshot!
+      const to = await this.coordinatePoint(
+        tab,
+        screenshotId,
+        {
+          x: Math.min(zoom.x + zoom.width, screenshot.imageWidth - 1),
+          y: Math.min(zoom.y + zoom.height, screenshot.imageHeight - 1)
+        },
+        signal
+      )
+      if (to.x <= from.x || to.y <= from.y) throw new Error('The region to zoom into is empty')
+      const width = to.x - from.x
+      const height = to.y - from.y
+      scale = Math.min(MAX_ZOOM, MAX_ZOOM_WIDTH / width, MAX_ZOOM_WIDTH / height)
+      if (tab.surface.captureViewportPart) {
+        return abortable(
+          tab.surface.captureViewportPart({ x: from.x, y: from.y, width, height }, scale),
+          signal
+        )
+      }
+      elementBox = {
+        x: from.x + screenshot.scrollX,
+        y: from.y + screenshot.scrollY,
+        width,
+        height
+      }
+    } else if (kind === 'element') {
       if (!target) throw new Error('An element screenshot requires a semantic target')
       const resolved = await this.resolveTarget(tab, target, false, signal)
       if (!resolved.backendNodeId) {
@@ -3649,7 +3866,8 @@ export class NativeBrowserSessionService {
             signal
           )
       },
-      elementBox
+      elementBox,
+      scale
     )
   }
 
@@ -3939,7 +4157,8 @@ export class NativeBrowserSessionService {
         tab,
         backendNodeId,
         `function() {
-          const rect = this.getBoundingClientRect();
+          ${SHOWN_BY_SCRIPT}
+          const rect = shownBy(this).getBoundingClientRect();
           let x = rect.x;
           let y = rect.y;
           let view = window;
@@ -3974,6 +4193,34 @@ export class NativeBrowserSessionService {
     return rect
   }
 
+  /**
+   * Scrolled into view isn't the same as reachable: a sticky bar or a dialog can be over it, and a click there
+   * goes to them. Moves it to the middle if so. Another control still on top is refused, as pressing it
+   * isn't what was asked, and the rules for what may be pressed went by the element asked for.
+   */
+  private async bringClear(
+    tab: TabState,
+    backendNodeId: number,
+    signal?: AbortSignal
+  ): Promise<void> {
+    await abortable(
+      tab.surface.sendDebuggerCommand('DOM.scrollIntoViewIfNeeded', { backendNodeId }),
+      signal
+    ).catch(() => undefined)
+    const covering = await this.callOnNode<string | undefined>(
+      tab,
+      backendNodeId,
+      BRING_CLEAR_SCRIPT,
+      [],
+      signal
+    ).catch(() => undefined)
+    if (typeof covering === 'string') {
+      throw new Error(
+        `Browser element is covered by ${covering}, so nothing was pressed. Close it or use another way to the element.`
+      )
+    }
+  }
+
   private async elementBox(
     tab: TabState,
     backendNodeId: number,
@@ -3995,6 +4242,7 @@ export class NativeBrowserSessionService {
     if (hasSemantic) {
       try {
         const semanticRef = await this.semanticRefForTarget(tab, target, signal)
+        if (allowCoordinates) await this.bringClear(tab, semanticRef.backendNodeId, signal)
         const rect = await this.elementRect(tab, semanticRef.backendNodeId, signal)
         return {
           x: rect.x + rect.width / 2,
@@ -4010,6 +4258,7 @@ export class NativeBrowserSessionService {
     if (hasSelector) {
       try {
         const backendNodeId = await this.selectorBackendNode(tab, target, signal)
+        if (allowCoordinates) await this.bringClear(tab, backendNodeId, signal)
         const rect = await this.elementRect(tab, backendNodeId, signal)
         return {
           x: rect.x + rect.width / 2,
@@ -4026,13 +4275,24 @@ export class NativeBrowserSessionService {
       if (primaryError) throw primaryError
       throw new Error('Browser action requires a ref, semantic target, or CSS selector')
     }
-    if (!target.screenshotId) {
+    const point = await this.coordinatePoint(tab, target.screenshotId, target.coordinates, signal)
+    return { ...point, mode: 'coordinates', fallbackUsed: hasSemantic || hasSelector }
+  }
+
+  /** A point on a viewport image, as a point in the viewport, while that image still shows it. */
+  private async coordinatePoint(
+    tab: TabState,
+    screenshotId: string | undefined,
+    coordinates: { x: number; y: number },
+    signal?: AbortSignal
+  ): Promise<{ x: number; y: number }> {
+    if (!screenshotId) {
       throw new Error(
         'Browser coordinate actions require the screenshot_id from a current viewport observation'
       )
     }
     const screenshot = tab.lastViewportScreenshot
-    if (!screenshot || screenshot.id !== target.screenshotId) {
+    if (!screenshot || screenshot.id !== screenshotId) {
       throw new Error(
         'Browser screenshot is stale; observe the viewport again before using coordinates'
       )
@@ -4043,14 +4303,15 @@ export class NativeBrowserSessionService {
         'Browser screenshot is stale; observe the viewport again before using coordinates'
       )
     }
-    const imageX = finiteCoordinate(target.coordinates.x, 'target x')
-    const imageY = finiteCoordinate(target.coordinates.y, 'target y')
+    const imageX = finiteCoordinate(coordinates.x, 'target x')
+    const imageY = finiteCoordinate(coordinates.y, 'target y')
     if (imageX >= screenshot.imageWidth || imageY >= screenshot.imageHeight) {
       throw new Error('Browser coordinates are outside the referenced screenshot')
     }
-    const x = (imageX * screenshot.viewportWidth) / screenshot.imageWidth
-    const y = (imageY * screenshot.viewportHeight) / screenshot.imageHeight
-    return { x, y, mode: 'coordinates', fallbackUsed: hasSemantic || hasSelector }
+    return {
+      x: (imageX * screenshot.viewportWidth) / screenshot.imageWidth,
+      y: (imageY * screenshot.viewportHeight) / screenshot.imageHeight
+    }
   }
 
   async click(
@@ -4065,8 +4326,10 @@ export class NativeBrowserSessionService {
       await this.ensureBaselineHash(session, tab, signal)
       await this.assertAutomatedMutationAllowed(tab, signal)
       const target = await this.resolveTarget(tab, input.target, true, signal)
-      if (this.options.policy) {
-        const control = await this.controlFacts(tab, target, signal)
+      const byPosition = target.mode === 'coordinates'
+      const control =
+        this.options.policy || byPosition ? await this.controlFacts(tab, target, signal) : undefined
+      if (this.options.policy && control) {
         await this.options.policy.beforePress(control.name, tab.surface.getURL(), signal)
       }
       const startedAt = this.now()
@@ -4074,7 +4337,8 @@ export class NativeBrowserSessionService {
       tab.surface.focus()
       const button = input.button ?? 'left'
       const clickCount = input.clickCount ?? 1
-      return this.catchingFileChooser(tab, () => {
+      const pressed = byPosition && control?.name ? { pressed: control.name } : {}
+      const clicked = await this.catchingFileChooser(tab, () => {
         tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
         tab.surface.sendInputEvent({
           type: 'mouseDown',
@@ -4101,6 +4365,7 @@ export class NativeBrowserSessionService {
           signal
         )
       })
+      return { ...clicked, ...pressed }
     })
   }
 
@@ -4229,6 +4494,15 @@ export class NativeBrowserSessionService {
       await this.ensureBaselineHash(session, tab, signal)
       await this.assertAutomatedMutationAllowed(tab, signal)
       const target = await this.resolveTarget(tab, input.target, true, signal)
+      // A drag from a ref still has its end on a picture, which can only be the latest one the agent saw.
+      const end = input.dragTo
+        ? await this.coordinatePoint(
+            tab,
+            input.target.screenshotId ?? tab.lastViewportScreenshot?.id,
+            input.dragTo,
+            signal
+          )
+        : target
       if (this.options.policy) {
         const control = await this.controlFacts(tab, target, signal)
         await this.options.policy.beforePress(control.name, tab.surface.getURL(), signal)
@@ -4240,6 +4514,20 @@ export class NativeBrowserSessionService {
       this.setPointer(tab, target, 'hold', startedAt)
       tab.surface.focus()
       const button = input.button ?? 'left'
+      if (input.dragTo && tab.surface.drag) {
+        await abortable(tab.surface.drag(target, end, button), signal)
+        this.setPointer(tab, { ...end, mode: target.mode }, 'hold', startedAt)
+        return this.finishAction(
+          session,
+          tab,
+          'hold',
+          target.mode,
+          target.fallbackUsed,
+          fingerprint,
+          startedAt,
+          signal
+        )
+      }
       tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
       tab.surface.sendInputEvent({
         type: 'mouseDown',
@@ -4249,13 +4537,30 @@ export class NativeBrowserSessionService {
         clickCount: 1
       })
       try {
-        await delay(durationMs, signal)
+        if (input.dragTo) {
+          // Pages that follow a drag need to see it pass through, and a release straight after: one that
+          // redraws as a slider's value changes can lose a drag that lingers.
+          for (let step = 1; step <= DRAG_STEPS; step++) {
+            await delay(DRAG_STEP_MS, signal)
+            tab.surface.sendInputEvent({
+              type: 'mouseMove',
+              x: target.x + ((end.x - target.x) * step) / DRAG_STEPS,
+              y: target.y + ((end.y - target.y) * step) / DRAG_STEPS,
+              button,
+              modifiers: [`${button}buttondown` as const]
+            })
+          }
+          this.setPointer(tab, { ...end, mode: target.mode }, 'hold', startedAt)
+          await delay(DRAG_STEP_MS, signal)
+        } else {
+          await delay(durationMs, signal)
+        }
       } finally {
         if (!tab.surface.isDestroyed()) {
           tab.surface.sendInputEvent({
             type: 'mouseUp',
-            x: target.x,
-            y: target.y,
+            x: end.x,
+            y: end.y,
             button,
             clickCount: 1
           })
@@ -4333,6 +4638,7 @@ export class NativeBrowserSessionService {
       tab.surface.executeJavaScript<{ token?: unknown; id?: unknown }>(SETTLE_MARK_SCRIPT),
       signal
     ).catch(() => undefined)
+    tab.urlAtActionStart = tab.surface.getURL()
     tab.settleMark =
       typeof mark?.token === 'string' && typeof mark.id === 'string'
         ? { token: mark.token, id: mark.id, at }
@@ -5618,10 +5924,12 @@ export class NativeBrowserSessionService {
       // while a local PDF is rendered through the private sidekick-pdf://
       // surface. Compare the actual WebContents URL here so a successful PDF
       // selection is not mistaken for navigation.
+      // Sites often go to a new page as soon as a menu is chosen from, which is that working.
       if (tab.surface.getURL() !== sourceUrl || tab.refEpoch !== sourceRefEpoch) {
-        throw new Error(
-          'Browser select changed the page before its final selection could be verified'
-        )
+        return {
+          ...result,
+          note: 'The page changed as soon as this was chosen, so the choice could not be read back from the menu.'
+        }
       }
       const verificationNode = await this.resolveTarget(tab, verificationTarget, false, signal)
       const selectedAfterSettle = await this.callOnNode<string[]>(
@@ -6299,25 +6607,14 @@ export class NativeBrowserSessionService {
         viewportHeight: number
         scrollX: number
         scrollY: number
-        mutationRevision: number
       }>(`(() => {
         // io.sidekick.browser.coordinate-capture-state
-        const key = Symbol.for('io.sidekick.browser.mutation-state');
-        let mutationState = window[key];
-        if (!mutationState) {
-          mutationState = { revision: 0 };
-          const observer = new MutationObserver(() => mutationState.revision++);
-          observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-          mutationState.observer = observer;
-          window[key] = mutationState;
-        }
         return {
           sourceUrl: location.href,
           viewportWidth: window.innerWidth,
           viewportHeight: window.innerHeight,
           scrollX: window.scrollX,
-          scrollY: window.scrollY,
-          mutationRevision: mutationState.revision
+          scrollY: window.scrollY
         };
       })()`),
       signal
@@ -6330,14 +6627,15 @@ export class NativeBrowserSessionService {
       state.viewportWidth < 1 ||
       state.viewportHeight < 1 ||
       !Number.isFinite(state.scrollX) ||
-      !Number.isFinite(state.scrollY) ||
-      !Number.isFinite(state.mutationRevision)
+      !Number.isFinite(state.scrollY)
     ) {
       throw new Error('Unable to bind browser coordinates to the current viewport state')
     }
     return { ...state, refEpoch: tab.refEpoch }
   }
 
+  // A page's own changes don't count: many sites change something every moment, so the agent could
+  // never click by position there. The click reports what it landed on instead.
   private sameCoordinateCaptureState(
     left: CoordinateCaptureState,
     right: CoordinateCaptureState
@@ -6348,8 +6646,7 @@ export class NativeBrowserSessionService {
       left.viewportWidth === right.viewportWidth &&
       left.viewportHeight === right.viewportHeight &&
       left.scrollX === right.scrollX &&
-      left.scrollY === right.scrollY &&
-      left.mutationRevision === right.mutationRevision
+      left.scrollY === right.scrollY
     )
   }
 
@@ -6380,7 +6677,8 @@ export class NativeBrowserSessionService {
     signal?: AbortSignal
   ): Promise<BrowserQuiescenceResult> {
     const idleMs = boundedInteger(input.idleMs ?? 350, 50, 5_000, 'idleMs')
-    const maxWaitMs = boundedInteger(input.maxWaitMs ?? 5_000, idleMs, 30_000, 'maxWaitMs')
+    // Many real pages never go quiet, so the wait can't be for that. What's still moving shows in the result.
+    const maxWaitMs = boundedInteger(input.maxWaitMs ?? 2_000, idleMs, 30_000, 'maxWaitMs')
     const startedAt = this.now()
     const mark =
       tab.settleMark && startedAt - tab.settleMark.at < 60_000 ? tab.settleMark : undefined
@@ -6435,11 +6733,11 @@ export class NativeBrowserSessionService {
   }
 
   private async ensureBaselineHash(
-    _session: SessionState,
+    session: SessionState,
     tab: TabState,
     signal?: AbortSignal
   ): Promise<void> {
-    if (tab.lastScreenshotHashes.viewport) return
+    if (session.lookAfterAction === false || tab.lastScreenshotHashes.viewport) return
     const capture = await this.captureRaw(tab, 'viewport', undefined, signal)
     tab.lastScreenshotHashes.viewport = createHash('sha256').update(capture.png).digest('hex')
   }
@@ -6472,13 +6770,41 @@ export class NativeBrowserSessionService {
     signal?: AbortSignal,
     settledQuiescence?: BrowserQuiescenceResult
   ): Promise<BrowserActionResult> {
-    const quiescence = settledQuiescence ?? (await this.waitForQuiescence(tab, {}, signal))
-    const observation = await this.observeUnlocked(
+    let quiescence = settledQuiescence ?? (await this.waitForQuiescence(tab, {}, signal))
+    // A site that swaps its pages itself changes the address first and the page a moment later, with a gap
+    // in between that looks like quiet. What's read in that gap is the page it just left.
+    const leftThePage = tab.surface.getURL() !== tab.urlAtActionStart
+    if (leftThePage && !settledQuiescence) {
+      quiescence = await this.waitForQuiescence(
+        tab,
+        { idleMs: NEW_PAGE_QUIET_MS, maxWaitMs: NEW_PAGE_WAIT_MS },
+        signal
+      )
+    }
+    const look = session.lookAfterAction !== false
+    let observation = await this.observeUnlocked(
       session,
-      { tabId: tab.id, screenshot: 'viewport', includeSemanticSnapshot: true },
+      {
+        tabId: tab.id,
+        screenshot: look ? 'viewport' : 'none',
+        includeSemanticSnapshot: !session.quickAction
+      },
       signal
     )
-    const changed = observation.screenshotChanged !== false
+    // Without a picture to compare, what the page itself did says whether the action had an effect.
+    const moved = leftThePage || quiescence.mutationRevision > 0
+    if (!look && !moved && !session.quickAction) {
+      // Nothing to show for it, which is when the agent most needs to see what's there.
+      const screenshot = await this.captureAndStore(
+        session,
+        tab,
+        'viewport',
+        undefined,
+        signal
+      ).catch(() => undefined)
+      observation = { ...observation, screenshot, screenshotChanged: false }
+    }
+    const changed = look ? observation.screenshotChanged !== false : moved
     tab.actionHistory.push({ fingerprint, changed })
     if (tab.actionHistory.length > 30) tab.actionHistory.splice(0, tab.actionHistory.length - 30)
     let unchangedRepeatCount = 0
@@ -6785,13 +7111,21 @@ export class NativeBrowserSessionService {
     expression: string,
     signal?: AbortSignal
   ): Promise<{ json: string; truncated: boolean } | null> {
-    const secrets = await abortable(
-      tab.surface.sendDebuggerCommand<{
-        result?: { value?: { fields: boolean; cookies: string[] } }
-      }>('Runtime.evaluate', { expression: PAGE_SECRETS_SCRIPT, returnByValue: true }),
-      signal
-    )
-    const held = secrets.result?.value
+    const readSecrets = async (): Promise<{ fields: boolean; cookies: string[] } | undefined> => {
+      const secrets = await abortable(
+        tab.surface.sendDebuggerCommand<{
+          result?: { value?: { fields: boolean; cookies: string[] } }
+        }>('Runtime.evaluate', { expression: PAGE_SECRETS_SCRIPT, returnByValue: true }),
+        signal
+      )
+      return secrets.result?.value
+    }
+    // No answer at all is a page in the middle of changing, rather than one with something to hide.
+    let held = await readSecrets()
+    if (!held) {
+      await delay(300, signal)
+      held = await readSecrets()
+    }
     if (!held || held.fields) return null
     // Inside the look, so that a getter or toJSON of the script's own can't run outside it.
     const answer = await abortable(

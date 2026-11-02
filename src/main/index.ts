@@ -357,6 +357,11 @@ if (ownsSingleInstance) {
   void app
     .whenReady()
     .then(bootstrapApplication)
+    .then(async () => {
+      if (!is.dev || !process.env.SIDEKICK_TOOL_PROBE) return
+      const { startBrowserToolProbe } = await import('./diagnostics/browserToolProbe')
+      await startBrowserToolProbe(Number(process.env.SIDEKICK_TOOL_PROBE))
+    })
     .catch((error: unknown) => {
       const message = error instanceof Error ? error.stack || error.message : String(error)
       console.error('[Startup] Application initialization failed:', error)

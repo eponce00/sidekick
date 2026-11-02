@@ -64,6 +64,7 @@ export class ChromeUseBridge {
   private extensionId = ''
   private starting: Promise<void> | null = null
   private newest: { instance: string; seen: number; version: string } | null = null
+  private checkingForReload: Promise<void> | null = null
   private readonly queue: Work[] = []
   /** One held request for each extension worker, as each profile it is set up in has its own. */
   private readonly holding = new Map<string, (work: Work | null) => void>()
@@ -200,7 +201,10 @@ export class ChromeUseBridge {
     if (fresh || !this.isConnected()) {
       this.newest = { instance, seen: Date.now(), version }
       this.onSeen()
-      void this.reloadIfChanged()
+      // Connected only once it's known whether this copy is about to go: what's sent to it first would be lost.
+      this.checkingForReload = this.reloadIfChanged().finally(() => {
+        this.checkingForReload = null
+      })
     } else if (this.newest?.instance === instance) this.newest.seen = Date.now()
     const reply = (work: Work | null): void => {
       clearTimeout(timer)
@@ -250,6 +254,10 @@ export class ChromeUseBridge {
     // Gone first: if this were sent every time, a reload that changed nothing would never end.
     await fs.rm(mark, { force: true })
     this.enqueue('reload', {})
+    // Nothing counts as connected until the new copy says so, or what's sent next is lost with the old one,
+    // which still asks for work in the moment before it goes.
+    if (this.newest) this.retired.add(this.newest.instance)
+    this.newest = null
   }
 
   private settle(body: string): void {
@@ -277,7 +285,11 @@ export class ChromeUseBridge {
 
   /** Whether the extension has been heard from lately, which means Chrome is open with it in. */
   isConnected(): boolean {
-    return this.newest !== null && Date.now() - this.newest.seen < CONNECTED_WITHIN_MS
+    return (
+      !this.checkingForReload &&
+      this.newest !== null &&
+      Date.now() - this.newest.seen < CONNECTED_WITHIN_MS
+    )
   }
 
   /** False if nothing was heard from it in that time. */

@@ -32,11 +32,12 @@ function screenshotScale(width: number, height: number): number {
 
 export async function captureBrowserScreenshot(
   driver: BrowserScreenshotDriver,
-  elementBox?: BrowserCaptureBox
+  elementBox?: BrowserCaptureBox,
+  scale?: number
 ): Promise<{ png: Buffer; width: number; height: number }> {
   let clip: BrowserCaptureClip
   if (elementBox) {
-    clip = { ...elementBox, scale: screenshotScale(elementBox.width, elementBox.height) }
+    clip = { ...elementBox, scale: scale ?? screenshotScale(elementBox.width, elementBox.height) }
   } else {
     const metrics = await driver.layoutMetrics()
     const size = metrics.cssContentSize ?? metrics.contentSize

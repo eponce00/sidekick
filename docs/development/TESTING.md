@@ -19,6 +19,17 @@ node scripts/browser-bench/run.cjs upload-dynamic hostile-url
 Set `BENCH_BROWSER=built_in` for SideKick's own browser. It costs whatever the selected model costs, and takes about
 20 minutes for all of it. In Chrome someone has to answer the questions about downloads and uploads.
 
+To find out whether a problem is the tool or the model, run the tools with no model. In a development instance
+started with `SIDEKICK_TOOL_PROBE=4790`, this drives Chrome through the same checks on real sites, read-only, and
+grades each by what the page ends up showing. A site's human check counts as a skip and is never solved.
+
+```bash
+node scripts/browser-bench/probe.cjs run google youtube
+node scripts/browser-bench/probe.cjs browser_observe '{"find":"Search"}'
+```
+
+A single call also lists every command it sent to Chrome and how long each took, which shows where a slow step goes.
+
 ## Standard checks
 
 Install dependencies with `npm ci`, then use:

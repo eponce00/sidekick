@@ -54,6 +54,7 @@ export const AGENT_BROWSER_TOOL_NAMES = [
   'browser_use_my_tab',
   'browser_observe',
   'browser_screenshot',
+  'browser_batch',
   'browser_click',
   'browser_hold',
   'browser_type',
@@ -285,7 +286,7 @@ function prioritizedSemanticSnapshot(snapshot: string, lineLimit: number): strin
     .sort((left, right) => left.priority - right.priority || left.index - right.index)
     .slice(0, Math.max(1, lineLimit - 1))
     .sort((left, right) => left.index - right.index)
-  return `${selected.map(({ line }) => line).join('\n')}\n... semantic snapshot prioritized and limited by SideKick ...`
+  return `${selected.map(({ line }) => line).join('\n')}\n... ${lines.length - selected.length} more elements not listed; browser_observe with find searches all of them ...`
 }
 
 function boundedSemanticLine(raw: string): string {
@@ -405,7 +406,14 @@ function compactAction(result: BrowserActionResult, screenshotAttached: boolean)
     targetMode: result.targetMode,
     coordinateFallbackUsed: result.coordinateFallbackUsed,
     durationMs: result.durationMs,
-    quiescence: result.quiescence,
+    ...(result.pressed ? { pressed: result.pressed } : {}),
+    ...(result.note ? { note: result.note } : {}),
+    quiescence: {
+      idle: result.quiescence.idle,
+      waitedMs: result.quiescence.waitedMs,
+      pendingRequests: result.quiescence.pendingRequests,
+      timedOut: result.quiescence.timedOut
+    },
     loopProtection: result.loopProtection,
     ...(result.effect ? { effect: result.effect } : {}),
     ...(result.fileChooserOpened
@@ -425,11 +433,12 @@ function shouldAttachRoutineScreenshot(
 ): boolean {
   if (args.include_screenshot === true) return true
   if (args.include_screenshot === false) return false
-  if (name === 'browser_observe') return true
-  if (name === 'browser_navigate' || name === 'browser_resize') return true
+  if (name === 'browser_observe') return !stringArgument(args, 'find')
+  if (name === 'browser_resize') return true
   if (finiteNumber(args, 'x') !== undefined && finiteNumber(args, 'y') !== undefined) return true
   return (
     [
+      'browser_navigate',
       'browser_click',
       'browser_hold',
       'browser_type',
@@ -440,6 +449,34 @@ function shouldAttachRoutineScreenshot(
     ].includes(name) && observation?.screenshotChanged === false
   )
 }
+
+/** What a call should bring back a picture for. Anything else comes back faster, with the page's elements. */
+function wantsLook(name: string, args: Record<string, unknown>): boolean {
+  if (args.include_screenshot === true) return true
+  if (args.include_screenshot === false) return false
+  if (name === 'browser_resize') return true
+  return finiteNumber(args, 'x') !== undefined && finiteNumber(args, 'y') !== undefined
+}
+
+const MAX_BATCH_STEPS = 20
+/** What can run unattended in a row. Anything that sends a file or a script, or signs in, has its own call. */
+const BATCH_STEP_TOOLS = new Set([
+  'browser_click',
+  'browser_fill_form',
+  'browser_hold',
+  'browser_hover',
+  'browser_navigate',
+  'browser_observe',
+  'browser_press',
+  'browser_screenshot',
+  'browser_scroll',
+  'browser_select',
+  'browser_tabs',
+  'browser_type',
+  'browser_wait'
+])
+/** Marks a step as not the last in a batch. Asking for it does no more than skip a look at the page. */
+const QUICK_STEP = '_batch_step'
 
 function publicAction(result: BrowserActionResult): unknown {
   return { ...result, observation: publicObservation(result.observation) }
@@ -822,6 +859,16 @@ function errorResult(
       recovery: 'Open a browser session again with browser_open.'
     })
   }
+  if (/No tab with id/i.test(message)) {
+    return toolExecutionFailed({
+      title,
+      code: 'not_found',
+      message: 'This tab was closed in Chrome, by the user or by the page.',
+      retryable: false,
+      recoveryAction: 'refresh_state',
+      recovery: 'Tell the user, or call browser_open to carry on in a new tab.'
+    })
+  }
   if (/stale; observe|ref is stale/i.test(message)) {
     return toolExecutionFailed({
       title,
@@ -832,7 +879,7 @@ function errorResult(
       recovery: 'Call browser_observe and use a current semantic ref.'
     })
   }
-  if (/not found|no longer available|not visible|ambiguous/i.test(message)) {
+  if (/not found|no longer available|not visible|ambiguous|is covered by/i.test(message)) {
     return toolExecutionFailed({
       title,
       code: 'not_found',
@@ -1188,7 +1235,8 @@ export class AgentBrowserSessionManager {
     url: string,
     viewport: { width: number; height: number } | undefined,
     allowedFileRoots: string[],
-    signal: AbortSignal
+    signal: AbortSignal,
+    look = true
   ): Promise<{ observation: BrowserObservation; lease: BrowserSessionLease }> {
     return this.locked(async () => {
       const current = this.scopes.get(scope)
@@ -1210,7 +1258,7 @@ export class AgentBrowserSessionManager {
         try {
           const observation = await this.service.navigate(
             { sessionId: current.sessionId, action: 'url', url },
-            { signal }
+            { signal, look }
           )
           return {
             observation: observation.observation,
@@ -1242,7 +1290,7 @@ export class AgentBrowserSessionManager {
           ...(viewport ? { viewport } : {}),
           ...(allowedFileRoots.length ? { allowedFileRoots } : {})
         },
-        { signal }
+        { signal, look }
       )
       const entry: BrowserScopeEntry = {
         sessionId: observation.sessionId,
@@ -1852,6 +1900,7 @@ export function registerBrowserToolHandlers(
     chrome?.service.inChrome.has(scope) ? chrome.manager : builtIn
   const handler: AgentToolHandler = async (input) => {
     const { name, title, arguments: args, context } = input
+    if (name === 'browser_batch') return runBatch(input)
     const scope = browserScope(context)
     if (name === 'browser_open' && chrome) {
       if (args.browser === 'chrome') chrome.service.inChrome.add(scope)
@@ -1869,10 +1918,44 @@ export function registerBrowserToolHandlers(
         return errorResult(title, error, context)
       }
       const result = await run(chrome.manager, input)
-      void chrome.service.refreshPreview(scope)
       if (name === 'browser_close') chrome.service.inChrome.delete(scope)
       return result
     })
+  }
+  const runBatch: AgentToolHandler = async ({ title, arguments: args, context }) => {
+    const steps = (Array.isArray(args.steps) ? args.steps : []) as Array<Record<string, unknown>>
+    const refused = !steps.length
+      ? 'A batch needs at least one step.'
+      : steps.length > MAX_BATCH_STEPS
+        ? `A batch can have up to ${MAX_BATCH_STEPS} steps.`
+        : steps.find((step) => !BATCH_STEP_TOOLS.has(String(step.tool)))
+          ? `A batch can only run ${[...BATCH_STEP_TOOLS].join(', ')}. Nothing was run.`
+          : ''
+    if (refused) {
+      return toolExecutionFailed({ title, code: 'invalid_arguments', message: refused })
+    }
+    for (const [index, { tool, ...stepArgs }] of steps.entries()) {
+      const last = index === steps.length - 1
+      const result = await handler({
+        name: String(tool),
+        title,
+        arguments: last ? stepArgs : { ...stepArgs, [QUICK_STEP]: true },
+        context
+      })
+      if (result.status !== 'success') {
+        return {
+          ...result,
+          modelContent: `Step ${index + 1} of ${steps.length}, ${String(tool)}, failed. The steps before it ran and the ones after it did not.\n${result.modelContent}`
+        }
+      }
+      if (last) {
+        return {
+          ...result,
+          modelContent: `All ${steps.length} steps ran. The last one, ${String(tool)}, found:\n${result.modelContent}`
+        }
+      }
+    }
+    throw new Error('Unreachable: a batch has at least one step')
   }
   const run = async (
     manager: AgentBrowserSessionManager,
@@ -1958,7 +2041,8 @@ export function registerBrowserToolHandlers(
               ? { width: width ?? 1280, height: height ?? 800 }
               : undefined,
             context.workspaceRoot ? workspaceFolderRoots(context.workspaceRoot) : [],
-            context.signal
+            context.signal,
+            wantsLook(name, args)
           )
           lease = opened.lease
           const data = publicObservation(opened.observation)
@@ -1977,11 +2061,11 @@ export function registerBrowserToolHandlers(
           args.new_tab === true
             ? await manager.service.tabs(
                 { sessionId: lease.sessionId, action: 'new', url },
-                { signal: context.signal }
+                { signal: context.signal, look: wantsLook(name, args) }
               )
             : await manager.service.navigate(
                 { sessionId: lease.sessionId, url },
-                { signal: context.signal }
+                { signal: context.signal, look: wantsLook(name, args) }
               )
         const observation = observationFromResult(value)
         const data = observation
@@ -2013,7 +2097,8 @@ export function registerBrowserToolHandlers(
             requestedNavigateUrl,
             undefined,
             context.workspaceRoot ? workspaceFolderRoots(context.workspaceRoot) : [],
-            context.signal
+            context.signal,
+            wantsLook(name, args)
           )
           lease = opened.lease
           const data = publicObservation(opened.observation)
@@ -2039,29 +2124,56 @@ export function registerBrowserToolHandlers(
 
       let raw: unknown
       const mediaDescription = 'Current browser state for visual inspection'
-      if (name === 'browser_observe') {
+      if (name === 'browser_observe' && args.text === true) {
+        const read = await manager.service.pageText(
+          lease.sessionId,
+          Math.max(0, finiteNumber(args, 'text_from') ?? 0),
+          { signal: context.signal }
+        )
+        const data = { ...read, text: credentialRedactor.redact(read.text) }
+        return boundedSuccess(outputs, title, data, data)
+      } else if (name === 'browser_observe') {
+        const find = stringArgument(args, 'find')
         raw = await manager.service.observe(
           lease.sessionId,
           {
             screenshot:
-              args.include_screenshot === false
+              args.include_screenshot === false || (find && args.include_screenshot !== true)
                 ? 'none'
                 : args.full_page === true
                   ? 'fullPage'
                   : 'viewport',
-            includeSemanticSnapshot: args.include_accessibility !== false
+            includeSemanticSnapshot: args.include_accessibility !== false || Boolean(find),
+            ...(find ? { find } : {})
           },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
       } else if (name === 'browser_screenshot') {
-        const target = targetFromArguments(args, { required: false, coordinates: false })
+        const region =
+          args.region && typeof args.region === 'object'
+            ? (args.region as Record<string, unknown>)
+            : undefined
+        const target = region
+          ? undefined
+          : targetFromArguments(args, { required: false, coordinates: false })
         const artifact = await manager.service.screenshot(
           {
             sessionId: lease.sessionId,
-            kind: target ? 'element' : args.full_page === true ? 'fullPage' : 'viewport',
-            ...(target ? { target } : {})
+            kind: target || region ? 'element' : args.full_page === true ? 'fullPage' : 'viewport',
+            ...(target ? { target } : {}),
+            ...(region
+              ? {
+                  zoom: {
+                    screenshotId: stringArgument(args, 'screenshot_id'),
+                    x: finiteNumber(region, 'x') ?? 0,
+                    y: finiteNumber(region, 'y') ?? 0,
+                    width: finiteNumber(region, 'width') ?? 0,
+                    height: finiteNumber(region, 'height') ?? 0
+                  }
+                }
+              : {})
           },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
         const data = { screenshot: withoutArtifactPath(artifact) }
         return boundedVisualSuccess(
@@ -2086,10 +2198,16 @@ export function registerBrowserToolHandlers(
             button: (stringArgument(args, 'button') as 'left' | 'middle' | 'right') ?? 'left',
             clickCount: (finiteNumber(args, 'click_count') as 1 | 2 | 3 | undefined) ?? 1
           },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
       } else if (name === 'browser_hold') {
-        const durationMs = finiteNumber(args, 'duration_ms')
+        const toX = finiteNumber(args, 'to_x')
+        const toY = finiteNumber(args, 'to_y')
+        if ((toX === undefined) !== (toY === undefined)) {
+          throw new Error('A drag needs both to_x and to_y')
+        }
+        const durationMs =
+          finiteNumber(args, 'duration_ms') ?? (toX === undefined ? undefined : 100)
         if (durationMs === undefined) throw new Error('browser_hold requires duration_ms')
         raw = await manager.service.hold(
           {
@@ -2100,9 +2218,10 @@ export function registerBrowserToolHandlers(
               preferredRoles: ['button', 'slider', 'canvas']
             })!,
             button: (stringArgument(args, 'button') as 'left' | 'middle' | 'right') ?? 'left',
-            durationMs
+            durationMs,
+            ...(toX !== undefined && toY !== undefined ? { dragTo: { x: toX, y: toY } } : {})
           },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
       } else if (name === 'browser_type') {
         raw = await manager.service.type(
@@ -2117,7 +2236,7 @@ export function registerBrowserToolHandlers(
             clear: args.clear !== false,
             submit: args.submit === true
           },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
       } else if (name === 'browser_sign_in') {
         const uses = options.credentials?.()
@@ -2155,7 +2274,7 @@ export function registerBrowserToolHandlers(
             site: credentialPageOrigin(page) ?? '',
             submit: args.submit === true
           },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
       } else if (name === 'browser_download') {
         if (!context.workspaceRoot) throw new Error('Downloads require a project workspace')
@@ -2166,7 +2285,7 @@ export function registerBrowserToolHandlers(
             url: stringArgument(args, 'url') || '',
             destination: stringArgument(args, 'destination') || ''
           },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
         return boundedInspectionSuccess(outputs, title, data)
       } else if (name === 'browser_upload') {
@@ -2181,7 +2300,7 @@ export function registerBrowserToolHandlers(
             paths,
             target: targetFromArguments(args, { required: false, coordinates: false })
           },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
       } else if (name === 'browser_select') {
         const values = Array.isArray(args.values)
@@ -2198,12 +2317,12 @@ export function registerBrowserToolHandlers(
             })!,
             values
           },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
       } else if (name === 'browser_fill_form') {
         const result = await manager.service.fillForm(
           { sessionId: lease.sessionId, fields: formFieldsFromArguments(args) },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
         if (!result.completed) {
           return boundedVisualFormFailure(outputs, manager, title, result, context.signal)
@@ -2212,7 +2331,7 @@ export function registerBrowserToolHandlers(
       } else if (name === 'browser_press') {
         raw = await manager.service.press(
           { sessionId: lease.sessionId, key: stringArgument(args, 'key') || '' },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
       } else if (name === 'browser_scroll') {
         raw = await manager.service.scroll(
@@ -2222,12 +2341,12 @@ export function registerBrowserToolHandlers(
             deltaX: finiteNumber(args, 'delta_x'),
             deltaY: finiteNumber(args, 'delta_y') ?? 600
           },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
       } else if (name === 'browser_hover') {
         raw = await manager.service.hover(
           { sessionId: lease.sessionId, target: targetFromArguments(args)! },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
       } else if (name === 'browser_wait') {
         let condition: BrowserWaitCondition = { type: 'quiescence' }
@@ -2241,7 +2360,7 @@ export function registerBrowserToolHandlers(
         else if (milliseconds !== undefined) condition = { type: 'time', ms: milliseconds }
         raw = await manager.service.wait(
           { sessionId: lease.sessionId, condition },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
       } else if (name === 'browser_navigate') {
         raw = await manager.service.navigate(
@@ -2251,7 +2370,7 @@ export function registerBrowserToolHandlers(
               ? { url: requestedNavigateUrl! }
               : { action: requestedNavigateAction! })
           } as BrowserNavigateInput,
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
       } else if (name === 'browser_resize') {
         const width = finiteNumber(args, 'width')
@@ -2272,7 +2391,11 @@ export function registerBrowserToolHandlers(
                 ...(deviceScaleFactor === undefined ? {} : { deviceScaleFactor })
               }
             },
-            { signal: context.signal }
+            {
+              signal: context.signal,
+              look: wantsLook(name, args),
+              quick: args[QUICK_STEP] === true
+            }
           )
       } else if (name === 'browser_tabs') {
         const action = stringArgument(args, 'action') as 'list' | 'new' | 'select' | 'close'
@@ -2284,7 +2407,7 @@ export function registerBrowserToolHandlers(
             tabId: stringArgument(args, 'tab_id'),
             url: stringArgument(args, 'url')
           },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
         await manager.forgetScopeIfEmpty(scope, result.tabs)
         const observation = result.observation
@@ -2305,7 +2428,7 @@ export function registerBrowserToolHandlers(
       } else if (name === 'browser_console') {
         const result = await manager.service.console(
           { sessionId: lease.sessionId, afterSequence: lease.entry.consoleCursor },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
         let entries = result.entries
         const level = stringArgument(args, 'level')
@@ -2323,7 +2446,7 @@ export function registerBrowserToolHandlers(
       } else if (name === 'browser_network') {
         const result = await manager.service.network(
           { sessionId: lease.sessionId, afterSequence: lease.entry.networkCursor },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
         if (args.clear === true) lease.entry.networkCursor = result.cursor
         const data = {
@@ -2341,7 +2464,7 @@ export function registerBrowserToolHandlers(
             sessionId: lease.sessionId,
             expression
           },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
         const data = {
           value: evaluation.value,
@@ -2369,7 +2492,7 @@ export function registerBrowserToolHandlers(
             arguments: input as Record<string, unknown>,
             ...(decision ? { binding: decision.binding } : {})
           },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
         return webMcpCallResult(outputs, title, result, context)
       } else if (name === 'browser_verify') {
@@ -2388,7 +2511,7 @@ export function registerBrowserToolHandlers(
             screenshot: args.full_page === true && frameCount === 1 ? 'fullPage' : 'viewport',
             includeSemanticSnapshot: true
           },
-          { signal: context.signal }
+          { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
         if (frameCount > 1 && observation.screenshot) {
           const shots = [observation.screenshot]
@@ -2401,7 +2524,11 @@ export function registerBrowserToolHandlers(
                   tabId: observation.screenshot.tabId,
                   kind: 'viewport'
                 },
-                { signal: context.signal }
+                {
+                  signal: context.signal,
+                  look: wantsLook(name, args),
+                  quick: args[QUICK_STEP] === true
+                }
               )
             )
           }

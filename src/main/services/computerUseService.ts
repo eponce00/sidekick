@@ -299,6 +299,14 @@ const SLOW_CONTROLS_WAIT_MS = 1_000
 // stop and think about what it is pressing rather than promising safety.
 export const RISKY_CONTROL =
   /\b(send|delete|remove|erase|buy|pay|purchase|order|checkout|submit|confirm|transfer|post|publish|uninstall|format|reset|sign out|log out)\b/i
+/**
+ * A control says what it does in a short name or its first words. Further into a long one it's describing
+ * something else, as a calendar's "Only available for checkout" does, and asking there teaches people to say yes.
+ */
+export function soundsRisky(name: string): boolean {
+  const words = name.trim().split(/\s+/)
+  return RISKY_CONTROL.test(words.length <= 8 ? name : words.slice(0, 5).join(' '))
+}
 const NEEDS_FOREGROUND =
   /background_unavailable|Background delivery is not available|UIA pixel click timeout/i
 
@@ -1468,7 +1476,7 @@ export class ComputerUseService {
   }
 
   private refuseIfRisky(app: ComputerApp, pressing: string): void {
-    if (RISKY_CONTROL.test(pressing)) {
+    if (soundsRisky(pressing)) {
       throw new ComputerUseRefusal(
         `This would press ${pressing} in ${app.name}, which may not be reversible, so nothing was sent. If the user clearly asked for this, repeat it with confirm_risky true. Otherwise stop and ask them.`
       )
