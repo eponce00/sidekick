@@ -1,3 +1,8 @@
+/** How asking for Git ended. `elsewhere` is still going on, in Apple's window or a download page. */
+export interface GitInstallResult {
+  outcome: 'ready' | 'declined' | 'elsewhere' | 'failed'
+}
+
 export interface HistoryCaptureResult {
   ok: boolean
   captureId: string | null

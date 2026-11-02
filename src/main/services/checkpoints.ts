@@ -16,7 +16,7 @@
 import { createHash, randomUUID } from 'crypto'
 import { execFile } from 'child_process'
 import { promises as fs } from 'fs'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path'
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { promisify } from 'util'
 import type { HistoryConflict, HistoryRestoreTarget } from '../../shared/workspaceHistory'
 
@@ -236,13 +236,37 @@ async function writeManagedExcludes(dir: string): Promise<void> {
   await fs.writeFile(excludeFile, `${preserved ? `${preserved}\n` : ''}${managed}\n`, 'utf8')
 }
 
-export async function checkGitAvailable(): Promise<string | null> {
+/** Where Git's installer puts it on Windows, for all users and then for this one. */
+function windowsGitFolders(): string[] {
+  const { ProgramFiles, LOCALAPPDATA } = process.env
+  return [
+    ...(ProgramFiles ? [join(ProgramFiles, 'Git', 'cmd')] : []),
+    ...(LOCALAPPDATA ? [join(LOCALAPPDATA, 'Programs', 'Git', 'cmd')] : [])
+  ]
+}
+
+async function gitVersion(git: string): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync('git', ['--version'])
+    const { stdout } = await execFileAsync(git, ['--version'], { windowsHide: true })
     return textOutput(stdout).trim()
   } catch {
     return null
   }
+}
+
+export async function checkGitAvailable(): Promise<string | null> {
+  const onPath = await gitVersion('git')
+  if (onPath || process.platform !== 'win32') return onPath
+  // This process's PATH dates from when it started, which may be before Git was installed. Adding to it
+  // serves every later `git` here, and what the agent runs.
+  for (const folder of windowsGitFolders()) {
+    const found = await gitVersion(join(folder, 'git.exe'))
+    if (found) {
+      process.env.PATH = `${folder}${delimiter}${process.env.PATH ?? ''}`
+      return found
+    }
+  }
+  return null
 }
 
 export async function initShadowRepo(workspaceRoot: string): Promise<void> {
