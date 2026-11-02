@@ -1057,7 +1057,7 @@ const PAGE_ANSWER_MS = 30_000
 const PAGE_NOT_ANSWERING =
   "This page isn't answering: its own script may be keeping it busy, or a dialog of the browser's own may be holding it up. What was just done may or may not have gone through. Wait and look again, or close the tab and open the page again."
 const STUCK_LOOK_MS = 5 * 60_000
-const HOVER_SETTLE_MS = 250
+const HOVER_SETTLE_MS = 150
 const CHECKED_SITE_REST_MS = 10 * 60_000
 const SCRIPTS_BEFORE_A_NUDGE = 3
 const NO_EFFECT_NOTE =
@@ -4779,11 +4779,19 @@ export class NativeBrowserSessionService {
       const urlBefore = tab.surface.getURL()
       // The page can be busy with something else, which says nothing about this click. Its picture does,
       // taken with the pointer already there, as what's under a pointer often lights up by itself.
+      // In Chrome a picture takes a second or more, so only for a click that's being tried again.
       let pictureBefore: string | undefined
-      if (!session.quickAction) {
+      const tryingAgain = tab.actionHistory.at(-1)?.fingerprint === fingerprint
+      if (!session.quickAction && (session.lookAfterAction !== false || tryingAgain)) {
         tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
         await delay(HOVER_SETTLE_MS, signal)
         pictureBefore = await this.pictureHash(session, tab, signal)
+        // A control can have moved while that was taken.
+        if (target.backendNodeId) {
+          const rect = await this.elementRect(tab, target.backendNodeId, signal)
+          target.x = rect.x + rect.width / 2
+          target.y = rect.y + rect.height / 2
+        }
       }
       const inFrame =
         byPosition && tab.surface.clickInFrame && (await this.frameAtPoint(tab, target, signal))

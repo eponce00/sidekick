@@ -648,7 +648,10 @@ module.exports = {
   },
   'click-that-changes-nothing-says-so-with-a-picture': async (page) => {
     await page.open(`${BENCH}/t/dead-button`)
-    const dead = await page.click(await page.ref('Does nothing', /button/))
+    const button = await page.ref('Does nothing', /button/)
+    let dead = await page.click(button)
+    // Chrome only looks when a click is tried again, as its pictures are slow.
+    if (process.env.PROBE_BROWSER !== 'built_in') dead = await page.click(button)
     if (!/looks the same/.test(JSON.stringify(dead.data)))
       return `Nothing said so: ${JSON.stringify(dead.data).slice(0, 200)}`
     if (!dead.pictures.length) return 'No picture came with it'
@@ -667,7 +670,9 @@ module.exports = {
       return /isn't available/.test(early) ? '' : `Built-in: ${early.slice(0, 160)}`
     }
     if (!/only for when/.test(early)) return `Taken with no reason: ${early.slice(0, 160)}`
-    await page.click(await page.ref('Does nothing', /button/))
+    const button = await page.ref('Does nothing', /button/)
+    await page.click(button)
+    await page.click(button)
     const look = await page.step('browser_screenshot', { window: true, include_screenshot: true })
     return look.pictures.length ? '' : 'No picture of the window'
   },
@@ -697,6 +702,16 @@ module.exports = {
     await page.open(`${BENCH}/t/few-options`)
     await page.click(await page.ref('3 beds', /option/))
     return (await result('few')) === '3' ? '' : 'The option was not pressed'
+  },
+  'real-upload-to-a-practice-site': async (page) => {
+    await page.open(`${INTERNET}/upload`)
+    await page.step('browser_upload', {
+      paths: ['bench-small.txt'],
+      selector: '#file-upload'
+    })
+    await page.click(await page.ref('Upload', /button/))
+    await wait(1500)
+    return expectText(page, /File Uploaded[\s\S]*bench-small\.txt/, 'after uploading')
   },
   'box-by-the-words-it-shows': async (page) => {
     await clear()

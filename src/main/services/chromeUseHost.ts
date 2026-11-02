@@ -348,6 +348,9 @@ export function chromeBrowser(): {
   if (!manager) {
     bridgeOf().onEvent((event) => {
       if (event.kind === 'detached' && event.reason === 'canceled_by_user') rules.stop()
+      // A tab can go with no one asking, and the agent only learns its session has gone.
+      if (event.kind === 'removed') console.warn('[Chrome] A tab closed')
+      if (event.kind === 'detached') console.warn('[Chrome] Debugger detached:', event.reason)
     })
   }
   manager ??= new AgentBrowserSessionManager(

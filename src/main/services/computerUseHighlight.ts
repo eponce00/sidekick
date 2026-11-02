@@ -319,6 +319,8 @@ export class ComputerUseHighlight {
   private stopKeyHeld = true
   private cursorAt: { x: number; y: number } | null = null
   private gliding: ReturnType<typeof setInterval> | null = null
+  /** Whoever is waiting for the pointer to arrive, as a step does before it clicks. */
+  private arrivals: Array<() => void> = []
   private center: { x: number; y: number } | null = null
   private mode: 'glow' | 'pill' = 'pill'
   private picture: BrowserWindow | null = null
@@ -432,8 +434,7 @@ export class ComputerUseHighlight {
     this.page = ''
     if (this.following) clearTimeout(this.following)
     this.following = null
-    if (this.gliding) clearInterval(this.gliding)
-    this.gliding = null
+    this.endGlide()
     this.cursorAt = null
     this.center = null
     this.mode = 'pill'
@@ -600,14 +601,11 @@ export class ComputerUseHighlight {
     const cursor = this.cursor
     if (!cursor.isVisible()) cursor.showInactive()
     const from = this.cursorAt ?? to
-    if (this.gliding) clearInterval(this.gliding)
+    this.endGlide()
     const started = Date.now()
     await new Promise<void>((arrive) => {
-      const finish = (): void => {
-        if (this.gliding) clearInterval(this.gliding)
-        this.gliding = null
-        arrive()
-      }
+      const finish = (): void => this.endGlide()
+      this.arrivals.push(arrive)
       this.gliding = setInterval(() => {
         if (cursor.isDestroyed()) return finish()
         const t = Math.min((Date.now() - started) / CURSOR_GLIDE_MS, 1)
@@ -620,6 +618,13 @@ export class ComputerUseHighlight {
         finish()
       }, CURSOR_FRAME_MS)
     })
+  }
+
+  /** A glide cut short still ends for whoever waited on it: a click stuck behind one held a step for minutes. */
+  private endGlide(): void {
+    if (this.gliding) clearInterval(this.gliding)
+    this.gliding = null
+    for (const arrive of this.arrivals.splice(0)) arrive()
   }
 
   private cursorBounds(at: { x: number; y: number }): Electron.Rectangle {
