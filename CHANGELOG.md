@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.27.0 — 2026-11-02
+
+- Archive a chat from its menu, and put it back from a new Archived list in the sidebar. Chats started by
+  another chat also get Archive and Resume buttons.
+- Show a sub-agent's task as its first message, with a quiet line saying who wrote it, rather than in a
+  cramped card. A long one folds. Chats started by another chat read the same way.
+- Keep the agent's picture out of your way. It opens at the top right, only once it has something to
+  show, keeps up while the model thinks, and stays through a slow turn. It starts from the new corner once,
+  then remembers where you put it.
+- Show "SideKick is using Chrome" at most once every 30 minutes, and not while SideKick is in front. It
+  used to show for every chat.
+- Stop a computer use step hanging for five minutes, which a pointer movement cut short could cause. When
+  a step needs your real mouse and keyboard, a notice now says it is waiting for you to leave them alone.
+- Tell the agent when a click changed nothing, with a picture. When a page won't respond, it can look at its
+  whole Chrome window, which shows Chrome's own dialogs and can show your bookmarks bar or the account of a
+  saved login. That's only allowed once a page has given a reason, and never for a tab you shared.
+- Rest a site for 10 minutes in a chat after it shows a human check or block page, as going back tends to
+  keep it there, and recognize more block pages. In Chrome, a check that needs you now sends a notification
+  to click rather than taking your screen.
+- Show the size that set off a compaction while it runs. The meter could still show the previous turn's
+  count, so a chat seemed to compact while far from full.
+- Fix the chat menu, which rows showed through and took the clicks of. Scrolling in a dialog now finds the
+  part that scrolls, and short lists of options can be pressed by name.
+
 ## 0.26.1 — 2026-11-02
 
 - Make the agent much more dependable on real sites in your own Chrome. It works in a window of its own,

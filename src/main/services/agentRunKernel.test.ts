@@ -2603,6 +2603,33 @@ describe('AgentRunKernel', () => {
     expect(router.execute).toHaveBeenCalledOnce()
   })
 
+  it("shows the size that set off a compaction, not the last turn's", async () => {
+    const contextManager = {
+      shouldCompact: vi.fn(() => true),
+      requestTokens: vi.fn(() => 215_000),
+      compact: vi.fn(async () => ({
+        messages: [{ role: 'user', content: 'Compacted context' }],
+        compacted: true,
+        details: { strategy: 'test' }
+      })),
+      observeUsage: vi.fn()
+    }
+    const kernel = new AgentRunKernel(store, undefined, sequence(sampledTurn({ content: 'Done' })))
+
+    await kernel.start({ ...input(), contextManager })
+
+    const events = store.listEvents('run-1')
+    const started = events.findIndex((event) => event.type === 'compaction.started')
+    expect(events[started - 1]).toMatchObject({
+      type: 'context.estimated',
+      payload: { promptTokens: 215_000 }
+    })
+    expect(events[started].payload).toMatchObject({
+      reason: 'preflight_budget',
+      requestTokens: 215_000
+    })
+  })
+
   it('forces one compaction and retries after a provider context overflow', async () => {
     const overflow: AgentKernelProviderSampler = refusedWith({
       ok: false,

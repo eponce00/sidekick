@@ -1380,9 +1380,14 @@ The user approved this exact plan revision. Act capabilities are now available a
   ): Promise<{ messages: ProviderChatMessage[]; compacted: boolean }> {
     if (!contextManager) return { messages, compacted: false }
     this.transition(input.id, 'compacting')
+    // What set this off, which the last turn's count on the meter may not show: what its tools
+    // returned is in this size, and the provider may have refused a request that looked small.
+    const requestTokens = contextManager.requestTokens?.(messages, tools)
+    if (requestTokens) this.append(input.id, 'context.estimated', { promptTokens: requestTokens })
     this.append(input.id, 'compaction.started', {
       messageCount: messages.length,
-      reason
+      reason,
+      ...(requestTokens ? { requestTokens } : {})
     })
     const prepared = await contextManager.compact(messages, tools, signal)
     const validated = validateProviderTranscript(prepared.messages).messages
