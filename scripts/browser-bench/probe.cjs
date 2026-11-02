@@ -1,11 +1,14 @@
 // Calls the Chrome tools directly, with no model. Needs a development instance started with SIDEKICK_TOOL_PROBE=4790.
 //   node scripts/browser-bench/probe.cjs <tool> '<json arguments>'    one call
-//   node scripts/browser-bench/probe.cjs run [site ...]               the checks in checks.cjs
+//   node scripts/browser-bench/probe.cjs run [name ...]               the checks in checks.cjs and checks-tricky.cjs
+// Set PROBE_BROWSER=built_in for SideKick's own browser rather than Chrome.
 // Each check says what a page must end up showing, read from the page rather than from a tool's own report.
 const fs = require('fs')
 const path = require('path')
 
 const PORT = process.env.SIDEKICK_TOOL_PROBE || 4790
+const BROWSER = process.env.PROBE_BROWSER || 'chrome'
+const FILES = path.join(require('os').tmpdir(), 'sidekick-browser-probe', 'files')
 const OUT = process.env.PROBE_OUT || path.join(require('os').tmpdir(), 'sidekick-probe')
 fs.mkdirSync(OUT, { recursive: true })
 
@@ -42,11 +45,16 @@ function session(chat) {
     return done
   }
   const snapshot = (done) =>
-    String((done.data?.semanticSnapshot ?? done.data?.observation?.semanticSnapshot) || '')
+    String(
+      done.full?.semanticSnapshot ??
+        done.full?.observation?.semanticSnapshot ??
+        done.data?.semanticSnapshot ??
+        ''
+    )
   return {
     steps,
     step,
-    open: (url) => step('browser_open', { url, browser: 'chrome' }),
+    open: (url) => step('browser_open', { url, browser: BROWSER }),
     /** The ref of the first element with this in it, across the whole page. */
     ref: async (find, line = /./) => {
       const found = snapshot(await step('browser_observe', { find }))
@@ -62,7 +70,12 @@ function session(chat) {
 }
 
 async function run(only) {
-  const checks = require('./checks.cjs')
+  const checks = { ...require('./checks.cjs'), ...require('./checks-tricky.cjs') }
+  // What the uploads send, which the bench's site knows the contents of.
+  fs.mkdirSync(FILES, { recursive: true })
+  fs.writeFileSync(path.join(FILES, 'bench-small.txt'), 'bench file contents\n')
+  const site = await fetch(`http://127.0.0.1:${process.env.BENCH_PORT || 4789}/`).catch(() => null)
+  if (!site) require('./site.cjs')
   const results = []
   for (const [name, check] of Object.entries(checks)) {
     if (only.length && !only.some((each) => name.startsWith(each))) continue
@@ -84,7 +97,7 @@ async function run(only) {
   }
   const passed = results.filter((each) => !each.problem).length
   console.log(`${passed} of ${results.length} passed`)
-  process.exitCode = passed === results.length ? 0 : 1
+  process.exit(passed === results.length ? 0 : 1)
 }
 
 if (require.main !== module) {

@@ -254,6 +254,7 @@ export function chromeBrowser(): {
         }),
       hide: () => computerOverlay.hide(),
       preview: (image) => computerOverlay.showPreview(image),
+      wantsPreview: () => computerOverlay.wantsPicture(),
       replyEnded: () => computerOverlay.replyEnded(),
       armStop: armEscape,
       notify: () => {

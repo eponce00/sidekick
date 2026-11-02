@@ -119,6 +119,7 @@ the text.
   mode and loads its extension from your computer. There's no store and nothing to maintain, and it updates by itself along with SideKick. It takes about 10 seconds, with the same glow and pointer as when the agent works in an app, and Esc stops it. Work profiles aren't offered. If it can't
   finish, SideKick shows you the steps. **Disconnect** in Settings removes the extension from Chrome,
   or the next time Chrome is open if it's closed. Developer mode stays on, in case you use it yourself.
+- **It goes where your Chrome goes,** plain HTTP sites included, though not to addresses on your own network without asking.
 - **It works in a separate Chrome window,** in a tab group named 🤖 SideKick, which opens without taking you off what you're doing. Say
   "continue in the tab I have open" and SideKick shows you which tab that is and asks you to share it. The
   agent then picks up from what you've done there, and your tab stays where it is.

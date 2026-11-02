@@ -625,6 +625,8 @@ class ChromeSurface implements NativeBrowserSurface {
 /** Tabs in the user's Chrome, for the same service that drives the built-in browser's. */
 export class ChromeBrowserRuntime implements NativeBrowserRuntime {
   readonly showsPdfsItself = true
+  readonly opensPlainHttp = true
+  readonly picturesOnlyWhenAsked = true
   private readonly surfaces = new Map<number, ChromeSurface>()
   private windowId: number | undefined
   private selected: number | undefined

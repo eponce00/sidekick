@@ -3,6 +3,7 @@ import { ComputerUseRefusal, soundsRisky } from './computerUseService'
 import type { NativeBrowserPolicy, NativeBrowserSurface } from './nativeBrowserSessionService'
 
 const WAIT_FOR_CHROME_MS = 35_000
+const PREVIEW_EVERY_MS = 3_000
 // As for computer use: long enough to outlast a slow model's turn. Esc stays the user's otherwise.
 const STOP_KEY_HELD_MS = 60_000
 
@@ -31,9 +32,10 @@ const NOT_A_LOOK =
 export function readsLikeALook(expression: string): boolean {
   if (NOT_A_LOOK.test(expression)) return false
   const code = expression.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, "''")
-  // The inside of each [ that picks a property, or names one in an object.
-  for (const bracket of code.matchAll(/([\w$)\]`']?)\s*\[([^\]]*)\](\s*:)?/g)) {
+  // The inside of each [ that picks a property, or names one in an object. After one of these words it's a list.
+  for (const bracket of code.matchAll(/([\w$]+|[)\]`'])?\s*\[([^\]]*)\](\s*:)?/g)) {
     if (bracket[3]) return false
+    if (/^(return|typeof|void|yield|case|in|of)$/.test(bracket[1] ?? '')) continue
     if (bracket[1] && !/^\s*(\d+|'')\s*$/.test(bracket[2])) return false
   }
   return true
@@ -71,6 +73,8 @@ export interface ChromeUseDependencies {
     show: () => void
     hide: () => void
     preview: (image: { data: string }) => void
+    /** Whether the picture of the tab is showing, so that a new one would be seen. */
+    wantsPreview: () => boolean
     replyEnded: () => void
     /** Esc from anywhere, for as long as the agent can act. Returns how to take it back. */
     armStop: (stop: () => void) => () => void
@@ -128,6 +132,7 @@ export class ChromeUseService implements NativeBrowserPolicy {
   /** Stopped with Esc. Their reply gets nowhere from here, whatever the model tries. */
   private readonly stopped = new Set<string>()
   private disarm: (() => void) | null = null
+  private lastPreviewAt = 0
   private disarmTimer: ReturnType<typeof setTimeout> | null = null
   private readonly quiet = new AbortController().signal
 
@@ -227,7 +232,24 @@ export class ChromeUseService implements NativeBrowserPolicy {
       .catch(() => undefined)
   }
 
-  /** The picture the agent just took of a tab, for the corner label. A second capture just for that held up the next action. */
+  /**
+   * Most steps don't take a picture, so the corner one is kept fresh by itself: only while it's showing, and
+   * not often, as a capture holds up the step after it.
+   */
+  async refreshPreview(id: string): Promise<void> {
+    const tabId = this.chats.get(id)?.current
+    const now = Date.now()
+    if (tabId === undefined || !this.driving.has(id) || !this.deps.overlay.wantsPreview()) return
+    if (now - this.lastPreviewAt < PREVIEW_EVERY_MS) return
+    this.lastPreviewAt = now
+    const shot = await this.deps.bridge
+      .send<{ data: string }>('preview', { tabId }, this.quiet)
+      .catch(() => null)
+    // It may have been stopped while the picture was on its way.
+    if (shot?.data && this.driving.has(id)) this.deps.overlay.preview(shot)
+  }
+
+  /** The picture the agent just took of a tab, for the corner label. */
   showLook(tabId: number, data: string): void {
     for (const id of this.driving) {
       if (this.chats.get(id)?.current === tabId) return this.deps.overlay.preview({ data })

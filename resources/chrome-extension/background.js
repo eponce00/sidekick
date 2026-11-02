@@ -345,6 +345,15 @@ async function capture(tabId, params) {
 }
 
 /**
+ * For the corner picture. It keeps the glow, being for the user to see, and leaves the debugger alone if it
+ * stalls: this is only a picture, and letting go of a tab would interrupt what the agent is doing in it.
+ */
+async function preview({ tabId }) {
+  await webTab(tabId)
+  return capturing(() => captureOnce(tabId, { format: 'jpeg', quality: 70 }))
+}
+
+/**
  * All of a drag from here, with no trip to SideKick between moves. A page that redraws as a slider's value
  * changes loses a drag that arrives slowly.
  */
@@ -367,8 +376,20 @@ async function drag({ tabId, from, to, button = 'left' }) {
 
 async function navigate({ tabId, url }) {
   await webTab(tabId)
-  await chrome.tabs.update(tabId, { url })
-  await loaded(tabId)
+  let failure = ''
+  const failed = (details) => {
+    if (details.tabId === tabId && details.frameId === 0 && !/ABORTED/.test(details.error)) {
+      failure = details.error
+    }
+  }
+  chrome.webNavigation.onErrorOccurred.addListener(failed)
+  try {
+    await whenTabsFree(() => chrome.tabs.update(tabId, { url }))
+    await loaded(tabId)
+  } finally {
+    chrome.webNavigation.onErrorOccurred.removeListener(failed)
+  }
+  if (failure) throw new Error(`The page could not be loaded: ${failure}`)
   return tabInfo(tabId)
 }
 
@@ -507,6 +528,7 @@ const OPERATIONS = {
   tabInfo: ({ tabId }) => tabInfo(tabId),
   navigate,
   drag,
+  preview,
   selectTab,
   showTab,
   closeTab: ({ tabId }) => whenTabsFree(() => chrome.tabs.remove(tabId)),

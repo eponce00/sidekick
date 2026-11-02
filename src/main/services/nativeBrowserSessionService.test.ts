@@ -1982,6 +1982,22 @@ describe('NativeBrowserSessionService', () => {
     }
   })
 
+  it('takes a picture after a step in a browser that needs a frame drawn for input to land', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open(
+      { runId: 'first-input', url: 'https://example.com/' },
+      { look: false }
+    )
+    expect(opened.screenshot).toBeDefined()
+    const attempts = runtime.surfaces[0].captureAttempts
+    const clicked = await service.click(
+      { sessionId: opened.sessionId, target: { role: 'button', name: 'Save' } },
+      { look: false }
+    )
+    expect(runtime.surfaces[0].captureAttempts).toBeGreaterThan(attempts)
+    expect(clicked.observation.screenshot).toBeDefined()
+  })
+
   it('filters decorative roles without silently choosing between actionable matches', async () => {
     const { service, runtime } = await testService()
     const opened = await service.open({ runId: 'role-filtering', url: 'https://example.com/' })
