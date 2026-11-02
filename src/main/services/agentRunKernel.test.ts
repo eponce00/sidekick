@@ -2603,6 +2603,33 @@ describe('AgentRunKernel', () => {
     expect(router.execute).toHaveBeenCalledOnce()
   })
 
+  it("shows the size that set off a compaction, not the last turn's", async () => {
+    const contextManager = {
+      shouldCompact: vi.fn(() => true),
+      requestTokens: vi.fn(() => 215_000),
+      compact: vi.fn(async () => ({
+        messages: [{ role: 'user', content: 'Compacted context' }],
+        compacted: true,
+        details: { strategy: 'test' }
+      })),
+      observeUsage: vi.fn()
+    }
+    const kernel = new AgentRunKernel(store, undefined, sequence(sampledTurn({ content: 'Done' })))
+
+    await kernel.start({ ...input(), contextManager })
+
+    const events = store.listEvents('run-1')
+    const started = events.findIndex((event) => event.type === 'compaction.started')
+    expect(events[started - 1]).toMatchObject({
+      type: 'context.estimated',
+      payload: { promptTokens: 215_000 }
+    })
+    expect(events[started].payload).toMatchObject({
+      reason: 'preflight_budget',
+      requestTokens: 215_000
+    })
+  })
+
   it('forces one compaction and retries after a provider context overflow', async () => {
     const overflow: AgentKernelProviderSampler = refusedWith({
       ok: false,
@@ -2938,6 +2965,45 @@ describe('AgentRunKernel', () => {
         })
       ])
     )
+  })
+
+  it('asks again in the next run, as what is behind an address can change', async () => {
+    // A 65,536 token model refused, then a 262,144 token one took its place at the same address.
+    const small: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error:
+        'maximum context length is 65536 tokens; prompt (33 tokens) + max tokens (100000) exceeds the context'
+    })
+    const contextManager = () => ({
+      shouldCompact: vi.fn(() => false),
+      applyContextLength: vi.fn(),
+      compact: vi.fn(async () => ({ messages: [], compacted: false })),
+      observeUsage: vi.fn()
+    })
+    const runInput = (id: string, manager: ReturnType<typeof contextManager>) => {
+      const run = { ...input(), contextManager: manager, id }
+      run.model = 'same-address-model'
+      run.request = {
+        target: { providerKind: 'ollama', model: 'same-address-model', contextLength: 262_144 },
+        maxOutputTokens: 100_000,
+        purpose: 'conversation'
+      }
+      return run
+    }
+
+    const first = contextManager()
+    const refused = sequence(small, sampledTurn({ content: 'Fits now' }))
+    await new AgentRunKernel(store, undefined, refused).start(runInput('run-small', first))
+    expect(first.applyContextLength).toHaveBeenCalledOnce()
+    // Only the reply's room was over, so nothing was summarized to get there.
+    expect(first.compact).not.toHaveBeenCalled()
+
+    const second = contextManager()
+    const bigger = sampledTurn({ content: 'Bigger now' })
+    await new AgentRunKernel(store, undefined, sequence(bigger)).start(runInput('run-big', second))
+    expect(second.applyContextLength).not.toHaveBeenCalled()
+    expect((bigger as ReturnType<typeof vi.fn>).mock.calls[0][0].target.contextLength).toBe(262_144)
   })
 
   it('does not widen a window the provider reports as larger than configured', async () => {

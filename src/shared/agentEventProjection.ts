@@ -147,6 +147,8 @@ export interface ProjectedAgentRunMessage {
     streaming?: { startedAt: number; updatedAt: number; characters: number }
     /** A compaction is summarizing earlier messages; nothing streams until it ends. */
     compacting?: { startedAt: number }
+    /** The window the provider said it has this run, when that's less than configured. */
+    contextLength?: number
   }
   phase: AgentRunPhase | null
 }
@@ -240,6 +242,7 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
   let runCompletedAt: number | undefined
   // Calls the turn being streamed announced; a turn that is asked again drops them.
   let streamedTurnTools: string[] = []
+  let contextLength: number | undefined
 
   for (const event of orderedEvents) {
     if (event.type === 'run.started') runStartedAt ??= event.timestamp
@@ -299,6 +302,10 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
     }
     if (event.type === 'run.retrying' && event.payload.reason === VERIFICATION_PASS_REASON) {
       deferredAnswer = { contentBefore: committedContent, content: lastProvisionalContent }
+    }
+    if (event.type === 'run.retrying' && event.payload.reason === 'context_length_corrected') {
+      const corrected = Number(event.payload.contextLength)
+      if (corrected > 0) contextLength = corrected
     }
     if (event.type === 'context.estimated') {
       // The prompt about to be sent already holds the previous turn's reply.
@@ -895,6 +902,7 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       ...(providerTimings.length ? { providerTimings } : {}),
       ...(generatedTokens > 0 ? { generatedTokens } : {}),
       ...(streaming && runCompletedAt === undefined ? { streaming: { ...streaming } } : {}),
+      ...(contextLength === undefined ? {} : { contextLength }),
       ...(compactingSince === undefined ? {} : { compacting: { startedAt: compactingSince } })
     },
     phase

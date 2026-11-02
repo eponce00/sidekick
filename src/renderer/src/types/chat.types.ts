@@ -126,6 +126,8 @@ export interface ContentSegment {
 
 export interface TokenUsage {
   promptTokens: number
+  /** The window the provider said it has this run, when that's less than configured. */
+  contextLength?: number
   /** Input tokens served from a provider or inference-engine prefix cache. */
   cachedPromptTokens?: number
   completionTokens: number

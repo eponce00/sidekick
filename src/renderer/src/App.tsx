@@ -140,6 +140,13 @@ function normalizeSettings(settings: ProviderSettings): ProviderSettings {
   }
 }
 
+interface TokenCounts {
+  current: number
+  max: number
+  /** The window the model server said it has for this reply, when that's less than configured. */
+  narrowedTo?: number
+}
+
 function App(): React.JSX.Element {
   const platform = window.api.app.platform
   const isMac = platform === 'macos'
@@ -402,7 +409,7 @@ function App(): React.JSX.Element {
     void window.api.window.isFullScreen().then(setIsWindowFullScreen)
     return removeListener
   }, [platform])
-  const [tokenCounts, setTokenCounts] = useState<{ current: number; max: number }>({
+  const [tokenCounts, setTokenCounts] = useState<TokenCounts>({
     current: 0,
     max: 4096
   })
@@ -633,12 +640,14 @@ function App(): React.JSX.Element {
 
   // Throttle token count updates to avoid "Maximum update depth exceeded" during rapid streaming.
   // IPC chunks can arrive faster than React can reconcile, so we debounce to one update per 250ms.
-  const pendingTokenUpdate = useRef<{ tokens: number; max: number } | null>(null)
+  const pendingTokenUpdate = useRef<{ tokens: number; max: number; narrowedTo?: number } | null>(
+    null
+  )
   const tokenThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Each open chat's last reported context. A chat's panel stays mounted after
   // it is first opened and reports again only when its messages change, so
   // switching back to it must restore its figure rather than start from zero.
-  const tokenCountsByConversation = useRef(new Map<string, { current: number; max: number }>())
+  const tokenCountsByConversation = useRef(new Map<string, TokenCounts>())
   const restoreTokenCounts = useCallback((conversationId: string | null) => {
     pendingTokenUpdate.current = null
     setTokenCounts(
@@ -649,14 +658,15 @@ function App(): React.JSX.Element {
     )
   }, [])
 
-  const handleTokenCountUpdate = useCallback((tokens: number, max: number) => {
-    pendingTokenUpdate.current = { tokens, max }
+  const handleTokenCountUpdate = useCallback((tokens: number, max: number, narrowedTo?: number) => {
+    pendingTokenUpdate.current = { tokens, max, narrowedTo }
     if (!tokenThrottleRef.current) {
       tokenThrottleRef.current = setTimeout(() => {
         if (pendingTokenUpdate.current) {
           setTokenCounts({
             current: pendingTokenUpdate.current.tokens,
-            max: pendingTokenUpdate.current.max
+            max: pendingTokenUpdate.current.max,
+            narrowedTo: pendingTokenUpdate.current.narrowedTo
           })
           pendingTokenUpdate.current = null
         }
@@ -1345,6 +1355,7 @@ function App(): React.JSX.Element {
               <ContextIndicator
                 currentTokens={tokenCounts.current}
                 maxTokens={tokenCounts.max}
+                narrowedTo={tokenCounts.narrowedTo}
                 selectedModel={currentModel.modelId}
                 model={currentPinnedModel}
                 autoCompactEnabled={settings.autoCompactEnabled ?? true}
@@ -1382,15 +1393,19 @@ function App(): React.JSX.Element {
           selectedModel={panelModel.modelId}
           planningModelId={settings.planningModelId}
           onModelChange={(modelId) => handleModelChange(panelConversationId, modelId)}
-          onTokenCountUpdate={(current, max) => {
+          onTokenCountUpdate={(current, max, narrowedTo) => {
             if (panelConversationId) {
-              tokenCountsByConversation.current.set(panelConversationId, { current, max })
+              tokenCountsByConversation.current.set(panelConversationId, {
+                current,
+                max,
+                narrowedTo
+              })
             }
             if (
               currentConversationIdRef.current === panelConversationId ||
               (visible && panelConversationId === null)
             ) {
-              handleTokenCountUpdate(current, max)
+              handleTokenCountUpdate(current, max, narrowedTo)
             }
           }}
           onConversationCostUpdate={(cost) => {
