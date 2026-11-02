@@ -4,7 +4,6 @@
 
 const instance = crypto.randomUUID()
 const version = chrome.runtime.getManifest().version
-const GROUP_TITLE = '🤖 SideKick'
 const LOAD_WAIT_MS = 8_000
 const CAPTURE_WAIT_MS = 4_000
 const TABS_BUSY_TRIES = 25
@@ -157,25 +156,13 @@ async function whenTabsFree(work) {
   }
 }
 
-async function inGroup(tabId, windowId) {
-  const [existing] = await chrome.tabGroups.query({ windowId, title: GROUP_TITLE })
-  const groupId = await whenTabsFree(() =>
-    chrome.tabs.group({
-      tabIds: [tabId],
-      ...(existing ? { groupId: existing.id } : { createProperties: { windowId } })
-    })
-  )
-  if (!existing) {
-    await whenTabsFree(() =>
-      chrome.tabGroups.update(groupId, { title: GROUP_TITLE, color: 'blue' })
-    )
-  }
-}
-
 /**
- * A tab in the SideKick group, selected in a window of its own that doesn't take focus. Measured on real
- * pages: an unselected tab in the user's window could take seconds to draw a picture or stall altogether,
- * and a slider dragged there stopped at the first notch, even with the page counting itself visible.
+ * A tab selected in a window of its own that doesn't take focus. Measured on real pages: an unselected tab
+ * in the user's window could take seconds to draw a picture or stall altogether, and a slider dragged there
+ * stopped at the first notch, even with the page counting itself visible.
+ *
+ * Not in a tab group: Chrome keeps a group among the user's saved ones after its window closes, with no way
+ * for an extension to remove it, so each window left another behind.
  */
 async function open({ url, windowId }) {
   const window = windowId ? await chrome.windows.get(windowId).catch(() => null) : null
@@ -198,8 +185,6 @@ async function open({ url, windowId }) {
   }
   tracked.add(tab.id)
   agentTabs.add(tab.id)
-  // The group is only a label, and no reason to fail a tab that's open and works.
-  await inGroup(tab.id, tab.windowId).catch(() => undefined)
   // Selected before it counted as the agent's, and nothing here is the user's to give back.
   selectedTabs.delete(tab.windowId)
   // A page that thinks it's hidden may not even draw.
@@ -527,7 +512,7 @@ chrome.webNavigation.onCommitted.addListener(({ tabId, frameId }) => {
 })
 
 // A link or script in one of the agent's tabs that opens another: the page may need that exact tab, as a
-// sign-in popup does. It joins the group, and the user keeps the tab they were on.
+// sign-in popup does. The user keeps the tab they were on.
 // Not tabs.onCreated: a link that opens a new tab has no opener, as far as that one can tell. Only while the
 // agent holds the tab it came from, so what the user opens from a tab they shared stays theirs.
 chrome.webNavigation.onCreatedNavigationTarget.addListener(async ({ sourceTabId, tabId, url }) => {
@@ -536,7 +521,6 @@ chrome.webNavigation.onCreatedNavigationTarget.addListener(async ({ sourceTabId,
   if (!tab) return
   tracked.add(tabId)
   if (agentTabs.has(sourceTabId)) agentTabs.add(tabId)
-  void inGroup(tabId, tab.windowId).catch(() => undefined)
   const theirs = selectedTabs.get(tab.windowId)
   if (tab.active && theirs !== undefined && theirs !== tabId) {
     void chrome.tabs.update(theirs, { active: true }).catch(() => undefined)
