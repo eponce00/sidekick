@@ -116,6 +116,40 @@ const PAGES = {
     `<button onclick="got('print', 'before print'); print(); got('print', 'after print')">Print this page</button>
      <button onclick="got('print', 'still works')">Then this</button>${GOT}`
   ),
+  '/t/then': page(
+    'Next page',
+    `<button onclick="got('then', 'next page works')">Then this</button>${GOT}`
+  ),
+  '/t/app-links': page(
+    'Links that open other apps',
+    `<a href="mailto:nobody@example.invalid">Mail link</a> <a href="sidekick-bench-nothing://x">App link</a>
+     <button onclick="got('app-links', 'still works')">Then this</button>${GOT}`
+  ),
+  '/t/permissions': page(
+    'Asks for permissions',
+    `<button onclick="Notification.requestPermission(); got('perm', 'notify')">Notify</button>
+     <button onclick="navigator.geolocation.getCurrentPosition(() => {}, () => {}); got('perm', 'where')">Where</button>
+     <button onclick="navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {}); got('perm', 'mic')">Mic</button>
+     <button onclick="got('perm', 'still works')">Then this</button>${GOT}`
+  ),
+  '/t/pickers': page(
+    'Pickers',
+    `<label>Colour <input id="c" type="color"></label> <label>Day <input id="d" type="date"></label>
+     <button onclick="got('pickers', 'still works')">Then this</button>${GOT}`
+  ),
+  '/t/leave': page(
+    'Warns before leaving',
+    `<input aria-label="Note" oninput="onbeforeunload = () => 'Unsaved'"> <a href="/t/then">Away</a>${GOT}`
+  ),
+  '/t/fullscreen': page(
+    'Goes fullscreen',
+    `<button onclick="document.documentElement.requestFullscreen(); got('full', 'asked')">Fullscreen</button>
+     <button onclick="got('full', 'still works')">Then this</button>${GOT}`
+  ),
+  '/t/hang': page(
+    'Hangs itself',
+    `<button onclick="got('hang', 'asked'); setTimeout(() => { for (const end = Date.now() + 90000; Date.now() < end; ); }, 50)">Hang</button>${GOT}`
+  ),
   '/t/print-frame': page(
     'Print button in a frame on another address',
     `<iframe src="http://localhost:${PORT}/t/print" width="500" height="200" title="Form"></iframe>`
@@ -234,6 +268,10 @@ const server = http.createServer((req, res) => {
     res.end(body)
   }
   const url = new URL(req.url, 'http://bench')
+  if (url.pathname === '/t/password') {
+    res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="bench"', 'content-type': 'text/html' })
+    return res.end('<!doctype html><title>Not allowed</title><h1>Password needed</h1>')
+  }
   if (url.pathname === '/record') return send(JSON.stringify(record), 'application/json')
   if (url.pathname === '/record/clear') {
     record.length = 0

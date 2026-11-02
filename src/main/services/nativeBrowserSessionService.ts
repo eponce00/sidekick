@@ -1041,6 +1041,9 @@ const NO_BROWSER_DIALOGS_SCRIPT = `(() => {
 const BROWSER_DIALOG_NOTE =
   "That click never reached the page. The browser itself is showing something over it, such as a sign-in or payment dialog, which pictures of the page don't show. Don't try it again: open the page again, and if the same thing happens tell the user that a browser dialog is in the way."
 const NEW_PAGE_DRAWING_MS = 8_000
+const PAGE_ANSWER_MS = 30_000
+const PAGE_NOT_ANSWERING =
+  "This page isn't answering: its own script may be keeping it busy, or a dialog of the browser's own may be holding it up. What was just done may or may not have gone through. Wait and look again, or close the tab and open the page again."
 const DRAG_STEPS = 8
 const DRAG_STEP_MS = 15
 const MAX_ZOOM = 4
@@ -3399,6 +3402,7 @@ export class NativeBrowserSessionService {
     signal?: AbortSignal
   ): Promise<BrowserObservation> {
     const tab = this.getTab(session, options.tabId)
+    await this.assertPageAnswers(tab, signal)
     // The page's own changes from here on tell the next action's wait what is noise.
     await abortable(tab.surface.executeJavaScript(SETTLE_INSTALL_SCRIPT), signal).catch(
       () => undefined
@@ -7129,6 +7133,24 @@ export class NativeBrowserSessionService {
    * any loading sign it brought up, ignoring the page's own background activity. See
    * browserSettle.ts.
    */
+  /** Anything sent to a page that's too busy to answer waits for as long as the tool has, then says nothing useful. */
+  private async assertPageAnswers(tab: TabState, signal?: AbortSignal): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const answered = await abortable(
+      Promise.race([
+        tab.surface.sendDebuggerCommand('Runtime.evaluate', { expression: '1' }).then(
+          () => true,
+          () => true
+        ),
+        new Promise<boolean>((resolvePromise) => {
+          timer = setTimeout(() => resolvePromise(false), PAGE_ANSWER_MS)
+        })
+      ]),
+      signal
+    ).finally(() => clearTimeout(timer))
+    if (!answered) throw new Error(PAGE_NOT_ANSWERING)
+  }
+
   private async waitForQuiescence(
     tab: TabState,
     input: { idleMs?: number; maxWaitMs?: number },
@@ -7137,6 +7159,7 @@ export class NativeBrowserSessionService {
     const idleMs = boundedInteger(input.idleMs ?? 350, 50, 5_000, 'idleMs')
     // Many real pages never go quiet, so the wait can't be for that. What's still moving shows in the result.
     const maxWaitMs = boundedInteger(input.maxWaitMs ?? 2_000, idleMs, 30_000, 'maxWaitMs')
+    await this.assertPageAnswers(tab, signal)
     const startedAt = this.now()
     const mark =
       tab.settleMark && startedAt - tab.settleMark.at < 60_000 ? tab.settleMark : undefined

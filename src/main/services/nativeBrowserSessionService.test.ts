@@ -1496,6 +1496,25 @@ describe('NativeBrowserSessionService', () => {
     expect((await click()).note).toContain('never reached the page')
   })
 
+  it('says so when a page is too busy to answer, rather than waiting all the time there is', async () => {
+    const { service, runtime } = await testService()
+    const { sessionId } = await service.open({ runId: 'busy', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    const send = surface.sendDebuggerCommand.bind(surface)
+    surface.sendDebuggerCommand = ((method: string, params?: Record<string, unknown>) =>
+      params?.expression === '1'
+        ? new Promise(() => undefined)
+        : send(method, params)) as typeof surface.sendDebuggerCommand
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const looked = expect(service.observe(sessionId)).rejects.toThrow("isn't answering")
+      await vi.advanceTimersByTimeAsync(30_000)
+      await looked
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('stops printing from opening a dialog in its own tabs', async () => {
     const { service, runtime } = await testService()
     await service.open({ runId: 'print', url: 'https://example.com/' })
@@ -2054,8 +2073,11 @@ describe('NativeBrowserSessionService', () => {
   })
 
   it('finds what lies past the listed part of a long page, and never confirms a stored secret', async () => {
-    const { service, runtime } = await testService()
+    let ahead = 0
+    const { service, runtime } = await testService({ now: () => Date.now() + ahead })
     const opened = await service.open({ runId: 'find-long-page', url: 'https://example.com/' })
+    // Well after arriving, when finding nothing means it isn't there.
+    ahead = 60_000
     const surface = runtime.surfaces[0]
     surface.extraAxNodes = [
       ...Array.from({ length: 900 }, (_, index) => ({
