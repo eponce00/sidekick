@@ -607,7 +607,8 @@ const api = {
       filePath: string,
       authorization: import('../shared/types').WorkspaceMutationAuthorization
     ) => ipcRenderer.invoke('workspace:trashFile', workspaceRoot, filePath, authorization),
-    gitAvailable: () => ipcRenderer.invoke('workspace:gitAvailable'),
+    gitAvailable: (lookAgain?: boolean) => ipcRenderer.invoke('workspace:gitAvailable', lookAgain),
+    installGit: () => ipcRenderer.invoke('workspace:installGit'),
     beginHistoryCapture: (workspaceRoot: string, conversationId: string, agentMessageId: string) =>
       ipcRenderer.invoke(
         'workspace:beginHistoryCapture',

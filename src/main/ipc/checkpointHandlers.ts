@@ -1,11 +1,20 @@
-import { ipcMain } from 'electron'
+import { execFile } from 'child_process'
+import { BrowserWindow, ipcMain, shell } from 'electron'
+import { promisify } from 'util'
 import { historyRestorePermissionOperation } from '../../shared/permissions'
 import type { CheckpointMutationAuthorization } from '../../shared/types'
-import type { HistoryMutationResult, HistoryRestoreTarget } from '../../shared/workspaceHistory'
+import type {
+  GitInstallResult,
+  HistoryMutationResult,
+  HistoryRestoreTarget
+} from '../../shared/workspaceHistory'
+import { installGit } from '../services/gitInstaller'
 import { permissionBroker } from '../services/permissionBroker'
+import { showTrustedDialog } from '../services/trustedDialog'
 import { appState } from './state'
 import { resolveKnownWorkspace } from './workspaceUtils'
 import {
+  checkGitAvailable,
   createCheckpoint,
   beginCheckpointCapture,
   discardCheckpointCapture,
@@ -49,6 +58,34 @@ export async function restoreApprovedHistory(
       'Nothing was restored because one or more affected files changed after SideKick saved this history point.'
   }
 }
+
+const execFileAsync = promisify(execFile)
+
+const GIT_DOWNLOAD_PAGE = 'https://git-scm.com/downloads'
+
+async function refreshGitAvailable(): Promise<boolean> {
+  if (!appState.gitAvailable) appState.gitAvailable = (await checkGitAvailable()) !== null
+  return appState.gitAvailable
+}
+
+async function confirmGitInstall(parent: BrowserWindow | null): Promise<boolean> {
+  const { response } = await showTrustedDialog(parent, {
+    type: 'question',
+    title: 'Install Git?',
+    message: 'Install Git so SideKick can undo file changes?',
+    detail:
+      'SideKick installs it for your account with the Windows Package Manager. It usually takes about a minute, and your other apps stay as they are.',
+    facts: [{ label: 'Package', value: 'Git.Git', code: true }],
+    footnote: 'This accepts Git’s license, the GNU GPL v2, and the terms of the winget source.',
+    buttons: ['Not now', 'Install Git'],
+    cancelId: 0,
+    defaultId: 1,
+    noLink: true
+  })
+  return response === 1
+}
+
+let installingGit: Promise<GitInstallResult> | null = null
 
 export function registerCheckpointHandlers(): void {
   ipcMain.handle(
@@ -125,5 +162,24 @@ export function registerCheckpointHandlers(): void {
     }
   )
 
-  ipcMain.handle('workspace:gitAvailable', async () => appState.gitAvailable)
+  ipcMain.handle('workspace:gitAvailable', async (_, lookAgain?: unknown) =>
+    lookAgain === true ? refreshGitAvailable() : appState.gitAvailable
+  )
+
+  // Nothing here comes from the renderer but the request: what runs is fixed, and the user's yes is ours to ask for.
+  ipcMain.handle('workspace:installGit', (event) => {
+    installingGit ??= installGit({
+      platform: process.platform,
+      localAppData: process.env.LOCALAPPDATA,
+      gitWorks: refreshGitAvailable,
+      run: async (file, args, ms) => {
+        await execFileAsync(file, [...args], { windowsHide: true, timeout: ms })
+      },
+      confirm: () => confirmGitInstall(BrowserWindow.fromWebContents(event.sender)),
+      openDownloadPage: () => shell.openExternal(GIT_DOWNLOAD_PAGE)
+    }).finally(() => {
+      installingGit = null
+    })
+    return installingGit
+  })
 }

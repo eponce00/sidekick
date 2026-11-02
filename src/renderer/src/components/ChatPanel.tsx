@@ -1,6 +1,7 @@
 import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { AlertTriangle, ArrowUpRight, X } from 'lucide-react'
+import { ArrowUpRight } from 'lucide-react'
+import GitInstallNotice from './GitInstallNotice'
 import { useAutoScroll } from '../hooks/useAutoScroll'
 import { endDictation } from '../services/voice/dictationControl'
 import { useAutoFocus } from '../hooks/useAutoFocus'
@@ -367,8 +368,6 @@ function ChatPanel({
   const [workspaceMemoryError, setWorkspaceMemoryError] = useState<string | null>(null)
   const [isWorkspaceMemoryOpen, setIsWorkspaceMemoryOpen] = useState(false)
   const [goalArmed, setGoalArmed] = useState(false)
-  const [gitAvailableForWorkspace, setGitAvailableForWorkspace] = useState<boolean>(true) // git check result
-  const [gitBannerDismissed, setGitBannerDismissed] = useState(false) // user dismissed git warning
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   // The message box's contents while a message is being edited in it, put back on Cancel.
@@ -707,18 +706,6 @@ function ChatPanel({
       cancelled = true
     }
   }, [workspaceFolder])
-
-  useEffect(() => {
-    // Check if git is available for checkpoint feature
-    window.api.workspace
-      .gitAvailable()
-      .then((available) => {
-        setGitAvailableForWorkspace(available)
-      })
-      .catch(() => {
-        setGitAvailableForWorkspace(false)
-      })
-  }, [])
 
   const attachmentsConversationIdRef = useRef(conversationId)
   useEffect(() => {
@@ -2028,6 +2015,8 @@ function ChatPanel({
         onChoose={(choice) => void chooseBusyPromptOption(choice)}
       />
 
+      {workspaceFolder && <GitInstallNotice />}
+
       {/* Input Area */}
       <ChatInput
         inputValue={inputValue}
@@ -2209,19 +2198,6 @@ function ChatPanel({
           }
         }}
       />
-
-      {/* D13: Git not available warning banner */}
-      {workspaceFolder && !gitAvailableForWorkspace && !gitBannerDismissed && (
-        <div className="git-warning-banner">
-          <span>
-            <AlertTriangle size={14} />
-            git not found — checkpoints (undo) are disabled. Install git to enable workspace undo.
-          </span>
-          <button className="git-warning-dismiss" onClick={() => setGitBannerDismissed(true)}>
-            <X size={14} />
-          </button>
-        </div>
-      )}
 
       {/* D11: Checkpoint restore confirmation dialog */}
       <ConfirmDialog

@@ -28,6 +28,8 @@ import {
 const previewDictationDownloading =
   new URLSearchParams(window.location.search).get('dictation') === 'downloading'
 
+const previewGitMissing = new URLSearchParams(window.location.search).get('git') === 'missing'
+
 const previewCommandLineStatus: CommandLineToolStatus = {
   mode: 'shell-script',
   installed: false,
@@ -1587,7 +1589,11 @@ export function installBrowserApiMock(): void {
       }),
       searchFiles: async () => ({ ok: true, output: '', matchCount: 0, matchedFiles: [] }),
       trashFile: async () => ({ ok: true }),
-      gitAvailable: async () => true,
+      gitAvailable: async () => !previewGitMissing,
+      installGit: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 2500))
+        return { outcome: 'ready' as const }
+      },
       beginHistoryCapture: async () => ({ ok: true, captureId: crypto.randomUUID() }),
       discardHistoryCapture: async () => ({ ok: true }),
       createCheckpoint: async () => ({ ok: true, hash: 'abcdef123456' }),

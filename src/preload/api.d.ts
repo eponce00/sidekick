@@ -370,7 +370,10 @@ interface WorkspaceAPI {
     filePath: string,
     authorization: import('../shared/types').WorkspaceMutationAuthorization
   ) => Promise<{ ok: boolean; error?: string }>
-  gitAvailable: () => Promise<boolean>
+  /** Whether Git could be run when last checked, or now if told to look again. */
+  gitAvailable: (lookAgain?: boolean) => Promise<boolean>
+  /** Asks the user, then gets Git onto this computer. */
+  installGit: () => Promise<import('../shared/workspaceHistory').GitInstallResult>
   beginHistoryCapture: (
     workspaceRoot: string,
     conversationId: string,

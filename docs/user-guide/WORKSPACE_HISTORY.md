@@ -4,6 +4,14 @@ SideKick History is an application-level undo timeline for project files. It use
 a reliable content store, but it is not the project's Git repository and the interface does not
 require users to understand commits, branches, indexes, or stashes.
 
+Without Git on the computer, undo is off, and a notice above the chat box offers **Install Git**:
+
+- **Windows:** after you say yes, SideKick installs Git for your account with the Windows Package Manager,
+  and undo works from then on, with no restart. Where that isn't available or doesn't work, it points you to
+  Git's download page.
+- **macOS:** Apple's own window opens to install its command line tools, which include Git.
+- **Linux:** Git's download page opens, as how to install it depends on your distribution.
+
 ## Coexistence with a real Git repository
 
 For each canonical project folder, SideKick stores a private bare repository under Electron's
