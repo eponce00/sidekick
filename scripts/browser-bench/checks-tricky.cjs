@@ -634,6 +634,18 @@ module.exports = {
     const read = await page.step('browser_evaluate', { expression: 'document.title' })
     return /hidden field/.test(JSON.stringify(read.data)) ? '' : `Read ${JSON.stringify(read.data)}`
   },
+  'fill-never-presses-a-bar-over-the-field': async (page) => {
+    await clear()
+    await page.open(`${BENCH}/t/sticky-bar`)
+    await page.step('browser_fill_form', {
+      fields: [{ kind: 'textbox', text: 'Enter max', value: '600000' }]
+    })
+    await wait(300)
+    const pressed = await results('sticky')
+    if (pressed.length) return 'Filling the field pressed the bar over it'
+    const value = await page.page("document.querySelector('#max').value")
+    return value === '600000' ? '' : `The field holds ${JSON.stringify(value)}`
+  },
   'box-by-the-words-it-shows': async (page) => {
     await clear()
     await page.open(`${BENCH}/t/placeholder`)
