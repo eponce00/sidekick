@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.27.2 — 2026-11-02
+
+- Work in one tab group in your Chrome window, behind the tab you're on, rather than opening a window for each
+  chat. Each of those windows also left a saved 🤖 SideKick group behind in Chrome. A tab you share joins the
+  group, and you can drag it out. Groups already saved stay until you delete them in Chrome.
+- Leave Esc to your other apps while the agent works in Chrome. It used to stop the agent and close the corner
+  picture instead of reaching the app you were in. The picture now has a Stop button. Computer use and Chrome
+  setup still use Esc.
+- Offer to install Git when undo needs it, in place of a line of unstyled text at the bottom of the chat. On
+  Windows, after a yes, it installs Git for your account with the Windows Package Manager, and undo then works
+  without a restart. macOS opens Apple's installer, and Linux and Windows without that manager open Git's
+  download page.
+
 ## 0.27.1 — 2026-11-02
 
 - Fix Chrome setup stopping at the folder picker. When the picker showed a Type column, setup took a row for
