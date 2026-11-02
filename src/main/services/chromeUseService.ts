@@ -4,8 +4,6 @@ import type { NativeBrowserPolicy, NativeBrowserSurface } from './nativeBrowserS
 
 const WAIT_FOR_CHROME_MS = 35_000
 const PREVIEW_EVERY_MS = 3_000
-// As for computer use: long enough to outlast a slow model's turn. Esc stays the user's otherwise.
-const STOP_KEY_HELD_MS = 60_000
 const NOTIFY_EVERY_MS = 30 * 60_000
 
 // Web vaults of what is blocked as an app: the same passwords, in a page.
@@ -85,10 +83,6 @@ export interface ChromeUseDependencies {
     /** Whether the picture of the tab is showing, so that a new one would be seen. */
     wantsPreview: () => boolean
     replyEnded: () => void
-    /** Whether the picture should say that Esc stops the agent. */
-    stopKeyHeld: (held: boolean) => void
-    /** Esc from anywhere, for as long as the agent can act. Returns how to take it back. */
-    armStop: (stop: () => void) => () => void
     notify: () => void
     /** Asks the user to come and do something on the tab, which `show` brings forward. */
     askForUser: (show: () => void) => void
@@ -139,16 +133,14 @@ export class ChromeUseService implements NativeBrowserPolicy {
   private readonly chats = new Map<string, ChromeChat>()
   /** Which chat a browser tool is running for, through everything it awaits. */
   private readonly running = new AsyncLocalStorage<string>()
-  /** Chats whose reply is still driving, and so what Esc stops. */
+  /** Chats whose reply is still driving, and so what stopping stops. */
   private readonly driving = new Set<string>()
-  /** Stopped with Esc. Their reply gets nowhere from here, whatever the model tries. */
+  /** Stopped by the user. Their reply gets nowhere from here, whatever the model tries. */
   private readonly stopped = new Set<string>()
-  private disarm: (() => void) | null = null
   private lastPreviewAt = 0
   private previewTimer: ReturnType<typeof setTimeout> | null = null
   private stepsRunning = 0
   private notifiedAt = 0
-  private disarmTimer: ReturnType<typeof setTimeout> | null = null
   private readonly quiet = new AbortController().signal
 
   /** No question about it: nobody should be asked to judge code, and the page tools do the rest. */
@@ -189,7 +181,7 @@ export class ChromeUseService implements NativeBrowserPolicy {
   private refuseIfStopped(id: string): void {
     if (this.stopped.has(id)) {
       throw new ComputerUseRefusal(
-        'The user pressed Esc to stop this, so nothing was done. Do not continue: tell them how far you got.'
+        'The user stopped this, so nothing was done. Do not continue: tell them how far you got.'
       )
     }
   }
@@ -204,30 +196,18 @@ export class ChromeUseService implements NativeBrowserPolicy {
       this.notifiedAt = Date.now()
       this.deps.overlay.notify()
     }
-    this.disarm ??= this.deps.overlay.armStop(() => this.stop())
-    this.deps.overlay.stopKeyHeld(true)
+    // The marks and the debugger stay until the reply ends: a slow model's turn is no reason to take the
+    // picture away and start it over. This is a tab in the background, so Esc stays with whatever the
+    // user is doing: other apps use it, and it would stop the agent instead of reaching them.
     this.deps.overlay.show()
     this.keepPictureFresh()
-    if (this.disarmTimer) clearTimeout(this.disarmTimer)
-    // The marks and the debugger stay until the reply ends: a slow model's turn is no reason to take the
-    // picture away and start it over. Only Esc goes back, as it belongs to whatever the user is doing.
-    this.disarmTimer = (this.deps.setTimer ?? setTimeout)(() => {
-      this.disarmTimer = null
-      this.disarm?.()
-      this.disarm = null
-      this.deps.overlay.stopKeyHeld(false)
-    }, STOP_KEY_HELD_MS)
     const accent = await this.deps.overlay.accent()
     await this.deps.bridge.send('overlay', { tabId, accent }, this.quiet).catch(() => undefined)
   }
 
   private takeMarksOff(): void {
-    if (this.disarmTimer) clearTimeout(this.disarmTimer)
-    this.disarmTimer = null
     if (this.previewTimer) clearTimeout(this.previewTimer)
     this.previewTimer = null
-    this.disarm?.()
-    this.disarm = null
     this.deps.overlay.hide()
     const tabIds = [...this.chats.values()].flatMap((chat) => [...chat.tabs])
     void this.deps.bridge.send('overlaysOff', { tabIds }, this.quiet).catch(() => undefined)
@@ -246,7 +226,7 @@ export class ChromeUseService implements NativeBrowserPolicy {
     }, PREVIEW_EVERY_MS)
   }
 
-  /** Esc: everything those chats were allowed ends now, and asking again takes the user's answer. */
+  /** The user's stop: everything those chats were allowed ends now, and asking again takes their answer. */
   stop(): void {
     const tabIds = [...this.driving].flatMap((id) => [...(this.chats.get(id)?.tabs ?? [])])
     for (const id of this.driving) this.stopped.add(id)

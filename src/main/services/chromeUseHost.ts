@@ -253,7 +253,8 @@ export function chromeBrowser(): {
         computerOverlay.show({
           appName: 'Chrome',
           visible: async () => false,
-          bounds: async () => null
+          bounds: async () => null,
+          stop: () => service?.stop()
         }),
       hide: () => computerOverlay.hide(),
       preview: (image) => {
@@ -261,15 +262,13 @@ export function chromeBrowser(): {
       },
       wantsPreview: () => !UNATTENDED_TESTS && computerOverlay.wantsPicture(),
       replyEnded: () => computerOverlay.replyEnded(),
-      stopKeyHeld: (held) => computerOverlay.setStopKeyHeld(held),
-      armStop: armEscape,
       notify: () => {
         if (UNATTENDED_TESTS || !Notification.isSupported()) return
         // They can see it for themselves in SideKick.
         if (BrowserWindow.getFocusedWindow()) return
         new Notification({
           title: 'SideKick is using Chrome',
-          body: 'The agent is working in Chrome. Press Esc to stop it.'
+          body: 'The agent is working in Chrome. You can stop it from its picture or from SideKick.'
         }).show()
       },
       askForUser: (show) => {
@@ -344,7 +343,7 @@ export function chromeBrowser(): {
       )
   })
   const rules = service
-  // Cancel on Chrome's own banner means the same as Esc.
+  // Cancel on Chrome's own banner means the same as the picture's Stop.
   if (!manager) {
     bridgeOf().onEvent((event) => {
       if (event.kind === 'detached' && event.reason === 'canceled_by_user') rules.stop()

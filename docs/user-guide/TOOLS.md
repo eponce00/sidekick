@@ -147,11 +147,12 @@ its text.
   you to judge code. A script that goes for cookies, saved site data, or a page with a password or card filled
   in is simply refused. A determined page could still get a look at some of what a site's own scripts hold.
 - **It doesn't use the sign-ins stored in SideKick.** Chrome fills in your saved passwords itself.
-- **You can see it driving, and press Esc to stop it.** Its tab has a soft glow and SideKick's pointer, and a
-  small window in the corner of your screen shows what it last saw. You can move it, resize it, or close it
-  with its ×, and the agent keeps working. It comes back with the next reply, and stays out of the way while
-  you're in SideKick. Esc works from anywhere, and ends what the chat was allowed. For up to a minute after
-  each step, other apps don't receive Esc, even with that window closed.
+- **You can see it driving, and stop it.** Its tab has a soft glow and SideKick's pointer, and a small window
+  in the corner of your screen shows what it last saw, with a **Stop** button. You can move it, resize it, or
+  close it with its ×, and the agent keeps working. It comes back with the next reply, and stays out of the way
+  while you're in SideKick. Stop, the chat's own stop, and Cancel on Chrome's banner all end the work. The first
+  and the banner also end what the chat was allowed. Esc isn't used for this: while the agent works in Chrome,
+  it stays with whatever app you're in.
 - **What it reads goes to your selected model.** Chrome shows a banner while the agent is working, until
   its reply ends.
 
