@@ -176,8 +176,7 @@ class ChromeSurface implements NativeBrowserSurface {
     private readonly showMark: (tabId: number, x: number, y: number) => void,
     private readonly fitPicture: (picture: Buffer, width: number, height: number) => Buffer,
     private readonly showLook: (tabId: number, data: string) => void,
-    private readonly cropPicture: CropPicture,
-    private readonly select: (tabId: number) => void
+    private readonly cropPicture: CropPicture
   ) {
     this.webContentsId = tab.id
     this.url = tab.url
@@ -329,8 +328,7 @@ class ChromeSurface implements NativeBrowserSurface {
   }
 
   focus(): void {
-    // Not the window, which stays out of the user's way: the tab, unless it's one the user shared.
-    if (!this.attached) this.select(this.webContentsId)
+    // Nothing: the tab works behind the one the user is on, which stays theirs.
   }
 
   async drag(
@@ -451,12 +449,18 @@ class ChromeSurface implements NativeBrowserSurface {
 
   /** In CSS pixels, so a point on the picture is that same point for a click. */
   /**
-   * The agent's own window, found by the title Windows gives it. Any doubt about which window that is
-   * refuses, since another could be the user's.
+   * The window, found by the title Windows gives it, only while this tab is the one showing in it. Any doubt
+   * about which window that is refuses, as it's the user's and could be showing anything else of theirs.
    */
   async captureWindow(): Promise<NativeBrowserSurfaceCapture> {
     if (this.attached) throw new Error("A window of the user's isn't for the agent to capture.")
-    this.select(this.webContentsId)
+    const { active } = await this.line.send<ChromeTabInfo>(
+      'tabInfo',
+      { tabId: this.webContentsId },
+      new AbortController().signal
+    )
+    if (!active)
+      throw new Error("This tab isn't the one showing, so its window can't be looked at.")
     const { desktopCapturer } = await import('electron')
     const title = this.getTitle()
     const windows = (
@@ -661,7 +665,6 @@ export class ChromeBrowserRuntime implements NativeBrowserRuntime {
   readonly picturesOnlyWhenAsked = true
   private readonly surfaces = new Map<number, ChromeSurface>()
   private windowId: number | undefined
-  private selected: number | undefined
   private readonly quiet = new AbortController().signal
 
   constructor(
@@ -701,12 +704,7 @@ export class ChromeBrowserRuntime implements NativeBrowserRuntime {
       this.marks.showPointer,
       this.marks.fitPicture,
       this.marks.showLook,
-      this.marks.cropPicture,
-      (tabId) => {
-        if (this.selected === tabId) return
-        this.selected = tabId
-        void this.line.send('selectTab', { tabId }, this.quiet).catch(() => undefined)
-      }
+      this.marks.cropPicture
     )
     this.surfaces.set(tab.id, surface)
     surface.onDestroyed(() => this.surfaces.delete(tab.id))
@@ -714,13 +712,8 @@ export class ChromeBrowserRuntime implements NativeBrowserRuntime {
   }
 
   async createSurface(): Promise<NativeBrowserSurface> {
-    const tab = await this.line.send<ChromeTabInfo>(
-      'open',
-      { url: 'about:blank', ...(this.windowId ? { windowId: this.windowId } : {}) },
-      this.quiet
-    )
+    const tab = await this.line.send<ChromeTabInfo>('open', { url: 'about:blank' }, this.quiet)
     this.windowId = tab.windowId
-    this.selected = tab.id
     return this.remember(tab, false)
   }
 

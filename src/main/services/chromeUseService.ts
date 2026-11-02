@@ -384,6 +384,8 @@ export class ChromeUseService implements NativeBrowserPolicy {
       )
     }
     this.chat(this.currentChat()).sites.add(origin)
+    // Only a label, and no reason to fail a tab they've just shared.
+    await this.deps.bridge.send('joinGroup', { tabId: tab.id }, signal).catch(() => undefined)
     return tab.id
   }
 }
