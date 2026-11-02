@@ -29,11 +29,12 @@ function harness(url = 'https://shop.example/page', answer = true, everySite = t
     wantsPreview: () => false,
     replyEnded: vi.fn(),
     stopKeyHeld: vi.fn(),
-    askForUser: vi.fn(),
+    askForUser: vi.fn((_show: () => void) => undefined),
     armStop: vi.fn((_stop: () => void) => disarm),
     notify: vi.fn(),
     accent: async () => '#86aee8'
   }
+  const timers: Array<() => void> = []
   const service = new ChromeUseService({
     bridge: {
       send: send as never,
@@ -42,7 +43,10 @@ function harness(url = 'https://shop.example/page', answer = true, everySite = t
     },
     bringUpChrome: async () => true,
     overlay,
-    setTimer: (() => 0) as never,
+    setTimer: ((run: () => void) => {
+      timers.push(run)
+      return 0
+    }) as never,
     askEverySite: () => everySite,
     confirmSite,
     confirmSharedTab,
@@ -52,6 +56,7 @@ function harness(url = 'https://shop.example/page', answer = true, everySite = t
   })
   const inChat = <T>(work: () => Promise<T>): Promise<T> => service.runInChat('chat', work)
   return {
+    timers,
     service,
     inChat,
     surface,
@@ -213,6 +218,28 @@ describe('scripts that only look', () => {
 })
 
 describe('when it is driving', () => {
+  it('keeps the picture through a slow turn of the model, giving back only Esc', async () => {
+    const { service, inChat, surface, overlay, disarm, timers } = harness()
+    await inChat(() => service.beforeStep(surface, signal))
+    for (const run of timers.splice(0)) run()
+    expect(disarm).toHaveBeenCalled()
+    expect(overlay.stopKeyHeld).toHaveBeenLastCalledWith(false)
+    expect(overlay.hide).not.toHaveBeenCalled()
+    // Still there to refresh on the next tick, and Esc comes back with the next step.
+    expect(timers.length).toBeGreaterThan(0)
+    await inChat(() => service.beforeStep(surface, signal))
+    expect(overlay.stopKeyHeld).toHaveBeenLastCalledWith(true)
+  })
+
+  it('asks the user over to its tab rather than taking the screen', async () => {
+    const { service, inChat, surface, overlay, send } = harness()
+    await inChat(() => service.beforeStep(surface, signal))
+    service.showToUser('chat')
+    expect(send).not.toHaveBeenCalledWith('showTab', expect.anything(), expect.anything())
+    overlay.askForUser.mock.calls[0][0]()
+    expect(send).toHaveBeenCalledWith('showTab', { tabId: 7 }, expect.anything())
+  })
+
   it('tells the user once in a while, not once for every chat', async () => {
     const { service, surface, overlay } = harness()
     for (const chat of ['one', 'two', 'three']) {
