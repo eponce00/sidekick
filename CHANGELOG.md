@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.26.1 — 2026-11-02
+
+- Make the agent much more dependable on real sites in your own Chrome. It works in a window of its own,
+  which draws pages and takes drags properly, opens pages that send themselves elsewhere while loading,
+  and can search a page's text and read, search and scroll PDFs.
+- Stop a page's Print button freezing all of SideKick, every chat included, in the built-in browser.
+  Print now does nothing in the agent's own tabs, in Chrome too.
+- Keep Chrome's own dialogs out of the way. A site asking for a saved password opened a sign-in dialog
+  nothing could see or answer, and every click on the page then did nothing. In the agent's tabs the
+  site is now told there isn't one, and its own sign-in form still works. If a dialog of Chrome's is ever
+  in the way, the agent is told.
+- Stop wrongly refusing ordinary pages. A Wikipedia article with a "Human" heading counted as a human
+  check, and a hidden field on Booking counted as a filled-in secret, which stopped every script there.
+  Real human checks still stop the agent.
+- Stop filling a form from pressing a button stuck over the field, as Redfin's price box did with its
+  "See homes" bar. A field that can't be brought clear of another control is now refused.
+- Say when a page has stopped answering, after about 35 seconds, rather than holding a step for up to
+  150, and let the agent close it and go on.
+- In the built-in browser, reach frames from other sites when clicking by position, keep the first click
+  on a new page, report pages that fail to load, and stop leaving a page's alerts on your screen after
+  the agent has dismissed them.
+- Ask less often: "Add to compare" and "submit search" no longer ask for confirmation.
+
 ## 0.26.0 — 2026-11-01
 
 - Let the agent operate other apps on Windows. Turn it on in **Settings › Computer use**, which is off
