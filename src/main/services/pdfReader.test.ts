@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: { getAppPath: () => process.cwd() } }))
 
-import { readPdf } from './pdfReader'
+import { readPdf, readPdfWords } from './pdfReader'
 
 // A page of text, then a page that is only a picture, as a scanner makes it.
 function textThenScanPdf(): Buffer {
@@ -32,6 +32,14 @@ function textThenScanPdf(): Buffer {
 }
 
 describe('PDF reading', () => {
+  it("gives a browser's PDF its words page by page, with nothing for a picture", async () => {
+    const read = await readPdfWords(textThenScanPdf())
+    expect(read.totalPages).toBe(2)
+    expect(read.text).toBe(
+      '--- Page 1 of 2 ---\nQuarterly revenue rose in every region.\n\n--- Page 2 of 2 ---\n'
+    )
+  })
+
   it('recognizes a scanned page with OCR when the model reads text only', async () => {
     const recognize = vi.fn(async (paths: readonly string[]) => ({
       ok: true as const,

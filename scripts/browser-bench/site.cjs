@@ -111,6 +111,67 @@ const PAGES = {
     'Only a real click',
     `<button onclick="if (event.isTrusted && event.detail > 0) got('trusted', 'real')">Press me</button>${GOT}`
   ),
+  '/t/print': page(
+    'Print button',
+    `<button onclick="got('print', 'before print'); print(); got('print', 'after print')">Print this page</button>
+     <button onclick="got('print', 'still works')">Then this</button>${GOT}`
+  ),
+  '/t/then': page(
+    'Next page',
+    `<button onclick="got('then', 'next page works')">Then this</button>${GOT}`
+  ),
+  '/t/app-links': page(
+    'Links that open other apps',
+    `<a href="mailto:nobody@example.invalid">Mail link</a> <a href="sidekick-bench-nothing://x">App link</a>
+     <button onclick="got('app-links', 'still works')">Then this</button>${GOT}`
+  ),
+  '/t/permissions': page(
+    'Asks for permissions',
+    `<button onclick="Notification.requestPermission(); got('perm', 'notify')">Notify</button>
+     <button onclick="navigator.geolocation.getCurrentPosition(() => {}, () => {}); got('perm', 'where')">Where</button>
+     <button onclick="navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {}); got('perm', 'mic')">Mic</button>
+     <button onclick="got('perm', 'still works')">Then this</button>${GOT}`
+  ),
+  '/t/pickers': page(
+    'Pickers',
+    `<label>Colour <input id="c" type="color"></label> <label>Day <input id="d" type="date"></label>
+     <button onclick="got('pickers', 'still works')">Then this</button>${GOT}`
+  ),
+  '/t/leave': page(
+    'Warns before leaving',
+    `<input aria-label="Note" oninput="onbeforeunload = () => 'Unsaved'"> <a href="/t/then">Away</a>${GOT}`
+  ),
+  '/t/fullscreen': page(
+    'Goes fullscreen',
+    `<button onclick="document.documentElement.requestFullscreen(); got('full', 'asked')">Fullscreen</button>
+     <button onclick="got('full', 'still works')">Then this</button>${GOT}`
+  ),
+  '/t/hang': page(
+    'Hangs itself',
+    `<button onclick="got('hang', 'asked'); setTimeout(() => { for (const end = Date.now() + 90000; Date.now() < end; ); }, 50)">Hang</button>${GOT}`
+  ),
+  '/t/not-a-check': page(
+    'Pages that only look like a human check',
+    `<label><input type="checkbox"> Compact view</label>
+     <div><input type="checkbox" aria-label="Toggle contents"><ul>${'<li>Human history and how to verify it</li>'.repeat(9)}</ul></div>
+     <iframe src="/t/then?recaptcha=1&size=invisible" title="reCAPTCHA" width="256" height="60"></iframe>`
+  ),
+  '/t/a-check': page(
+    'A real human check',
+    `<div><input type="checkbox" id="c"><label for="c">I'm not a robot</label></div>`
+  ),
+  '/t/hidden-field': page(
+    'A hidden field with a name like a secret',
+    `<form><input type="hidden" name="ssne" value="abcd"><input aria-label="City"></form>`
+  ),
+  '/t/print-frame': page(
+    'Print button in a frame on another address',
+    `<iframe src="http://localhost:${PORT}/t/print" width="500" height="200" title="Form"></iframe>`
+  ),
+  '/t/placeholder': page(
+    'Box named one thing, showing another',
+    `<input aria-label="Maximum price" placeholder="Enter max" oninput="got('placeholder', this.value)">${GOT}`
+  ),
   '/t/covered': page(
     'Covered button',
     `<div style="position:relative;width:200px;height:60px"><button id="green" style="width:200px;height:60px" onclick="got('covered', 'green'); blue.hidden = false">Green</button><button id="blue" hidden style="position:absolute;inset:0;width:200px;height:60px" onclick="got('covered', 'blue')">Blue</button></div>${GOT}`
@@ -221,6 +282,10 @@ const server = http.createServer((req, res) => {
     res.end(body)
   }
   const url = new URL(req.url, 'http://bench')
+  if (url.pathname === '/t/password') {
+    res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="bench"', 'content-type': 'text/html' })
+    return res.end('<!doctype html><title>Not allowed</title><h1>Password needed</h1>')
+  }
   if (url.pathname === '/record') return send(JSON.stringify(record), 'application/json')
   if (url.pathname === '/record/clear') {
     record.length = 0

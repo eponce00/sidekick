@@ -3,6 +3,7 @@ import { dirname, join, resolve } from 'path'
 import { readFile, writeFile } from 'fs/promises'
 import { setTimeout as abortableDelay } from 'timers/promises'
 import { credentialPageOrigin } from '../../shared/credentials'
+import { getDomain } from 'tldts'
 import { credentialRedactor } from './credentialRedaction'
 import { composeFilmstrip } from './browserFilmstrip'
 import { BrowserCertificateError } from './browserCertificatePolicy'
@@ -347,6 +348,44 @@ function publicObservation(observation: BrowserObservation, semanticLineLimit?: 
   }
 }
 
+function siteOf(url: string): string {
+  try {
+    const { hostname } = new URL(url)
+    return getDomain(hostname, { allowPrivateDomains: true }) ?? hostname
+  } catch {
+    return url
+  }
+}
+
+/**
+ * What went wrong that could matter. Trackers and ads from other sites fail all the time, above all where the
+ * user blocks them, and listing them after every step costs tokens and sends the model chasing them.
+ */
+function failuresWorthSaying(observation: BrowserObservation): unknown {
+  const site = siteOf(observation.tab.url)
+  // A request a page dropped on its way elsewhere didn't fail.
+  const failed = observation.failedRequests.filter(
+    (failure) => failure.errorText !== 'net::ERR_ABORTED'
+  )
+  // A site's tracking blocked on this computer says nothing about the page, wherever it's hosted.
+  const own = failed.filter(
+    (failure) =>
+      failure.resourceType === 'Document' ||
+      (siteOf(failure.url) === site &&
+        failure.resourceType !== 'Ping' &&
+        failure.errorText !== 'net::ERR_NAME_NOT_RESOLVED')
+  )
+  const others = failed.length - own.length
+  return {
+    failedRequests: own.slice(-5).map((failure) => ({
+      url: failure.url.slice(0, 200),
+      resourceType: failure.resourceType,
+      errorText: failure.errorText
+    })),
+    ...(others ? { otherSitesRequestsFailed: others } : {})
+  }
+}
+
 function compactObservation(
   observation: BrowserObservation,
   screenshotAttached: boolean,
@@ -390,8 +429,11 @@ function compactObservation(
           attached: screenshotAttached
         }
       : { attached: false },
-    console: observation.console.slice(-10),
-    failedRequests: observation.failedRequests.slice(-10),
+    console: observation.console
+      .filter((entry) => entry.level === 'error')
+      .slice(-5)
+      .map((entry) => ({ ...entry, message: entry.message.slice(0, 300) })),
+    ...(failuresWorthSaying(observation) as object),
     instruction: screenshotAttached
       ? 'Use the attached image only if semantic state is insufficient.'
       : 'No image was attached to this routine result. Call browser_observe with include_screenshot=true only when visual evidence is needed.'
@@ -408,12 +450,8 @@ function compactAction(result: BrowserActionResult, screenshotAttached: boolean)
     durationMs: result.durationMs,
     ...(result.pressed ? { pressed: result.pressed } : {}),
     ...(result.note ? { note: result.note } : {}),
-    quiescence: {
-      idle: result.quiescence.idle,
-      waitedMs: result.quiescence.waitedMs,
-      pendingRequests: result.quiescence.pendingRequests,
-      timedOut: result.quiescence.timedOut
-    },
+    // Many real pages never go quiet, so this says where it had got to rather than whether it worked.
+    pageSettled: result.quiescence.idle,
     loopProtection: result.loopProtection,
     ...(result.effect ? { effect: result.effect } : {}),
     ...(result.fileChooserOpened
@@ -2129,7 +2167,8 @@ export function registerBrowserToolHandlers(
         const read = await manager.service.pageText(
           lease.sessionId,
           Math.max(0, finiteNumber(args, 'text_from') ?? 0),
-          { signal: context.signal }
+          { signal: context.signal },
+          stringArgument(args, 'find')
         )
         const data = { ...read, text: credentialRedactor.redact(read.text) }
         return boundedSuccess(outputs, title, data, data)
@@ -2225,6 +2264,8 @@ export function registerBrowserToolHandlers(
           { signal: context.signal, look: wantsLook(name, args), quick: args[QUICK_STEP] === true }
         )
       } else if (name === 'browser_type') {
+        // Without one this would empty the box and report success. An empty string still clears it.
+        if (typeof args.value !== 'string') throw new Error('browser_type requires a value')
         raw = await manager.service.type(
           {
             sessionId: lease.sessionId,
@@ -2233,7 +2274,7 @@ export function registerBrowserToolHandlers(
               coordinates: false,
               preferredRoles: ['textbox', 'searchbox', 'combobox', 'spinbutton']
             })!,
-            text: typeof args.value === 'string' ? args.value : '',
+            text: args.value,
             clear: args.clear !== false,
             submit: args.submit === true
           },

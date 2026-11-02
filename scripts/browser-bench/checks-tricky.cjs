@@ -511,6 +511,163 @@ module.exports = {
     if (!look.pictures.length) return 'No picture from a look'
     return ''
   },
+  'print-button-leaves-the-page-working': async (page) => {
+    await clear()
+    await page.open(`${BENCH}/t/print`)
+    await page.click(await page.ref('Print this page', /button/))
+    await page.click(await page.ref('Then this', /button/))
+    const seen = await results('print')
+    return seen.includes('still works') ? '' : `The page stopped responding: ${seen}`
+  },
+  'print-button-in-another-sites-frame': async (page) => {
+    await clear()
+    await page.open(`${BENCH}/t/print-frame`)
+    const box = await page.page(
+      "[document.querySelector('iframe').getBoundingClientRect().x, document.querySelector('iframe').getBoundingClientRect().y]"
+    )
+    for (const across of [40, 150]) {
+      const look = await page.step('browser_observe', {})
+      const picture = look.full.screenshot
+      const scale = picture.width / look.full.viewport.width
+      await page.step('browser_click', {
+        x: (box[0] + across) * scale,
+        y: (box[1] + 92) * scale,
+        screenshot_id: picture.id
+      })
+      await wait(500)
+    }
+    const seen = await results('print')
+    return seen.includes('after print') && seen.includes('still works')
+      ? ''
+      : `Printing held the frame up, or the press missed: ${seen}`
+  },
+  'trap-http-password-prompt': async (page) => {
+    await clear()
+    await page.open(`${BENCH}/t/then`)
+    await page
+      .step('browser_navigate', { action: 'url', url: `${BENCH}/t/password` })
+      .catch(() => undefined)
+    await page.step('browser_navigate', { action: 'url', url: `${BENCH}/t/then` })
+    await page.click(await page.ref('Then this', /button/))
+    const seen = await result('then')
+    return seen ? '' : 'The page behind a password prompt left the tab unusable'
+  },
+  'trap-links-to-other-apps': async (page) => {
+    await clear()
+    await page.open(`${BENCH}/t/app-links`)
+    await page.click(await page.ref('Mail link', /link/)).catch(() => undefined)
+    await page.click(await page.ref('App link', /link/)).catch(() => undefined)
+    await page.click(await page.ref('Then this', /button/))
+    const seen = await result('app-links')
+    return seen === 'still works' ? '' : `Stuck after a link to an app: ${seen}`
+  },
+  'trap-permission-prompts': async (page) => {
+    await clear()
+    await page.open(`${BENCH}/t/permissions`)
+    for (const name of ['Notify', 'Where', 'Mic', 'Then this']) {
+      await page.click(await page.ref(name, /button/))
+    }
+    const seen = await results('perm')
+    return seen.includes('still works') ? '' : `Stuck behind a permission prompt: ${seen}`
+  },
+  'trap-pickers': async (page) => {
+    await clear()
+    await page.open(`${BENCH}/t/pickers`)
+    await page
+      .click(await page.ref('Colour', /colorwell|color|textbox|button/i))
+      .catch(() => undefined)
+    await page.click(await page.ref('Then this', /button/))
+    const first = await result('pickers')
+    await clear()
+    await page.click(await page.ref('Day', /date|textbox|Date/)).catch(() => undefined)
+    await page.click(await page.ref('Then this', /button/))
+    const second = await result('pickers')
+    return first && second ? '' : `A press was lost after a picker: colour ${first}, day ${second}`
+  },
+  'trap-warning-before-leaving': async (page) => {
+    await clear()
+    await page.open(`${BENCH}/t/leave`)
+    await page.step('browser_type', { ref: await page.ref('Note', /textbox/), value: 'unsaved' })
+    await page.click(await page.ref('Away', /link/))
+    await wait(500)
+    await page.click(await page.ref('Then this', /button/))
+    const seen = await result('then')
+    return seen ? '' : 'A warning before leaving held the page up'
+  },
+  'trap-fullscreen': async (page) => {
+    await clear()
+    await page.open(`${BENCH}/t/fullscreen`)
+    await page.click(await page.ref('Fullscreen', /button/))
+    await wait(1000)
+    await page.step('browser_observe', {})
+    await page.click(await page.ref('Then this', /button/))
+    const seen = await results('full')
+    return seen.includes('still works') ? '' : `Stuck after going fullscreen: ${seen}`
+  },
+  'trap-page-that-hangs-itself': async (page) => {
+    await clear()
+    await page.open(`${BENCH}/t/hang`)
+    const started = Date.now()
+    const said = await page.click(await page.ref('Hang', /button/)).then(
+      () => 'nothing',
+      (error) => String(error.message)
+    )
+    const took = Date.now() - started
+    if (took > 45000) return `The click held on for ${took}ms`
+    if (!/answering/.test(said)) return `It said ${said.slice(0, 200)}`
+    await page.step('browser_tabs', { action: 'close' }).catch(() => undefined)
+    await page.open(`${BENCH}/t/then`)
+    await page.click(await page.ref('Then this', /button/))
+    return (await result('then')) ? '' : 'A new page was no use after the hang'
+  },
+  'trap-words-that-sound-like-a-human-check': async (page) => {
+    await page.open(`${BENCH}/t/not-a-check`)
+    const look = await page.step('browser_observe', { include_screenshot: false })
+    if (look.data.humanVerification)
+      return `Called a human check: ${JSON.stringify(look.data.humanVerification)}`
+    await page.open(`${BENCH}/t/a-check`)
+    const real = await page.step('browser_observe', { include_screenshot: false })
+    return real.data.humanVerification ? '' : 'A real check went unnoticed'
+  },
+  'trap-hidden-field-named-like-a-secret': async (page) => {
+    await page.open(`${BENCH}/t/hidden-field`)
+    const read = await page.step('browser_evaluate', { expression: 'document.title' })
+    return /hidden field/.test(JSON.stringify(read.data)) ? '' : `Read ${JSON.stringify(read.data)}`
+  },
+  'box-by-the-words-it-shows': async (page) => {
+    await clear()
+    await page.open(`${BENCH}/t/placeholder`)
+    await page.step('browser_fill_form', {
+      fields: [{ kind: 'textbox', text: 'Enter max', value: '600000' }]
+    })
+    return (await results('placeholder')).includes('600000') ? '' : 'The box was not filled'
+  },
+  'pdf-read-search-and-scroll': async (page) => {
+    await page.open('https://www.irs.gov/pub/irs-pdf/i1040gi.pdf')
+    const words = (await page.step('browser_observe', { text: true })).full
+    if (!(words.pages > 50) || !/Page 1 of/.test(words.text)) {
+      return `The PDF's words did not come: ${JSON.stringify(words).slice(0, 200)}`
+    }
+    const found = (await page.step('browser_observe', { text: true, find: 'Filing Requirements' }))
+      .full
+    if (!(found.found > 0)) return 'Searching the PDF found nothing'
+    const shot = async () =>
+      require('fs')
+        .readFileSync((await page.step('browser_screenshot', {})).pictures[0])
+        .toString('base64')
+    const before = await shot()
+    const scrolled = await page.step('browser_scroll', { delta_y: 1500 })
+    if (scrolled.full?.effect?.changed === false) return 'Scrolling the PDF did nothing'
+    await wait(1000)
+    return before !== (await shot()) ? '' : 'The PDF looks the same after scrolling'
+  },
+  'wikipedia-search-the-words': async (page) => {
+    await page.open('https://en.wikipedia.org/wiki/Reno,_Nevada')
+    const found = await page.step('browser_observe', { text: true, find: 'Biggest Little City' })
+    return found.full.found > 0 && /Biggest Little City/i.test(found.full.text)
+      ? ''
+      : `Nothing around the phrase: ${JSON.stringify(found.full).slice(0, 200)}`
+  },
   'wikipedia-back-and-forward': async (page) => {
     await page.open('https://en.wikipedia.org/wiki/Reno,_Nevada')
     await page.click(await page.ref('Sparks, Nevada', /link/))

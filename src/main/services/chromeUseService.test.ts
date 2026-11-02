@@ -157,12 +157,20 @@ describe('what the agent may reach in Chrome', () => {
       .beforePress('Buy now for $99 with free delivery by Friday', 'https://shop.example/', signal)
       .catch(() => undefined)
     expect(confirmPress).toHaveBeenCalledTimes(2)
-    await service.beforePress(
+    for (const harmless of [
+      'submit search',
       '12, Thursday, November 2026. This day is only available for checkout.',
-      'https://stays.example/',
-      signal
-    )
+      'Sorted by top flights, Change sort order.',
+      'Remove filter',
+      'Order history'
+    ]) {
+      await service.beforePress(harmless, 'https://stays.example/', signal)
+    }
     expect(confirmPress).toHaveBeenCalledTimes(2)
+    for (const risky of ['Place your order', 'Order now', 'Delete account', 'Remove from cart']) {
+      await service.beforePress(risky, 'https://shop.example/', signal).catch(() => undefined)
+    }
+    expect(confirmPress).toHaveBeenCalledTimes(6)
   })
 })
 
@@ -173,7 +181,10 @@ describe('scripts that only look', () => {
     "(() => { const a = document.querySelector('a'); return { href: a?.getAttribute('href') } })()",
     'document.links[0].href',
     "document.body['innerText'].length",
-    '(() => { const b = document.body.getBoundingClientRect(); return [b.x, b.y] })()'
+    '(() => { const b = document.body.getBoundingClientRect(); return [b.x, b.y] })()',
+    "document.body.innerText.includes('Sign in with Google')",
+    'document.querySelector(\'[aria-label="Accept cookies"]\')',
+    'document.body.innerText.match(/started [a-z]+ at/i)'
   ])('leaves %s to the browser’s own check', (script) => {
     expect(readsLikeALook(script)).toBe(true)
   })
@@ -181,6 +192,9 @@ describe('scripts that only look', () => {
   it.each([
     'document.cookie',
     "document['cookie']",
+    "window['local' + 'Storage']",
+    '1 / document[k] / 1',
+    '(/x/, document[k])',
     "const k = 'coo' + 'kie'; document[k]",
     'document[`coo${"kie"}`]',
     "const { ['coo' + 'kie']: c } = document; c",

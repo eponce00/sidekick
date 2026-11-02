@@ -25,6 +25,7 @@ import {
   type NativeBrowserSurfaceConsoleMessage,
   type NativeBrowserSurfaceLoadFailure,
   sameSignInSite,
+  SECRET_FIELD,
   signInDomain,
   toViewInputEvent
 } from './nativeBrowserSessionService'
@@ -184,6 +185,7 @@ class FakeSurface implements NativeBrowserSurface {
   ])
   readonly inputEvents: Array<Parameters<NativeBrowserSurface['sendInputEvent']>[0]> = []
   readonly commands: Array<{ method: string; params?: Record<string, unknown> }> = []
+  clickInFrame?: NativeBrowserSurface['clickInFrame']
   private guard: (url: string) => boolean = (url) => url === 'about:blank'
   private requestGuard: (url: string) => boolean = () => false
   private certificateGuard: (event: BrowserCertificateEvent) => boolean = () => false
@@ -1460,6 +1462,161 @@ describe('NativeBrowserSessionService', () => {
     expect(asked).toEqual(['http://10.50.160.123:8080', 'http://10.50.160.123:8080'])
   })
 
+  it('opens a page that sends itself somewhere while loading, but not a download', async () => {
+    const { service, runtime } = await testService()
+    const { sessionId } = await service.open({ runId: 'load', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    const aborted = new Error("ERR_ABORTED (-3) loading 'https://example.com/again'")
+    const load = vi.spyOn(surface, 'loadURL').mockImplementationOnce(async () => {
+      surface.url = 'https://example.com/again'
+      throw aborted
+    })
+    await expect(
+      service.navigate({ sessionId, action: 'url', url: 'https://example.com/moves' })
+    ).resolves.toMatchObject({ action: 'navigate:url' })
+
+    load.mockImplementationOnce(async () => {
+      throw aborted
+    })
+    await expect(
+      service.navigate({ sessionId, action: 'url', url: 'https://example.com/file.zip' })
+    ).rejects.toThrow('ERR_ABORTED')
+  })
+
+  it('says when a click never reached the page, in a browser with dialogs of its own', async () => {
+    const { service, runtime } = await testService()
+    const { sessionId } = await service.open({ runId: 'dialog', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    const click = () =>
+      service.click({ sessionId, target: { name: 'Save', preferredRoles: ['button'] } })
+    const run = surface.executeJavaScript.bind(surface)
+    surface.executeJavaScript = (async (source: string) =>
+      source.includes(':hover') ? false : run(source)) as typeof surface.executeJavaScript
+    expect((await click()).note).toBeUndefined()
+    ;(runtime as unknown as { hasDialogsOfItsOwn: boolean }).hasDialogsOfItsOwn = true
+    expect((await click()).note).toContain('never reached the page')
+  })
+
+  it('says so when a page is too busy to answer, rather than waiting all the time there is', async () => {
+    const { service, runtime } = await testService()
+    const { sessionId } = await service.open({ runId: 'busy', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    surface.sendDebuggerCommand = (() =>
+      new Promise(() => undefined)) as typeof surface.sendDebuggerCommand
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const looked = expect(service.observe(sessionId)).rejects.toThrow("isn't answering")
+      await vi.advanceTimersByTimeAsync(35_000)
+      await looked
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('knows a secret field by its words, not by letters inside other words', () => {
+    for (const name of [
+      'ssn',
+      'user_ssn',
+      'userSsn',
+      'ssnNumber',
+      'cc-number',
+      'cc-csc',
+      'password'
+    ]) {
+      expect(SECRET_FIELD.test(name), name).toBe(true)
+    }
+    for (const name of ['ssne', 'ssne_untouched', 'session', 'access-token', 'success-url']) {
+      expect(SECRET_FIELD.test(name), name).toBe(false)
+    }
+  })
+
+  it('stops printing from opening a dialog in its own tabs', async () => {
+    const { service, runtime } = await testService()
+    await service.open({ runId: 'print', url: 'https://example.com/' })
+    const scripts = runtime.surfaces[0].commands.filter(
+      ({ method }) => method === 'Page.addScriptToEvaluateOnNewDocument'
+    )
+    expect(scripts.some(({ params }) => String(params?.source).includes('window.print'))).toBe(true)
+  })
+
+  it('clicks into a frame by the way that reaches it, and only there', async () => {
+    const { service, runtime } = await testService()
+    const { sessionId } = await service.open({ runId: 'frame', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    const inFrame = vi.fn(async () => undefined)
+    surface.clickInFrame = inFrame
+    const send = surface.sendDebuggerCommand.bind(surface)
+    surface.sendDebuggerCommand = (async (method: string, params?: Record<string, unknown>) =>
+      String(params?.expression).startsWith('document.elementFromPoint')
+        ? { result: {} }
+        : send(method, params)) as typeof send
+    const run = surface.executeJavaScript.bind(surface)
+    let framed = false
+    surface.executeJavaScript = (async (source: string) =>
+      source.includes('EMBED|IFRAME') && !source.includes(':hover')
+        ? framed
+        : run(source)) as typeof surface.executeJavaScript
+    const click = async () => {
+      const { screenshot } = await service.observe(sessionId)
+      await service.click({
+        sessionId,
+        target: { screenshotId: screenshot!.id, coordinates: { x: 40, y: 40 } }
+      })
+    }
+    await click()
+    expect(inFrame).not.toHaveBeenCalled()
+    framed = true
+    await click()
+    expect(inFrame).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the side effect check on when a look-only script gets its stand-ins', async () => {
+    const { service, runtime } = await testService({
+      policy: {
+        beforeStep: async () => undefined,
+        beforeNavigate: async () => undefined,
+        beforePress: async () => undefined,
+        beforeTyping: () => undefined,
+        mayRunScript: () => true,
+        scriptRefusal: 'Not run',
+        beforeDownload: async () => undefined,
+        beforeUpload: async () => undefined
+      }
+    })
+    const { sessionId } = await service.open({ runId: 'look', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    const send = surface.sendDebuggerCommand.bind(surface)
+    const looks: Array<Record<string, unknown>> = []
+    let refusals = 1
+    surface.sendDebuggerCommand = (async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'Page.createIsolatedWorld') return { executionContextId: 7 }
+      if (method === 'Runtime.evaluate' && String(params?.expression).includes('PICK')) {
+        looks.push(params!)
+        return refusals-- > 0
+          ? { exceptionDetails: { exception: { description: 'EvalError: Possible side-effect' } } }
+          : { result: { value: '"found"' } }
+      }
+      if (method === 'Runtime.evaluate' && params?.contextId === 7) return {}
+      if (method === 'Runtime.evaluate') {
+        return { result: { value: { fields: false, cookies: [] } } }
+      }
+      return send(method, params)
+    }) as typeof surface.sendDebuggerCommand
+
+    await expect(service.evaluate({ sessionId, expression: 'PICK' })).resolves.toMatchObject({
+      value: 'found'
+    })
+    expect(looks.map((look) => [look.contextId, look.throwOnSideEffect])).toEqual([
+      [undefined, true],
+      [7, true]
+    ])
+
+    // What is still refused there is refused, rather than run some other way.
+    refusals = 2
+    await expect(service.evaluate({ sessionId, expression: 'PICK' })).rejects.toThrow('Not run')
+    expect(looks.slice(2).every((look) => look.throwOnSideEffect === true)).toBe(true)
+  })
+
   it('keeps local-network HTTP closed without a network policy', async () => {
     const { service } = await testService()
     await expect(service.open({ runId: 'no-policy', url: 'http://192.168.1.10/' })).rejects.toThrow(
@@ -1931,8 +2088,11 @@ describe('NativeBrowserSessionService', () => {
   })
 
   it('finds what lies past the listed part of a long page, and never confirms a stored secret', async () => {
-    const { service, runtime } = await testService()
+    let ahead = 0
+    const { service, runtime } = await testService({ now: () => Date.now() + ahead })
     const opened = await service.open({ runId: 'find-long-page', url: 'https://example.com/' })
+    // Well after arriving, when finding nothing means it isn't there.
+    ahead = 60_000
     const surface = runtime.surfaces[0]
     surface.extraAxNodes = [
       ...Array.from({ length: 900 }, (_, index) => ({
@@ -2392,7 +2552,7 @@ describe('NativeBrowserSessionService', () => {
     expect(JSON.stringify(result)).not.toContain('Spanish')
     expect(result.observation.screenshot).toBeUndefined()
     expect(result.observation.semanticSnapshot).toContain('value=[redacted]')
-    expect(result.observation.semanticSnapshot).toContain('checked=[redacted]')
+    expect(result.observation.semanticSnapshot).not.toContain('checked=[redacted]')
     expect(
       surface.commands.filter(({ method }) => method === 'Accessibility.getFullAXTree')
     ).toHaveLength(semanticCallsBefore + 1)

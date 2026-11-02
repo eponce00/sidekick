@@ -64,6 +64,7 @@ const ALLOWED_COMMANDS = new Set([
   'Network.enable',
   'Page.addScriptToEvaluateOnNewDocument',
   'Page.captureScreenshot',
+  'Page.createIsolatedWorld',
   'Page.enable',
   'Page.getFrameTree',
   'Page.getLayoutMetrics',
@@ -196,6 +197,7 @@ async function open({ url, windowId }) {
     tab = created.tabs[0]
   }
   tracked.add(tab.id)
+  agentTabs.add(tab.id)
   // The group is only a label, and no reason to fail a tab that's open and works.
   await inGroup(tab.id, tab.windowId).catch(() => undefined)
   // Selected before it counted as the agent's, and nothing here is the user's to give back.
@@ -451,6 +453,8 @@ async function fetchFile({ url, method = 'GET' }) {
 }
 
 const tracked = new Set()
+/** The tabs the agent opened itself, unlike any the user shared. */
+const agentTabs = new Set()
 /** The tab the user last had selected in each window, as a new tab of the agent's mustn't take it over. */
 const selectedTabs = new Map()
 
@@ -491,6 +495,7 @@ chrome.debugger.onDetach.addListener(({ tabId }, reason) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   attached.delete(tabId)
   remembered.delete(tabId)
+  agentTabs.delete(tabId)
   if (tracked.delete(tabId)) sendEvent({ kind: 'removed', tabId })
 })
 
@@ -505,6 +510,22 @@ chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
   })
 })
 
+// The debugger's scripts for new documents stop at a frame from another site, and printing from one would hold
+// up the page behind a dialog no one there can answer.
+chrome.webNavigation.onCommitted.addListener(({ tabId, frameId }) => {
+  if (!frameId || !agentTabs.has(tabId)) return
+  void chrome.scripting
+    .executeScript({
+      target: { tabId, frameIds: [frameId] },
+      world: 'MAIN',
+      injectImmediately: true,
+      func: () => {
+        window.print = () => undefined
+      }
+    })
+    .catch(() => undefined)
+})
+
 // A link or script in one of the agent's tabs that opens another: the page may need that exact tab, as a
 // sign-in popup does. It joins the group, and the user keeps the tab they were on.
 // Not tabs.onCreated: a link that opens a new tab has no opener, as far as that one can tell. Only while the
@@ -514,6 +535,7 @@ chrome.webNavigation.onCreatedNavigationTarget.addListener(async ({ sourceTabId,
   const tab = await chrome.tabs.get(tabId).catch(() => null)
   if (!tab) return
   tracked.add(tabId)
+  if (agentTabs.has(sourceTabId)) agentTabs.add(tabId)
   void inGroup(tabId, tab.windowId).catch(() => undefined)
   const theirs = selectedTabs.get(tab.windowId)
   if (tab.active && theirs !== undefined && theirs !== tabId) {

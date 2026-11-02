@@ -48,6 +48,7 @@ import type {
   WebContents
 } from 'electron'
 import {
+  browserPdfSessionBytes,
   browserPdfUrlAllowed,
   browserPdfViewerUrl,
   createBrowserPdfSession,
@@ -55,6 +56,8 @@ import {
   revokeBrowserPdfSession,
   revokeBrowserPdfSessionsByOwner
 } from '../bootstrap/browserPdfSessionRegistry'
+import { readPdfWords } from './pdfReader'
+import { LOOK_HELPERS_SCRIPT } from './browserLookHelpers'
 import { externalSchemaIssues } from './agentToolRegistry'
 import {
   busyRequests,
@@ -651,6 +654,12 @@ export interface NativeBrowserSurface {
   focus(): void
   insertText(text: string): Promise<void>
   sendInputEvent(event: MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent): void
+  /** A click for where sendInputEvent can't reach into a frame at that point. */
+  clickInFrame?(
+    at: { x: number; y: number },
+    button: 'left' | 'middle' | 'right',
+    clickCount: number
+  ): Promise<void>
   /** Shows the agent's cursor at a CSS viewport point to whoever watches the page. */
   showPointer?(x: number, y: number): void
   resizeViewport(viewport: BrowserViewport): void
@@ -714,8 +723,9 @@ export interface NativeBrowserPolicy {
 
 /** What a control is, for the policy: read from the page, so a name can't be avoided by clicking by pixel. */
 /** What a password or payment field calls itself, in its type, name, id or label. */
-const SECRET_FIELD =
-  /password|passwd|passcode|one-time-code|cc-|card.?(num|number)|cvv|cvc|security.?code|ssn/i
+// Whole words where a short one could sit inside another: Booking's hidden "ssne" stopped every script on its pages.
+export const SECRET_FIELD =
+  /password|passwd|passcode|one-time-code|(?<![a-z])cc-|card.?(num|number)|cvv|cvc|security.?code|(?<![a-z])ssn(?![a-z])|user.?ssn|ssn.?num|social.?security/i
 
 const POLICY_CONTROL_SCRIPT = `function () {
   const SECRET = ${SECRET_FIELD}
@@ -823,6 +833,10 @@ export interface BrowserEmulationOptions {
 export interface NativeBrowserRuntime {
   /** A browser with its own PDF viewer, which can't show SideKick's. */
   readonly showsPdfsItself?: boolean
+  /** A browser that can put dialogs of its own over a page, as Chrome does for saved passwords. */
+  readonly hasDialogsOfItsOwn?: boolean
+  /** How long the browser's events can trail the answer to a command, when they travel apart. */
+  readonly eventLagMs?: number
   /**
    * A browser where a picture is slow enough to leave out of a step that doesn't need one. The built-in one
    * keeps taking them: it's quick there, and until a tab has drawn a frame the first input to it is lost.
@@ -900,6 +914,10 @@ interface TabState {
   logicalUrl?: string
   pdfSessionToken?: string
   pdfSessionTokens: Set<string>
+  /** The words of the PDF last read here, as paging through one shouldn't fetch it each time. */
+  pdfWords?: { url: string; text: string; pages: number }
+  /** When the agent last opened a page here, which may still be drawing itself for a while. */
+  arrivedAt?: number
   temporaryPdfSources: Set<string>
   refEpoch: number
   refs: Map<string, SemanticRef>
@@ -1008,10 +1026,32 @@ const NEW_PAGE_QUIET_MS = 600
 const NEW_PAGE_WAIT_MS = 3_000
 const FIND_RETRIES = 3
 const FIND_RETRY_MS = 500
+// In the agent's own tabs, what would open a dialog nothing there can see or answer: a site asking for a saved
+// password gets the answer it gets when there isn't one, and the form on the page still works. Printing also
+// stops the whole app in the built-in browser, where the dialog holds up Electron's main process.
+const NO_BROWSER_DIALOGS_SCRIPT = `(() => {
+  window.print = () => undefined
+  if (!globalThis.CredentialsContainer) return
+  const get = CredentialsContainer.prototype.get
+  CredentialsContainer.prototype.get = function (options) {
+    return options?.password && !options.publicKey
+      ? Promise.resolve(null)
+      : get.call(this, options)
+  }
+})()`
+const BROWSER_DIALOG_NOTE =
+  "That click never reached the page. The browser itself is showing something over it, such as a sign-in or payment dialog, which pictures of the page don't show. Don't try it again: open the page again, and if the same thing happens tell the user that a browser dialog is in the way."
+const NEW_PAGE_DRAWING_MS = 8_000
+const PAGE_CHECK_MS = 5_000
+const PAGE_ANSWER_MS = 30_000
+const PAGE_NOT_ANSWERING =
+  "This page isn't answering: its own script may be keeping it busy, or a dialog of the browser's own may be holding it up. What was just done may or may not have gone through. Wait and look again, or close the tab and open the page again."
 const DRAG_STEPS = 8
 const DRAG_STEP_MS = 15
 const MAX_ZOOM = 4
 const MAX_PAGE_TEXT = 20_000
+const MAX_TEXT_MATCHES = 20
+const TEXT_MATCH_CONTEXT = 150
 const MAX_ZOOM_WIDTH = 1600
 const MAX_EVALUATION_BYTES = 64 * 1024
 const MIN_HOLD_MS = 100
@@ -1025,6 +1065,7 @@ const HUMAN_VERIFICATION_PATTERNS: readonly RegExp[] = [
   /\bcomplete\s+(?:the\s+)?security\s+check\b/i
 ]
 
+const LONG_PAGE_TEXT = 16_000
 const HUMAN_VERIFICATION_TITLE_PATTERNS: readonly RegExp[] = [
   /\bcaptcha\b/i,
   /\bsecurity\s+check\b/i,
@@ -1058,7 +1099,10 @@ function detectTextualHumanVerification(
       .filter((line) => !/\bnot\s+a\s+robot\b/i.test(line))
       .join('\n')
   }
-  if (activeText && HUMAN_VERIFICATION_PATTERNS.some((pattern) => pattern.test(activeText))) {
+  // A long page that has these words is about them. A challenge says little else, unless it's over the page.
+  const long = (activeText?.length ?? 0) > LONG_PAGE_TEXT
+  const patterns = long ? HUMAN_VERIFICATION_PATTERNS.slice(0, 1) : HUMAN_VERIFICATION_PATTERNS
+  if (activeText && patterns.some((pattern) => pattern.test(activeText))) {
     return {
       required: true,
       kind: 'captcha_or_bot_challenge',
@@ -1069,6 +1113,7 @@ function detectTextualHumanVerification(
   }
   if (
     !solvedKnownWidget &&
+    !long &&
     HUMAN_VERIFICATION_TITLE_PATTERNS.some((pattern) => pattern.test(title))
   ) {
     return {
@@ -1264,8 +1309,9 @@ function redactFormObservation(
   }
   let semanticSnapshot = observation.semanticSnapshot
   if (semanticSnapshot) {
+    // What was typed stays out. Whether a box ended up ticked isn't a secret, and shows that it worked.
     semanticSnapshot = semanticSnapshot.replace(
-      /\s(value|checked|selected)=("(?:\\.|[^"])*"|[^\s\]]+)/g,
+      /\s(value)=("(?:\\.|[^"])*"|[^\s\]]+)/g,
       ' $1=[redacted]'
     )
     semanticSnapshot = redact(semanticSnapshot)
@@ -1436,6 +1482,17 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
     // This tab's own event, not the app-wide one: no other traffic can reach this decision, and a
     // contents the service attached to keeps Chromium's refusal.
     if (!attached) {
+      // The debugger's scripts for new documents stop at a frame from another site.
+      contents.on(
+        'did-frame-navigate',
+        (_event, _url, _code, _status, isMainFrame, processId, routingId) => {
+          if (isMainFrame) return
+          void contents.mainFrame.framesInSubtree
+            .find((frame) => frame.processId === processId && frame.routingId === routingId)
+            ?.executeJavaScript('window.print = () => undefined')
+            .catch(() => undefined)
+        }
+      )
       contents.on('certificate-error', (event, url, error, certificate, callback, isMainFrame) => {
         event.preventDefault()
         callback(
@@ -1624,6 +1681,23 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
       })
     }
     await mouse('mouseReleased', to, { buttons: 0, clickCount: 1 })
+  }
+
+  /** By the debugger, as sendInputEvent goes to the page's own widget, and a frame from another site has its own. */
+  async clickInFrame(
+    at: { x: number; y: number },
+    button: 'left' | 'middle' | 'right',
+    clickCount: number
+  ): Promise<void> {
+    const press = { ...at, button, clickCount }
+    const buttons = { left: 1, right: 2, middle: 4 }[button]
+    await this.sendDebuggerCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at })
+    await this.sendDebuggerCommand('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      ...press,
+      buttons
+    })
+    await this.sendDebuggerCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', ...press })
   }
 
   async insertText(text: string): Promise<void> {
@@ -1936,6 +2010,9 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
         webSecurity: true,
         allowRunningInsecureContent: false,
         backgroundThrottling: false,
+        // The page's alerts are dismissed through the debugger, which can't close Electron's own
+        // message box: without this each one stays on the user's screen.
+        disableDialogs: true,
         // Chromium's own WebMCP, off by default in Electron 43: pages can offer tools that the
         // agent lists and calls through the DevTools WebMCP domain. Only these tabs get it.
         enableBlinkFeatures: 'WebMCP',
@@ -2529,6 +2606,16 @@ export class NativeBrowserSessionService {
       }) ?? (() => undefined)
     )
     if (!surface.attached) await this.enableWebMcp(tab, signal)
+    if (!surface.attached) {
+      await abortable(
+        surface.sendDebuggerCommand('Page.addScriptToEvaluateOnNewDocument', {
+          source: NO_BROWSER_DIALOGS_SCRIPT
+        }),
+        signal
+      ).catch((error: unknown) => {
+        if (signal?.aborted) throw error
+      })
+    }
     return tab
   }
 
@@ -2873,9 +2960,53 @@ export class NativeBrowserSessionService {
       this.assertCurrentSession(session)
       session.lookAfterAction = operation.look !== false || !this.runtime.picturesOnlyWhenAsked
       session.quickAction = operation.quick === true
-      return await body(signal)
+      return await this.whilePageAnswers(session, signal, body)
     } finally {
       release()
+    }
+  }
+
+  /**
+   * Anything sent to a page too busy to answer waits for as long as the tool has, and then says nothing
+   * useful. Even tidying up waits, so the step is left behind rather than asked to finish.
+   */
+  private async whilePageAnswers<T>(
+    session: SessionState,
+    signal: AbortSignal | undefined,
+    body: (signal: AbortSignal | undefined) => Promise<T>
+  ): Promise<T> {
+    const abandon = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const stopped = new Promise<never>((_resolve, reject) => {
+      const check = (): void => {
+        const surface = session.tabs.get(session.activeTabId)?.surface
+        if (!surface || surface.isDestroyed()) {
+          timer = setTimeout(check, PAGE_CHECK_MS)
+          return
+        }
+        timer = setTimeout(() => {
+          reject(new Error(PAGE_NOT_ANSWERING))
+          abandon.abort()
+        }, PAGE_ANSWER_MS)
+        const answered = (): void => {
+          if (abandon.signal.aborted) return
+          clearTimeout(timer)
+          timer = setTimeout(check, PAGE_CHECK_MS)
+        }
+        void surface
+          .sendDebuggerCommand('Runtime.evaluate', { expression: '1' })
+          .then(answered, answered)
+      }
+      timer = setTimeout(check, PAGE_CHECK_MS)
+    })
+    const work = body(signal ? AbortSignal.any([signal, abandon.signal]) : abandon.signal)
+    // What's left behind stops at its next look at the signal, with no one to hear how.
+    work.catch(() => undefined)
+    try {
+      return await Promise.race([work, stopped])
+    } finally {
+      clearTimeout(timer)
+      stopped.catch(() => undefined)
     }
   }
 
@@ -3035,8 +3166,19 @@ export class NativeBrowserSessionService {
       tab.pdfSessionTokens.add(pdfSession.token)
       navigationUrl = browserPdfViewerUrl(pdfSession)
     }
+    const urlBefore = tab.surface.getURL()
     try {
-      await abortable(tab.surface.loadURL(navigationUrl), signal)
+      await abortable(tab.surface.loadURL(navigationUrl), signal).catch((error: unknown) => {
+        // A page that sends itself somewhere while loading, as YouTube and Google do. A download
+        // aborts the same way, but goes nowhere.
+        const replaced =
+          !signal?.aborted &&
+          !newPdfToken &&
+          /\bERR_ABORTED\b/.test(error instanceof Error ? error.message : String(error)) &&
+          (tab.surface.isLoading() || tab.surface.getURL() !== urlBefore)
+        if (!replaced) throw error
+      })
+      tab.arrivedAt = this.now()
       if (newPdfToken) await this.waitForPdfViewerReady(session, tab, signal)
     } catch (error) {
       if (signal?.aborted) tab.surface.stop()
@@ -3326,7 +3468,13 @@ export class NativeBrowserSessionService {
         options.find
       )
       // Finding nothing on a page that's still drawing itself isn't an answer.
-      for (let tries = 0; options.find && !semantic.count && tries < FIND_RETRIES; tries++) {
+      for (
+        let tries = 0;
+        options.find &&
+        !semantic.count &&
+        (tries < FIND_RETRIES || this.now() - (tab.arrivedAt ?? 0) < NEW_PAGE_DRAWING_MS);
+        tries++
+      ) {
         await delay(FIND_RETRY_MS, signal)
         semantic = await this.captureSemanticSnapshot(
           tab,
@@ -3426,18 +3574,26 @@ export class NativeBrowserSessionService {
           const nodesFor = selectors => Array.from(new Set(
             selectors.flatMap(selector => Array.from(document.querySelectorAll(selector)))
           ));
-          const visibleNodes = selectors => nodesFor(selectors).filter(visible);
+          // A site's invisible reCAPTCHA shows only a badge, and asks nothing of anyone.
+          const asksNothing = node =>
+            node.getAttribute('data-size') === 'invisible' ||
+            /[?&]size=invisible|checkbox-invisible/.test(node.getAttribute('src') || '') ||
+            !!node.closest('.grecaptcha-badge');
+          const visibleNodes = selectors => nodesFor(selectors).filter(node => visible(node) && !asksNothing(node));
           const responseCount = selectors => nodesFor(selectors).filter(node =>
             typeof node.value === 'string' && node.value.trim().length > 8
           ).length;
           const challengeCheckboxes = nodesFor(['[role="checkbox"]', 'input[type="checkbox"]']).filter(node => {
+            // Its own words only: a parent can hold anything, as Wikipedia's contents list does a heading with "Human" in it.
+            const beside = node.parentElement?.textContent || '';
             const label = [
               node.getAttribute('aria-label'),
               node.getAttribute('title'),
               node.textContent,
-              node.parentElement?.textContent
+              ...Array.from(node.labels || [], each => each.textContent),
+              beside.length <= 120 ? beside : ''
             ].filter(Boolean).join(' ');
-            return /captcha|not\\s+a\\s+robot|verify|human/i.test(label);
+            return /captcha|not\\s+a\\s+robot|\\bverify\\s+(?:you|that)\\b|click\\s+to\\s+verify|\\bi(?:'m|\\s+am)\\s+human\\b/i.test(label);
           });
           const checkboxSolved = node => node.matches(':checked') || node.getAttribute('aria-checked') === 'true';
           const solvedCheckbox = challengeCheckboxes.some(checkboxSolved);
@@ -3661,7 +3817,9 @@ export class NativeBrowserSessionService {
     if (framesLeft > 0) {
       unreadFrames += framesLeft
       if (wanted === undefined) {
-        output += `- note: ${framesLeft} frame(s) on this page can't be read, as they may be from another site. Use a screenshot and coordinates to click in them.\n`
+        output += (await this.showingPdf(tab, signal))
+          ? '- note: this is a PDF. Read its words with browser_observe text, with find to search them, and scroll or take a screenshot to see its pages.\n'
+          : `- note: ${framesLeft} frame(s) on this page can't be read, as they may be from another site. Use a screenshot and coordinates to click in them.\n`
       }
     }
     if (wanted !== undefined && emitted === 0) {
@@ -3714,29 +3872,93 @@ export class NativeBrowserSessionService {
     return frames
   }
 
-  /** The text a person reads on the page, a part at a time. */
+  /** The text a person reads on the page, a part at a time, or the parts around a word. */
   async pageText(
     sessionId: string,
     from: number,
-    operation: BrowserOperationOptions = {}
-  ): Promise<{ url: string; title: string; text: string; from: number; total: number }> {
+    operation: BrowserOperationOptions = {},
+    find?: string
+  ): Promise<{
+    url: string
+    title: string
+    text: string
+    from: number
+    total: number
+    found?: number
+    pages?: number
+    note?: string
+  }> {
     const session = this.getSession(sessionId)
     return this.withSessionLock(session, operation, async (signal) => {
       const tab = this.getTab(session, undefined)
       if (await this.secretShownAsText(tab, signal)) throw new Error(SECRET_SHOWN_MESSAGE)
-      const whole = await abortable(
-        tab.surface.executeJavaScript<string>("document.body ? document.body.innerText : ''"),
-        signal
-      )
+      const pdf = await this.pdfWordsOnScreen(tab, signal)
+      const whole =
+        pdf?.text ??
+        (await abortable(
+          tab.surface.executeJavaScript<string>("document.body ? document.body.innerText : ''"),
+          signal
+        ))
       const text = typeof whole === 'string' ? whole : ''
-      return {
+      const shared = {
         url: this.tabUrl(tab),
         title: tab.surface.getTitle(),
-        text: text.slice(from, from + MAX_PAGE_TEXT),
-        from,
-        total: text.length
+        total: text.length,
+        ...(pdf ? { pages: pdf.pages } : {}),
+        ...(pdf && !/\S/.test(text.replace(/^--- Page .*$/gm, ''))
+          ? { note: 'This PDF has no words in it, as its pages are pictures. Take a screenshot.' }
+          : {})
       }
+      if (!find) return { ...shared, text: text.slice(from, from + MAX_PAGE_TEXT), from }
+      const lower = text.toLowerCase()
+      const wanted = find.toLowerCase()
+      const parts: string[] = []
+      let found = 0
+      for (
+        let at = lower.indexOf(wanted);
+        at >= 0;
+        at = lower.indexOf(wanted, at + wanted.length)
+      ) {
+        found++
+        if (parts.length < MAX_TEXT_MATCHES) {
+          const start = Math.max(0, at - TEXT_MATCH_CONTEXT)
+          const end = at + wanted.length + TEXT_MATCH_CONTEXT
+          parts.push(`[at ${at}] ${text.slice(start, end).replace(/\s+/g, ' ')}`)
+        }
+      }
+      return { ...shared, text: parts.join('\n'), from: 0, found }
     })
+  }
+
+  /** A PDF on the page draws its words in a viewer no script can read, so they come from the file. */
+  private async pdfWordsOnScreen(
+    tab: TabState,
+    signal?: AbortSignal
+  ): Promise<{ text: string; pages: number } | undefined> {
+    const url = this.tabUrl(tab)
+    if (tab.pdfWords?.url === url) return tab.pdfWords
+    let bytes: Uint8Array | undefined
+    const viewer = tab.pdfSessionToken ? getBrowserPdfSession(tab.surface.getURL()) : undefined
+    if (viewer) {
+      bytes = await abortable(browserPdfSessionBytes(viewer), signal)
+    } else if (await this.showingPdf(tab, signal)) {
+      const response = await abortable(tab.surface.fetch(url, { method: 'GET' }), signal)
+      if (!response.ok) throw new Error(`The PDF could not be fetched: HTTP ${response.status}`)
+      bytes = new Uint8Array(await abortable(response.arrayBuffer(), signal))
+    }
+    if (!bytes) return undefined
+    const read = await readPdfWords(bytes, signal)
+    tab.pdfWords = { url, text: read.text, pages: read.totalPages }
+    return tab.pdfWords
+  }
+
+  private async showingPdf(tab: TabState, signal?: AbortSignal): Promise<boolean> {
+    if (!this.runtime.showsPdfsItself) return false
+    const type = await abortable(
+      tab.surface.executeJavaScript<string>('document.contentType'),
+      signal
+    ).catch(() => '')
+    return type === 'application/pdf'
   }
 
   async screenshot(
@@ -3770,7 +3992,7 @@ export class NativeBrowserSessionService {
     const id = randomUUID()
     const captureStateBefore =
       kind === 'viewport' ? await this.coordinateCaptureState(tab, signal) : undefined
-    const capture = await this.captureRaw(tab, kind, target, signal, zoom)
+    const capture = await this.captureRaw(session, tab, kind, target, signal, zoom)
     const captureStateAfter =
       kind === 'viewport' ? await this.coordinateCaptureState(tab, signal) : undefined
     const stableCaptureState =
@@ -3874,6 +4096,7 @@ export class NativeBrowserSessionService {
   }
 
   private async captureRaw(
+    session: SessionState,
     tab: TabState,
     kind: BrowserScreenshotKind,
     target: BrowserTarget | undefined,
@@ -3900,6 +4123,10 @@ export class NativeBrowserSessionService {
     let elementBox: BrowserCaptureBox | undefined
     let scale: number | undefined
     if (zoom) {
+      // Steps don't all take a picture, so there may be none yet to zoom into.
+      if (!tab.lastViewportScreenshot) {
+        await this.captureAndStore(session, tab, 'viewport', undefined, signal)
+      }
       const screenshotId = zoom.screenshotId ?? tab.lastViewportScreenshot?.id
       const from = await this.coordinatePoint(tab, screenshotId, zoom, signal)
       const screenshot = tab.lastViewportScreenshot!
@@ -4345,6 +4572,33 @@ export class NativeBrowserSessionService {
       } catch (error) {
         primaryError = error
       }
+      // A box can show words that its accessible name doesn't have.
+      if (
+        target.name &&
+        !target.ref &&
+        !target.selector &&
+        !target.coordinates &&
+        primaryError instanceof Error &&
+        primaryError.message === 'Semantic browser target was not found'
+      ) {
+        const words = JSON.stringify(target.name)
+        const shown = await this.selectorBackendNode(
+          tab,
+          { selector: `input[placeholder=${words} i],textarea[placeholder=${words} i]` },
+          signal
+        ).catch(() => undefined)
+        if (shown) {
+          if (allowCoordinates) await this.bringClear(tab, shown, signal)
+          const rect = await this.elementRect(tab, shown, signal)
+          return {
+            x: rect.x + rect.width / 2,
+            y: rect.y + rect.height / 2,
+            backendNodeId: shown,
+            mode: 'semantic',
+            fallbackUsed: false
+          }
+        }
+      }
     }
     if (hasSelector) {
       try {
@@ -4430,22 +4684,29 @@ export class NativeBrowserSessionService {
       const button = input.button ?? 'left'
       const clickCount = input.clickCount ?? 1
       const pressed = byPosition && control?.name ? { pressed: control.name } : {}
-      const clicked = await this.catchingFileChooser(tab, () => {
-        tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
-        tab.surface.sendInputEvent({
-          type: 'mouseDown',
-          x: target.x,
-          y: target.y,
-          button,
-          clickCount
-        })
-        tab.surface.sendInputEvent({
-          type: 'mouseUp',
-          x: target.x,
-          y: target.y,
-          button,
-          clickCount
-        })
+      const urlBefore = tab.surface.getURL()
+      const inFrame =
+        byPosition && tab.surface.clickInFrame && (await this.frameAtPoint(tab, target, signal))
+      const clicked = await this.catchingFileChooser(tab, async () => {
+        if (inFrame) {
+          await abortable(tab.surface.clickInFrame!(target, button, clickCount), signal)
+        } else {
+          tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
+          tab.surface.sendInputEvent({
+            type: 'mouseDown',
+            x: target.x,
+            y: target.y,
+            button,
+            clickCount
+          })
+          tab.surface.sendInputEvent({
+            type: 'mouseUp',
+            x: target.x,
+            y: target.y,
+            button,
+            clickCount
+          })
+        }
         return this.finishAction(
           session,
           tab,
@@ -4457,8 +4718,48 @@ export class NativeBrowserSessionService {
           signal
         )
       })
+      if (await this.browserDialogInTheWay(session, tab, target, urlBefore, signal)) {
+        tab.actionNote = BROWSER_DIALOG_NOTE
+      }
       return { ...clicked, ...pressed, ...(tab.actionNote ? { note: tab.actionNote } : {}) }
     })
+  }
+
+  private async frameAtPoint(
+    tab: TabState,
+    at: { x: number; y: number },
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    const framed = await abortable(
+      tab.surface.executeJavaScript<boolean>(
+        `/^(EMBED|IFRAME|OBJECT)$/.test(document.elementFromPoint(${JSON.stringify(at.x)}, ${JSON.stringify(at.y)})?.tagName ?? '')`
+      ),
+      signal
+    ).catch(() => false)
+    return framed === true
+  }
+
+  /**
+   * A dialog of the browser's own takes all input and shows in no picture of the page, so a click can
+   * vanish with no sign of why. The browser moves its hover state for any pointer that gets to the page.
+   */
+  private async browserDialogInTheWay(
+    session: SessionState,
+    tab: TabState,
+    target: { x: number; y: number },
+    urlBefore: string,
+    signal?: AbortSignal
+  ): Promise<boolean> {
+    if (!this.runtime.hasDialogsOfItsOwn) return false
+    if (session.activeTabId !== tab.id || tab.surface.getURL() !== urlBefore) return false
+    const reached = await abortable(
+      tab.surface.executeJavaScript<boolean>(`(() => {
+        const under = document.elementFromPoint(${JSON.stringify(target.x)}, ${JSON.stringify(target.y)});
+        return /^(EMBED|IFRAME|OBJECT)$/.test(under?.tagName ?? '') || document.documentElement.matches(':hover');
+      })()`),
+      signal
+    ).catch(() => true)
+    return reached === false
   }
 
   /**
@@ -4477,6 +4778,7 @@ export class NativeBrowserSessionService {
     tab.fileChooser = undefined
     try {
       const result = await act()
+      if (!tab.fileChooser && this.runtime.eventLagMs) await delay(this.runtime.eventLagMs)
       return tab.fileChooser ? { ...result, fileChooserOpened: true } : result
     } finally {
       await intercept(false)
@@ -4868,7 +5170,8 @@ export class NativeBrowserSessionService {
                     )
                   }
                   const actual = await this.inspectFormControl(tab, target.backendNodeId!, signal)
-                  if (actual.kind !== 'textbox' || actual.value !== input.text) {
+                  // A price or phone box may format what it's given: 600000 as $600,000.
+                  if (actual.kind !== 'textbox' || !sameEnteredText(actual.value, input.text)) {
                     throw new Error(
                       'Browser text entry could not be verified; the field may have rejected or transformed the input. Inspect the page before retrying.'
                     )
@@ -6592,6 +6895,15 @@ export class NativeBrowserSessionService {
       let scrollEffect: {
         before: { x: number; y: number }
         after: { x: number; y: number }
+        // Over a frame from another site or a PDF, which scroll themselves.
+        overFrame: boolean
+      }
+      const viewport = await this.currentViewport(tab)
+      const point = target ?? {
+        x: viewport.width / 2,
+        y: viewport.height / 2,
+        mode: 'page' as const,
+        fallbackUsed: false
       }
       if (target?.backendNodeId) {
         this.setPointer(tab, target, 'scroll', startedAt)
@@ -6601,35 +6913,53 @@ export class NativeBrowserSessionService {
           `function(dx, dy) {
             const before = { x: this.scrollLeft, y: this.scrollTop };
             this.scrollBy({ left: dx, top: dy, behavior: 'instant' });
-            return { before, after: { x: this.scrollLeft, y: this.scrollTop } };
+            return {
+              before,
+              after: { x: this.scrollLeft, y: this.scrollTop },
+              overFrame:
+                document.contentType === 'application/pdf' ||
+                /^(EMBED|IFRAME|OBJECT)$/.test(this.tagName)
+            };
           }`,
           [deltaX, input.deltaY],
           signal
         )
       } else {
-        const viewport = await this.currentViewport(tab)
-        const point = target ?? {
-          x: viewport.width / 2,
-          y: viewport.height / 2,
-          mode: 'page' as const,
-          fallbackUsed: false
-        }
         this.setPointer(tab, point, 'scroll', startedAt)
         scrollEffect = await abortable(
           tab.surface.executeJavaScript<{
             before: { x: number; y: number }
             after: { x: number; y: number }
+            overFrame: boolean
           }>(`(() => {
             const before = { x: window.scrollX, y: window.scrollY };
             window.scrollBy({ left: ${JSON.stringify(deltaX)}, top: ${JSON.stringify(input.deltaY)}, behavior: 'instant' });
-            return { before, after: { x: window.scrollX, y: window.scrollY } };
+            const under = document.elementFromPoint(${JSON.stringify(point.x)}, ${JSON.stringify(point.y)});
+            return {
+              before,
+              after: { x: window.scrollX, y: window.scrollY },
+              overFrame:
+                document.contentType === 'application/pdf' ||
+                /^(EMBED|IFRAME|OBJECT)$/.test(under?.tagName ?? '')
+            };
           })()`),
           signal
         )
       }
-      tab.actionMoved =
+      const moved =
         scrollEffect.before.x !== scrollEffect.after.x ||
         scrollEffect.before.y !== scrollEffect.after.y
+      const wheeled = !moved && scrollEffect.overFrame
+      if (wheeled) {
+        tab.surface.sendInputEvent({
+          type: 'mouseWheel',
+          x: point.x,
+          y: point.y,
+          deltaX: -deltaX,
+          deltaY: -input.deltaY
+        })
+      }
+      tab.actionMoved = moved || wheeled
       const result = await this.finishAction(
         session,
         tab,
@@ -6640,14 +6970,18 @@ export class NativeBrowserSessionService {
         startedAt,
         signal
       )
-      const changed =
-        scrollEffect.before.x !== scrollEffect.after.x ||
-        scrollEffect.before.y !== scrollEffect.after.y
+      const changed = moved || wheeled
       result.effect = {
         changed,
         kind: 'scroll',
         before: scrollEffect.before,
         after: scrollEffect.after,
+        ...(wheeled
+          ? {
+              message:
+                "Scrolled the frame or PDF under the point. Its position can't be read, so take a screenshot to see where it landed."
+            }
+          : {}),
         ...(!changed
           ? {
               message:
@@ -6924,7 +7258,7 @@ export class NativeBrowserSessionService {
     signal?: AbortSignal
   ): Promise<void> {
     if (session.lookAfterAction === false || tab.lastScreenshotHashes.viewport) return
-    const capture = await this.captureRaw(tab, 'viewport', undefined, signal)
+    const capture = await this.captureRaw(session, tab, 'viewport', undefined, signal)
     tab.lastScreenshotHashes.viewport = createHash('sha256').update(capture.png).digest('hex')
   }
 
@@ -7313,26 +7647,38 @@ export class NativeBrowserSessionService {
       held = await readSecrets()
     }
     if (!held || held.fields) return null
-    // Inside the look, so that a getter or toJSON of the script's own can't run outside it.
-    const answer = await abortable(
-      tab.surface.sendDebuggerCommand<{
-        result?: { value?: unknown }
-        exceptionDetails?: { text?: string; exception?: { description?: string } }
-      }>('Runtime.evaluate', {
-        expression: `JSON.stringify((${expression.trim().replace(/;+$/, '')}\n))`,
-        throwOnSideEffect: true,
-        returnByValue: true,
-        silent: true,
-        timeout: QUIET_SCRIPT_TIMEOUT_MS
-      }),
-      signal
-    ).catch((error: unknown) => {
-      throw pageChangedError(error)
-    })
+    const look = (contextId?: number) =>
+      abortable(
+        tab.surface.sendDebuggerCommand<{
+          result?: { value?: unknown }
+          exceptionDetails?: { text?: string; exception?: { description?: string } }
+        }>('Runtime.evaluate', {
+          // Inside the look, so that a getter or toJSON of the script's own can't run outside it.
+          expression: `JSON.stringify((${expression.trim().replace(/;+$/, '')}\n))`,
+          throwOnSideEffect: true,
+          returnByValue: true,
+          silent: true,
+          timeout: QUIET_SCRIPT_TIMEOUT_MS,
+          ...(contextId === undefined ? {} : { contextId })
+        }),
+        signal
+      ).catch((error: unknown) => {
+        if (String((error as Error)?.message ?? error).includes('Execution was terminated')) {
+          throw new Error(
+            'That script took too long, and was stopped. Look at less of the page at once, as going through every element is slow on a big page.'
+          )
+        }
+        throw pageChangedError(error)
+      })
+    const refused = (said: string): boolean => /^EvalError: Possible side-effect/.test(said)
+    const saidBy = (result: Awaited<ReturnType<typeof look>>): string =>
+      result.exceptionDetails?.exception?.description ?? result.exceptionDetails?.text ?? ''
+    let answer = await look()
+    // A read Chromium hasn't marked as safe gets another try where it has a stand-in that is.
+    if (refused(saidBy(answer))) answer = await look(await this.lookWorld(tab, signal))
     if (answer.exceptionDetails) {
-      const said =
-        answer.exceptionDetails.exception?.description ?? answer.exceptionDetails.text ?? ''
-      if (/^(EvalError: Possible side-effect|SyntaxError)/.test(said)) return null
+      const said = saidBy(answer)
+      if (refused(said) || /^SyntaxError/.test(said)) return null
       throw new Error(said || 'Browser page evaluation failed')
     }
     const json = typeof answer.result?.value === 'string' ? answer.result.value : 'null'
@@ -7340,6 +7686,33 @@ export class NativeBrowserSessionService {
     return json.length > MAX_EVALUATION_BYTES
       ? { json: json.slice(0, MAX_EVALUATION_BYTES), truncated: true }
       : { json, truncated: false }
+  }
+
+  /** A fresh isolated world holding the stand-ins, as a navigation takes the last one away. */
+  private async lookWorld(tab: TabState, signal?: AbortSignal): Promise<number> {
+    const tree = await abortable(
+      tab.surface.sendDebuggerCommand<{ frameTree: { frame: { id: string } } }>(
+        'Page.getFrameTree'
+      ),
+      signal
+    )
+    const world = await abortable(
+      tab.surface.sendDebuggerCommand<{ executionContextId: number }>('Page.createIsolatedWorld', {
+        frameId: tree.frameTree.frame.id,
+        worldName: 'SideKick look',
+        grantUniveralAccess: false
+      }),
+      signal
+    )
+    await abortable(
+      tab.surface.sendDebuggerCommand('Runtime.evaluate', {
+        expression: LOOK_HELPERS_SCRIPT,
+        contextId: world.executionContextId,
+        silent: true
+      }),
+      signal
+    )
+    return world.executionContextId
   }
 
   /**

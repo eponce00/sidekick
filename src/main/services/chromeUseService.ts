@@ -23,15 +23,23 @@ const SENSITIVE_SITES =
 // Chromium's own check stops anything that changes the page or reaches the network, but lets a script read what
 // it likes. These are what a look has no business with, and the ways of naming them that the words below can't see.
 const NOT_A_LOOK =
-  /\\u|\\x|\b(cookies?|localStorage|sessionStorage|indexedDB|caches|credentials|eval|Function|Reflect|getOwnPropertyDescriptors?|__lookupGetter__|__proto__|prototype|constructor|with|await|async|then)\b/
+  /\b(cookies?|localStorage|sessionStorage|indexedDB|caches|credentials|eval|Function|Reflect|getOwnPropertyDescriptors?|__lookupGetter__|__proto__|prototype|constructor|with|await|async|then)\b/
 
 /**
  * Whether a script can be left to Chromium's check, as far as its words go. Failing here only costs the agent
  * a script, so anything that could be naming a property some other way does.
  */
 export function readsLikeALook(expression: string): boolean {
-  if (NOT_A_LOOK.test(expression)) return false
-  const code = expression.replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, "''")
+  if (/\\u|\\x/.test(expression)) return false
+  // Words in a string are only words, as in a button's "Accept cookies", unless they pick a property.
+  for (const picked of expression.matchAll(/\[\s*(['"])(.*?)\1\s*\]/g)) {
+    if (NOT_A_LOOK.test(picked[2])) return false
+  }
+  const code = expression
+    .replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"/g, "''")
+    // A pattern, where one can start. After a value the same marks would be dividing, and hide what's between.
+    .replace(/([(,=:!&|?{;]\s*|^\s*)\/(?![*/])(?:[^/\\\n]|\\.)+\/[a-z]*/g, "$1''")
+  if (NOT_A_LOOK.test(code)) return false
   // The inside of each [ that picks a property, or names one in an object. After one of these words it's a list.
   for (const bracket of code.matchAll(/([\w$]+|[)\]`'])?\s*\[([^\]]*)\](\s*:)?/g)) {
     if (bracket[3]) return false
@@ -138,7 +146,7 @@ export class ChromeUseService implements NativeBrowserPolicy {
 
   /** No question about it: nobody should be asked to judge code, and the page tools do the rest. */
   readonly scriptRefusal =
-    "That script wasn't run. In the user's own Chrome a script can only look at a page, and this one could change something or reach cookies, saved site data or a filled-in password. Use browser_observe, browser_click, browser_type or browser_scroll."
+    "That script wasn't run. In the user's own Chrome a script can only look at a page, and this one could change something, reach cookies, saved site data or a filled-in password, or use something that can't be checked as safe, such as object spread, atob, or creating an element. To search the page's words use browser_observe with text and find, and to act use browser_click, browser_type or browser_scroll."
 
   /** SideKick's stored logins are for its own browser. Chrome has the user's own. */
   readonly signInRefusal =

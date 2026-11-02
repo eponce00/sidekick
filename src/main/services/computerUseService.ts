@@ -299,13 +299,19 @@ const SLOW_CONTROLS_WAIT_MS = 1_000
 // stop and think about what it is pressing rather than promising safety.
 export const RISKY_CONTROL =
   /\b(send|delete|remove|erase|buy|pay|purchase|order|checkout|submit|confirm|transfer|post|publish|uninstall|format|reset|sign out|log out)\b/i
+// The same words doing no harm: arranging a list, or undoing a filter on one. Asking about these on every
+// search teaches people to say yes without reading.
+const HARMLESS_PHRASES =
+  /\b(sort(ed)?\b.*\border|change\b.*\border|order (by|history|status|details)|in order|(remove|reset|delete) (all )?(filters?|selections?|sort)|submit (your )?(search|query))\b/gi
+
 /**
  * A control says what it does in a short name or its first words. Further into a long one it's describing
  * something else, as a calendar's "Only available for checkout" does, and asking there teaches people to say yes.
  */
 export function soundsRisky(name: string): boolean {
-  const words = name.trim().split(/\s+/)
-  return RISKY_CONTROL.test(words.length <= 8 ? name : words.slice(0, 5).join(' '))
+  const plain = name.replace(HARMLESS_PHRASES, ' ')
+  const words = plain.trim().split(/\s+/)
+  return RISKY_CONTROL.test(words.length <= 8 ? plain : words.slice(0, 5).join(' '))
 }
 const NEEDS_FOREGROUND =
   /background_unavailable|Background delivery is not available|UIA pixel click timeout/i
