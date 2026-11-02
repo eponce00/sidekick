@@ -1,7 +1,12 @@
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import type { ComputerDriver } from './computerUseDriver'
-import { computerRowPoints, startComputerDriver } from './computerUseDriver'
+import {
+  computerRowPoints,
+  computerRowSwitches,
+  computerRowValues,
+  startComputerDriver
+} from './computerUseDriver'
 import type { ComputerHighlightTarget } from './computerUseHighlight'
 import type { ComputerUseWindows } from './computerUseWindows'
 
@@ -9,6 +14,21 @@ const STEP_WAIT_MS = 10_000
 const POLL_MS = 400
 const WINDOW_SETTLE_MS = 700
 const CONNECT_WAIT_MS = 20_000
+
+/**
+ * A control by the id Chrome or Windows gives it, the same in every language. Going by words also matched
+ * the folders the picker lists, whose Type column says "File folder". Read from the end of the row, as
+ * a name comes earlier in it and can say anything.
+ */
+function controlWithId(role: string, id: string): RegExp {
+  return new RegExp(`^${role}\\b.*\\bid=${id}(?: help="[^"]*")? actions=\\[[^\\]]*\\]\\]$`)
+}
+
+const DEVELOPER_MODE = controlWithId('Button', 'devMode')
+const LOAD_UNPACKED = controlWithId('Button', 'loadUnpacked')
+const PICKER_BOX_ID = '1152'
+export const PICKER_BOX = controlWithId('Edit', PICKER_BOX_ID)
+export const PICKER_SELECT = controlWithId('Button', '1')
 
 export interface ChromeProfile {
   directory: string
@@ -132,17 +152,32 @@ interface FoundRow {
   token: string
   /** Where it is on screen, for the pointer to get there first. */
   point?: { x: number; y: number }
+  /** What it holds, for a row that can be set. */
+  value?: string
+  /** Whether it's on, for a switch. */
+  on?: boolean
 }
 
 /** The first row whose line has this text, or null, with what is needed to press it. */
-function rowWith(state: { text: string; structured?: unknown }, wanted: RegExp): FoundRow | null {
+export function rowWith(
+  state: { text: string; structured?: unknown },
+  wanted: RegExp
+): FoundRow | null {
   const snapshot = /snapshot_id=(\S+)/.exec(state.text)?.[1]
   if (!snapshot) return null
   const points = computerRowPoints(state.structured)
+  const values = computerRowValues(state.structured)
+  const switches = computerRowSwitches(state.structured)
   for (const line of state.text.split('\n')) {
     const found = /^\W*\[(\d+)\] (.*)$/.exec(line)
     if (found && wanted.test(found[2])) {
-      return { token: `${snapshot}:${found[1]}`, point: points.get(Number(found[1])) }
+      const row = Number(found[1])
+      return {
+        token: `${snapshot}:${row}`,
+        point: points.get(row),
+        value: values.get(row),
+        on: switches.get(row)
+      }
     }
   }
   return null
@@ -165,8 +200,8 @@ async function until<T>(
 
 /**
  * What the user said yes to, done the way they would: in a window opened for this, Developer mode on and
- * the extension loaded from SideKick's folder. It goes by what Chrome's own controls are called, in
- * English for now, and the connection is the proof it worked. Null when it did, or why it didn't.
+ * the extension loaded from SideKick's folder. The connection is the proof it worked. Null when it did,
+ * or why it didn't.
  */
 export async function setUpChromeExtension(parts: SetupParts): Promise<string | null> {
   const { windows, signal, chrome } = parts
@@ -249,17 +284,24 @@ export async function setUpChromeExtension(parts: SetupParts): Promise<string | 
     const press = (window: number, token: string, pid = mine.pid): Promise<unknown> =>
       call('click', { pid, window_id: window, element_token: token }, signal)
     const loadUnpacked = (): Promise<FoundRow | null> =>
-      search(mine.id, 'Load unpacked').then((state) => rowWith(state, /Load unpacked/i))
-    if (!(await loadUnpacked())) {
-      const toggle = await until(
-        () => search(mine.id, 'Developer mode').then((state) => rowWith(state, /Developer mode/i)),
-        signal
-      )
-      if (!toggle) return "Chrome's extensions page didn't show its Developer mode switch."
-      await pointAt(toggle)
-      await press(mine.id, toggle.token)
+      search(mine.id, 'loadUnpacked').then((state) => rowWith(state, LOAD_UNPACKED))
+    const developerMode = (): Promise<FoundRow | null> =>
+      search(mine.id, 'devMode').then((state) => rowWith(state, DEVELOPER_MODE))
+    if (!(await until(developerMode, signal))) {
+      return "Chrome's extensions page didn't show its Developer mode switch."
     }
-    const button = await until(loadUnpacked, signal)
+    // By what the switch says, not by having pressed it: a press just as the page opens can be lost, and
+    // a press while it's already on would turn it off.
+    const button = await until(async () => {
+      const found = await loadUnpacked()
+      if (found) return found
+      const toggle = await developerMode()
+      if (toggle?.on === false) {
+        await pointAt(toggle)
+        await press(mine.id, toggle.token)
+      }
+      return null
+    }, signal)
     if (!button) return "Chrome didn't show its Load unpacked button."
     await pointAt(button)
     // Not waited for: pressing a button can last for as long as the dialog it opens.
@@ -273,16 +315,12 @@ export async function setUpChromeExtension(parts: SetupParts): Promise<string | 
       return "The folder picker didn't belong to Chrome."
     }
     await new Promise((resolve) => setTimeout(resolve, WINDOW_SETTLE_MS))
-    const field = await until(
-      () =>
-        search(opened.id, 'Folder', pickerPid).then((state) =>
-          rowWith(state, /Edit.*Folder|Folder.*Edit/i)
-        ),
-      signal
-    )
+    const findBox = (): Promise<FoundRow | null> =>
+      search(opened.id, PICKER_BOX_ID, pickerPid).then((state) => rowWith(state, PICKER_BOX))
+    const field = await until(findBox, signal)
     if (!field) return "Couldn't find the folder box in Chrome's folder picker."
     await pointAt(field)
-    await call(
+    const filled = await call(
       'set_value',
       {
         pid: pickerPid,
@@ -292,11 +330,16 @@ export async function setUpChromeExtension(parts: SetupParts): Promise<string | 
       },
       signal
     )
+    // Pressing on with anything else in the box would load whatever folder the picker happens to be in.
+    const holdsFolder =
+      !filled.isError &&
+      (await until(
+        async () => ((await findBox())?.value === parts.extensionFolder ? true : null),
+        signal
+      ))
+    if (!holdsFolder) return "Chrome's folder picker didn't take the folder."
     const select = await until(
-      () =>
-        search(opened.id, 'Select Folder', pickerPid).then((state) =>
-          rowWith(state, /Select Folder/i)
-        ),
+      () => search(opened.id, 'Button', pickerPid).then((state) => rowWith(state, PICKER_SELECT)),
       signal
     )
     // Enter does the same in the box, should the button go by another name.

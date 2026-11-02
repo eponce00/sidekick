@@ -143,6 +143,28 @@ export function computerRowValues(structured: unknown): Map<number, string> {
   return values
 }
 
+/** Whether each switch is on, from a look's structured detail. */
+export function computerRowSwitches(structured: unknown): Map<number, boolean> {
+  const elements = (structured as { elements?: unknown } | null | undefined)?.elements
+  const switches = new Map<number, boolean>()
+  if (!Array.isArray(elements)) return switches
+  for (const element of elements as Array<{
+    element_index?: unknown
+    selected?: unknown
+    actions?: unknown
+  }>) {
+    if (
+      typeof element?.element_index === 'number' &&
+      typeof element.selected === 'boolean' &&
+      Array.isArray(element.actions) &&
+      element.actions.includes('toggle')
+    ) {
+      switches.set(element.element_index, element.selected)
+    }
+  }
+  return switches
+}
+
 /** The middle of each numbered row, as a screen point, from a look's structured detail. */
 export function computerRowPoints(structured: unknown): Map<number, { x: number; y: number }> {
   const elements = (structured as { elements?: unknown } | null | undefined)?.elements
