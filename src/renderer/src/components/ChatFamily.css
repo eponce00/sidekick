@@ -235,7 +235,6 @@ button.session-chip:hover {
 }
 
 .family-started,
-.family-brief,
 .family-received.is-expanded,
 .family-todos {
   border: 1px solid var(--border-color);
@@ -256,8 +255,7 @@ button.session-chip:hover {
 }
 
 /* Collapsed, the received row is one quiet line, like a folded answer. */
-.family-message-toggle,
-.family-brief-toggle {
+.family-message-toggle {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -678,30 +676,6 @@ button.session-chip:hover {
 .worker-header-stop:hover {
   color: var(--color-error);
   background: var(--color-error-subtle);
-}
-
-.family-brief-toggle {
-  padding: 9px 12px;
-  border-radius: var(--radius-lg);
-}
-
-.family-brief-toggle strong {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.family-brief-toggle .family-chevron {
-  margin-left: auto;
-}
-
-.family-brief-toggle[aria-expanded='true'] {
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-}
-
-.family-brief-body {
-  padding: 0 14px 6px 34px;
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
 }
 
 .family-message-summary {

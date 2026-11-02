@@ -4,8 +4,8 @@ import type { Message } from '../types/chat.types'
 import { useFollowBottom } from '../hooks/useFollowBottom'
 import { useSubAgentRun } from '../hooks/useSubAgentRun'
 import { subAgentActivity, subAgentStats, type SubAgentState } from '../utils/subAgentActivity'
+import { AgentTaskMessage } from './AgentTaskMessage'
 import { MessageItem } from './MessageItem'
-import { MessageMarkdown } from './MessageMarkdown'
 import { StopGlyph } from './StopGlyph'
 import { SubAgentStateIcon } from './SubAgentCard'
 import type { SubAgentTarget } from './subAgentNavigation'
@@ -163,10 +163,7 @@ export function SubAgentView({
 
       <div className="messages-container subagent-view__scroll" ref={scrollRef}>
         {brief && (
-          <div className="subagent-view__brief">
-            <div className="subagent-view__brief-label">Task from the agent</div>
-            <MessageMarkdown content={brief} workspaceRoot={workspaceFolder ?? undefined} />
-          </div>
+          <AgentTaskMessage from="the main agent" content={brief} workspaceRoot={workspaceFolder} />
         )}
         {error ? (
           <div className="subagent-view__error">{error}</div>
