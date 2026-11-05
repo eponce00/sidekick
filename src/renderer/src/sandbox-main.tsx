@@ -42,7 +42,15 @@ import './styles/artifactTokens.css'
 import './styles/artifactBase.css'
 import artifactBaseCss from './styles/artifactBase.css?raw'
 
-Chart.register(...registerables)
+Chart.register(...registerables, {
+  id: 'sidekick-chart-sizing',
+  beforeInit(chart) {
+    chart.canvas.dataset.sidekickChart = ''
+  },
+  afterDestroy(chart) {
+    delete chart.canvas.dataset.sidekickChart
+  }
+})
 installArtifactContrastGuard(document)
 
 // Tailwind's reset is not in a cascade layer, so it would undo SideKick's base layer for buttons,

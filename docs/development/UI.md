@@ -563,6 +563,11 @@ through its V8 inspector, where IPC work caused by typing shows up. Compare agai
 
 ## UI preview and visual QA
 
+Inline artifacts use the app's typography and controls by default. Games and illustrations keep
+their own scene palettes and canvas proportions; a game playfield is not app chrome. Only Chart.js
+canvases receive the responsive-chart height ceiling. Artifact inspection reports nonuniform canvas
+scaling so a builder can correct a squeezed playfield before completing its reply.
+
 Development builds expose a deterministic renderer preview when Electron's preload API is unavailable:
 
 1. Run `npm run dev`.

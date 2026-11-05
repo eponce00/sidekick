@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.27.5 — 2026-11-05
+
+- Stop squeezing games and other canvas drawings into a 300px-high chart box. Responsive game
+  canvases keep their proportions, while Chart.js charts retain their height limit. Artifact
+  review now warns when a canvas is stretched or squashed.
+- Let generated games and illustrated scenes use their own colors and scenery, instead of
+  applying SideKick's neutral surfaces and accent to the artwork. Surrounding controls still
+  follow the app theme. Existing games may need an edit or regeneration to change their colors.
+
 ## 0.27.4 — 2026-11-05
 
 - Show a persistent pin beside pinned chats and projects, including when their names are shortened.
