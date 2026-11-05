@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.27.3 — 2026-11-05
+
+- Align the Phone button and version number at the bottom of the sidebar, with even vertical
+  padding and room between the version and the window edge. The phone icon now lines up with
+  New chat and the project icons above it.
+
 ## 0.27.2 — 2026-11-02
 
 - Work in one tab group in your Chrome window, behind the tab you're on, rather than opening a window for each

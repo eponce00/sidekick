@@ -13,7 +13,7 @@
 
 /* While it changes width, its content keeps its full width and is clipped or revealed, so text
    never re-wraps from frame to frame. */
-.sidebar:not(.collapsed) > :not(.sidebar-search, .sidebar-filter-chip) {
+.sidebar:not(.collapsed) > :not(.sidebar-search, .sidebar-filter-chip, .sidebar-footer) {
   min-width: calc(var(--sidebar-width) - 1px);
 }
 
@@ -21,6 +21,11 @@
    filter chip keeps its own width. */
 .sidebar:not(.collapsed) > .sidebar-search {
   min-width: calc(var(--sidebar-width) - 1px - 2 * 9px);
+}
+
+/* Keep the footer's side margins inside the sidebar during the width transition too. */
+.sidebar:not(.collapsed) > .sidebar-footer {
+  min-width: calc(var(--sidebar-width) - 1px - 2 * 7px);
 }
 
 .sidebar.is-closing {
@@ -376,7 +381,7 @@
   align-items: center;
   gap: var(--space-2);
   margin: 0 7px;
-  padding: 6px 10px 8px 0;
+  padding: var(--space-3) 10px var(--space-3) 0;
   border-top: 1px solid var(--border-color);
 }
 
@@ -430,6 +435,7 @@
 .sidebar-phone-row > .sidebar-phone-glyph,
 .sidebar-new-chat-row > svg {
   grid-column: 2;
+  justify-self: start;
   margin-left: 3px;
   color: var(--text-muted);
 }
