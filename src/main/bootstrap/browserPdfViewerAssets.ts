@@ -24,7 +24,7 @@ export const BROWSER_PDF_VIEWER_HTML = `<!doctype html>
 </html>`
 
 export const BROWSER_PDF_VIEWER_CSS = `
-:root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+:root { color-scheme: dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 * { box-sizing: border-box; }
 html, body { min-height: 100%; margin: 0; background: #15181d; color: #eef1f5; }
 body { padding-top: 68px; }

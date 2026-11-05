@@ -87,7 +87,7 @@ html, body { margin: 0; overflow: hidden; background: transparent; }
 body {
   padding: 10px;
   color: var(--text);
-  font: 14px/1.5 Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-user-select: none;
   user-select: none;
 }

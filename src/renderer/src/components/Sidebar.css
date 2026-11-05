@@ -1,6 +1,6 @@
 .sidebar {
-  /* Every one-line tree row (project, chat, schedule, phone, New chat) is one 32px pitch. */
-  --sidebar-row-height: 32px;
+  /* Every one-line tree row (project, chat, schedule, phone, New chat) shares one pitch. */
+  --sidebar-row-height: 34px;
   width: var(--sidebar-width);
   height: 100%;
   display: flex;
@@ -66,7 +66,7 @@
   flex: 1;
   color: var(--text-primary);
   font-size: var(--text-md);
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.01em;
 }
 
@@ -424,7 +424,7 @@
   color: var(--text-secondary);
   cursor: pointer;
   font: inherit;
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
   line-height: 1.45;
   text-align: left;
   transition:
@@ -531,6 +531,7 @@
   display: flex;
   align-items: center;
   padding: 0 7px;
+  font-size: var(--text-md);
 }
 
 .sidebar-section-label-with-action {
@@ -647,7 +648,7 @@
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
   text-align: left;
 }
 
@@ -718,17 +719,35 @@
 .project-name {
   min-width: 0;
   flex: 1;
+  display: flex;
+  align-items: center;
   overflow: hidden;
   padding: 4px 2px;
   border: 0;
   background: transparent;
   color: inherit;
   cursor: pointer;
-  font-size: var(--text-sm);
-  font-weight: 500;
+  font-size: var(--text-md);
+  font-weight: 400;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.project-name-text,
+.conversation-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-pin-indicator {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  margin-left: var(--space-2);
+  color: var(--text-muted);
 }
 
 .project-rename-input {
@@ -737,7 +756,7 @@
   padding: 0 5px;
   border-radius: var(--radius-xs);
   background: var(--input-bg);
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
 }
 
 .project-actions {
@@ -954,15 +973,21 @@
 .conversation-title {
   overflow: hidden;
   color: var(--text-secondary);
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
   font-weight: 400;
   line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.conversation-select-button > .conversation-title {
+  display: flex;
+  align-items: center;
+}
+
 /* A chat in its own worktree: a quiet mark before its title, filling the icon column. */
 .conversation-worktree-icon {
+  flex-shrink: 0;
   margin-right: 8px;
   color: var(--text-muted);
   vertical-align: -2px;

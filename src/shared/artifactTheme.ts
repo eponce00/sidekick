@@ -44,8 +44,7 @@ export interface ArtifactTheme {
 }
 
 const TYPE_AND_SHAPE = {
-  fontSans:
-    "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif",
+  fontSans: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
   fontMono: "'SF Mono', 'Consolas', 'Monaco', 'Fira Code', monospace",
   textSize: '14px',
   leading: '1.6',

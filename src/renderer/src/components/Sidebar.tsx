@@ -766,7 +766,21 @@ function Sidebar({
                       aria-label="Works in its own worktree"
                     />
                   )}
-                  <WrittenTitle text={label || conversation.title} identity={conversation.id} />
+                  <WrittenTitle
+                    text={label || conversation.title}
+                    identity={conversation.id}
+                    className="conversation-title-text"
+                  />
+                  {!!conversation.is_pinned && (
+                    <span
+                      className="sidebar-pin-indicator"
+                      role="img"
+                      aria-label="Pinned chat"
+                      title="Pinned chat"
+                    >
+                      <Pin size={12} aria-hidden="true" />
+                    </span>
+                  )}
                 </span>
                 {rollUp && (
                   // Whole items drop off the end when the row is narrow, rather than a cut word.
@@ -1462,7 +1476,17 @@ function Sidebar({
                                     onDoubleClick={() => beginProjectRename(project)}
                                     title={`${[project.folder_path, ...(project.folders ?? []).map((folder) => folder.path)].join('\n')}\nDouble-click to rename`}
                                   >
-                                    {project.name}
+                                    <span className="project-name-text">{project.name}</span>
+                                    {!!project.is_pinned && (
+                                      <span
+                                        className="sidebar-pin-indicator"
+                                        role="img"
+                                        aria-label="Pinned project"
+                                        title="Pinned project"
+                                      >
+                                        <Pin size={12} aria-hidden="true" />
+                                      </span>
+                                    )}
                                   </button>
                                 )}
                                 <span className="project-actions">
