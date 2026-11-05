@@ -426,6 +426,37 @@ async function settle(page) {
   await page.waitForTimeout(250)
 }
 
+async function assertSidebarFooterLayout(page) {
+  const problem = await page.evaluate(() => {
+    const footer = document.querySelector('.sidebar-footer')
+    if (!footer || !footer.getBoundingClientRect().width) return null
+    const sidebar = footer.closest('.sidebar').getBoundingClientRect()
+    const bounds = footer.getBoundingClientRect()
+    const phone = footer.querySelector('.sidebar-phone-row')?.getBoundingClientRect()
+    const version = footer.querySelector('.sidebar-version')?.getBoundingClientRect()
+    if (bounds.left < sidebar.left || bounds.right > sidebar.right)
+      return 'Sidebar footer extends beyond the sidebar'
+    if (version && sidebar.right - version.right < 12)
+      return 'Sidebar version has insufficient right padding'
+    if (phone && (phone.top - bounds.top < 8 || bounds.bottom - phone.bottom < 8))
+      return 'Sidebar phone button has insufficient vertical padding'
+    if (
+      phone &&
+      version &&
+      Math.abs(phone.top + phone.height / 2 - version.top - version.height / 2) > 1
+    )
+      return 'Sidebar phone button and version are not vertically aligned'
+    const phoneIcon = footer.querySelector('.sidebar-phone-glyph > svg')?.getBoundingClientRect()
+    const newChatIcon = document
+      .querySelector('.sidebar-new-chat-row > svg')
+      ?.getBoundingClientRect()
+    if (phoneIcon && newChatIcon && Math.abs(phoneIcon.left - newChatIcon.left) > 1)
+      return 'Sidebar phone icon is not aligned with New chat'
+    return null
+  })
+  if (problem) throw new Error(problem)
+}
+
 // ---- Main --------------------------------------------------------------------------------------
 
 const cleanup = []
@@ -508,6 +539,7 @@ async function main() {
           // Park the pointer on empty title bar so no hover state leaks into the shot.
           if (!state.keepPointer) await page.mouse.move(Math.round(width / 2), 20)
           await settle(page)
+          await assertSidebarFooterLayout(page)
           const shownTheme = await page.evaluate(() => document.body.dataset.theme)
           if (shownTheme !== theme) throw new Error(`page shows the ${shownTheme} theme`)
           if (problems.length) throw new Error(`page error: ${problems[0]}`)
