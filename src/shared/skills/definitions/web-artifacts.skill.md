@@ -59,7 +59,7 @@ Do NOT use Box, Material UI, styled-components, @emotion, or react-native-web â€
 - SideKick shows its own controls (view code, copy, full screen) when the user hovers. Do not add
   full-screen or copy-code buttons.
 
-### SideKick's look, by default
+### SideKick's look for surrounding UI
 
 - Text already uses the app's font at the chat's size, in the user's light or dark theme and accent
   color, and follows them live. Do not load fonts or set a font family.
@@ -78,13 +78,26 @@ Do NOT use Box, Material UI, styled-components, @emotion, or react-native-web â€
   - Data series: `--chart-1` (the accent) to `--chart-5`
   - Shape: `--radius-sm` (6px), `--radius-md` (10px, controls), `--radius-lg` (14px, cards),
     `--space-1` to `--space-8`, `--font-mono`
-- Show restraint. The accent marks the primary action, the main series and the selected state;
-  neutral surfaces carry everything else. No gradients, glows, heavy shadows, emoji icons or
-  decorative backgrounds. Use weights 400 to 600, sentence case, and rounded, tabular numbers.
+- For app-like controls and information displays, show restraint. The accent marks the primary
+  action, the main series and the selected state; neutral surfaces carry everything else.
+  No gradients, glows, heavy shadows, emoji icons or decorative backgrounds. Use weights 400 to
+  600, sentence case, and rounded, tabular numbers.
 - If a hover, selected or active state changes a background, give it a matching text color too.
   Use fixed colors only for data that needs them, and check their contrast in both themes. A
   subtree may opt out of SideKick's severe-contrast repair only when intentional (for example,
   text used as an image mask) with `data-sidekick-contrast="preserve"`.
+
+### Games and illustrated scenes
+
+- The playfield or illustration has its own visual identity. Use a suitable scene palette for
+  backgrounds, characters, obstacles, and effects; do not reduce it to SideKick's neutral surfaces
+  and accent unless the user asks for that look. Keep the scene's colors when the app theme changes.
+- Apply SideKick's theme to surrounding controls and explanatory text. A game viewport may have
+  its own background and fixed logical dimensions; the rules against decorative app chrome do
+  not remove the game's scenery or artwork.
+- Preserve a canvas's logical width/height ratio as it fits the chat: use width/height attributes
+  for its drawing buffer, responsive width and `height: auto` (or a matching `aspect-ratio`). Do
+  not squeeze a portrait playfield into a short chart-sized box. Give Chart.js a sized container.
 
 ### React artifacts
 

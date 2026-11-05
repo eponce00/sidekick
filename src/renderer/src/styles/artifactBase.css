@@ -95,13 +95,17 @@
 
   img,
   video,
-  svg {
+  svg,
+  canvas {
     height: auto;
   }
 
-  /* Charts sized to their container would otherwise grow with a frame that grows with them. */
   canvas {
     display: block;
+  }
+
+  /* Responsive charts need a ceiling in an auto-growing frame; game canvases keep their ratio. */
+  :where(canvas[data-sidekick-chart]) {
     max-height: 300px;
   }
 

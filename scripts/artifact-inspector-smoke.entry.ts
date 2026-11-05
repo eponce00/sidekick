@@ -19,6 +19,8 @@ interface SmokeCase {
   type: InspectedArtifactType
   code: string
   expect: 'rendered' | 'error'
+  minHeight?: number
+  maxHeight?: number
 }
 
 const CASES: SmokeCase[] = [
@@ -93,6 +95,40 @@ export default function App() {
     type: 'svg',
     expect: 'rendered',
     code: `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="120" viewBox="0 0 240 120"><rect width="240" height="120" rx="16" fill="#1f6feb"/><text x="120" y="68" font-size="28" text-anchor="middle" fill="white">SVG</text></svg>`
+  },
+  {
+    name: 'html-portrait-canvas',
+    type: 'html',
+    expect: 'rendered',
+    minHeight: 600,
+    code: `<canvas id="game" width="420" height="600" style="width:100%;max-width:420px"></canvas>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+ctx.fillStyle = '#70c5ce'; ctx.fillRect(0, 0, 420, 600);
+ctx.fillStyle = '#ffdb53'; ctx.beginPath(); ctx.arc(110, 275, 21, 0, Math.PI * 2); ctx.fill();
+</script>`
+  },
+  {
+    name: 'react-responsive-chart',
+    type: 'react',
+    expect: 'rendered',
+    maxHeight: 320,
+    code: `import { useEffect, useRef } from 'react'
+import { Chart, registerables } from 'chart.js'
+Chart.register(...registerables)
+export default function App() {
+  const ref = useRef(null)
+  useEffect(() => {
+    const chart = new Chart(ref.current, {
+      type: 'bar',
+      data: { labels: ['A', 'B'], datasets: [{ data: [2, 5] }] },
+      options: { responsive: true, maintainAspectRatio: false, animation: false }
+    })
+    return () => chart.destroy()
+  }, [])
+  return <canvas ref={ref} />
+}`
   }
 ]
 
@@ -127,7 +163,13 @@ app.whenReady().then(async () => {
         name: item.name,
         expected: item.expect,
         status: inspection.status,
-        pass: inspection.status === item.expect && Boolean(inspection.image),
+        pass:
+          inspection.status === item.expect &&
+          Boolean(inspection.image) &&
+          (item.minHeight === undefined || inspection.height >= item.minHeight) &&
+          (item.maxHeight === undefined || inspection.height <= item.maxHeight),
+        height: inspection.height,
+        warnings: inspection.warnings,
         errors: inspection.errors,
         chatFrameHeight: inspection.chatFrameHeight,
         size: inspection.image ? `${inspection.image.width}x${inspection.image.height}` : null,

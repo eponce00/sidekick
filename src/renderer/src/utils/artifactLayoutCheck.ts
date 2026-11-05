@@ -1,8 +1,9 @@
 /**
  * Defects an artifact's own document shows without anyone looking at it: content wider than the
- * chat column, sideways scrolling, text cut off or squeezed into a column of letters, chart labels
- * past their chart's edge, and values such as NaN. These were most of what reviewing a screenshot
- * found, and named this way a model can fix them in one step, with or without seeing images.
+ * chat column, sideways scrolling, text cut off or squeezed into a column of letters, stretched
+ * canvases, chart labels past their chart's edge, and values such as NaN. These were most of what
+ * reviewing a screenshot found, and named this way a model can fix them in one step, with or
+ * without seeing images.
  */
 
 const MAX_PROBLEMS = 6
@@ -88,6 +89,23 @@ export function findArtifactLayoutProblems(doc: Document | null | undefined): st
   if (squeezed.length) {
     problems.push(
       `Text is squeezed into a column of single letters: ${squeezed.slice(0, SAMPLE).map(describe).join(', ')}. It has almost no width, as with left: 100% or a zero-width flex item; anchor it with right: 0 or give it white-space: nowrap.`
+    )
+  }
+
+  const stretchedCanvases = [...doc.querySelectorAll('canvas')].filter((canvas) => {
+    const style = view.getComputedStyle(canvas)
+    if (style.display === 'none' || style.visibility === 'hidden') return false
+    if (style.objectFit && style.objectFit !== 'fill') return false
+    const inset = (first: string, second: string): number =>
+      (parseFloat(first) || 0) + (parseFloat(second) || 0)
+    const width = canvas.clientWidth - inset(style.paddingLeft, style.paddingRight)
+    const height = canvas.clientHeight - inset(style.paddingTop, style.paddingBottom)
+    if (width <= 0 || height <= 0 || canvas.width <= 0 || canvas.height <= 0) return false
+    return Math.abs(width / height / (canvas.width / canvas.height) - 1) > 0.05
+  })
+  if (stretchedCanvases.length) {
+    problems.push(
+      `A canvas is stretched or squashed: ${stretchedCanvases.slice(0, SAMPLE).map(describe).join(', ')}. Its displayed width/height ratio differs from its drawing buffer. Preserve the aspect ratio with height: auto or a matching aspect-ratio; do not constrain only one dimension.`
     )
   }
 
