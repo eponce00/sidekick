@@ -257,6 +257,9 @@ items it holds while closed, and offers its own create action when you point at 
   edit, and remove actions; **+** opens a folder as a project.
 - **Chats:** standalone conversations only; the pen starts one.
 
+Pinned chats and projects show a pin beside their name, even when you are not pointing at the row.
+Use the row's **⋯** menu to pin or unpin it.
+
 The layout button beside the SideKick name switches between two layouts. It shows a folder while
 chats are grouped by folder and a clock while they are listed by recent activity, and SideKick
 remembers your choice:

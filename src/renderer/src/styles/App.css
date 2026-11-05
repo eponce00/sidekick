@@ -111,9 +111,7 @@
   --radius-full: 9999px;
 
   /* — Typography — */
-  --font-sans:
-    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell,
-    sans-serif;
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'SF Mono', 'Consolas', 'Monaco', 'Fira Code', monospace;
   /* Every user-facing size lives on this scale. 11px is the floor for text;
      --text-2xs exists only for a numeral or initial inside a fixed circle. */

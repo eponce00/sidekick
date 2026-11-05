@@ -61,8 +61,11 @@ Type and shape stay on fixed scales rather than ad-hoc values:
   additions `--color-success`, deletions `--color-error`, and a zero count `--text-muted`, so
   colour appears only where lines changed. A change card for one file shows its counts only in
   its header, not again on the file's row.
-- Weights: 400, 500, 600, 700. Inter is loaded at exactly these four; any other value silently
-  rounds to one of them, so writing it only hides the real weight.
+- Typeface: the platform's system UI font, through `--font-sans` (`system-ui`): Segoe UI on
+  Windows, the native system font on macOS, and the desktop's system sans on Linux. The desktop,
+  phone companion, and default artifact theme share this stack.
+- Weights: 400, 500, 600, 700. Use regular for reading text and project names, medium for the
+  selected chat and the sidebar's SideKick name, and semibold for important headings.
 - Radius: `--radius-xs` through `--radius-xl` and `--radius-full`.
 
 ## Brand
@@ -274,12 +277,15 @@ name, New chat and Phone share one left edge. A row inside a project that opens 
 in the icon column, since the chevron column is the project's; a scheduled group shows its icon
 there and the chevron on hover or while open. Workers under their manager are indented one
 `--tree-indent`. Every one-line
-row (a project, a chat, a schedule, Phone, New chat) is one 32px pitch (`--sidebar-row-height`),
+row (a project, a chat, a schedule, Phone, New chat) is one 34px pitch (`--sidebar-row-height`),
 with no margin between rows; the Files tree is denser, at `--work-row-height` (28px). Text sizes
-are the same in both. A manager's two-line row keeps its own height. Above the tree, fixed while it
-scrolls, one labelled New chat row on the same grid (16px `SquarePen` in the icon column) opens
+are 13px (`--text-md`) in the sidebar and 12px (`--text-sm`) in Files. Project names and inactive
+chat titles are regular weight. A manager's two-line row keeps its own height. Above the tree,
+fixed while it scrolls, one labelled New chat row on the same grid (16px `SquarePen` in the icon column) opens
 the same new chat as Ctrl+N; each project keeps its own New chat action. Inactive
-titles are `--text-secondary`, the selected one `--text-primary` 500. Hover actions float over the
+titles are `--text-secondary`, the selected one `--text-primary` 500. Pinned chats and projects
+keep a 12px `Pin` in `--text-muted` beside their name, visible at rest; the name ellipsizes before
+the pin so it remains visible on long names. Hover actions float over the
 row's end rather than reserving width, and a status dot takes room only on rows that have one.
 Meta sits inline after the title as `·`-separated `--text-muted` text, never a filled chip (a
 worker in another project reads "api-contract · sidekick-api"), with one exception: a manager's row puts its workers' status

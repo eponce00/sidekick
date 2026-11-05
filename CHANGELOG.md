@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.27.4 — 2026-11-05
+
+- Show a persistent pin beside pinned chats and projects, including when their names are shortened.
+  Unpinning removes the mark, and chat activity indicators remain visible alongside it.
+- Use each platform's system font, including Segoe UI on Windows, for a more familiar look. Give
+  sidebar labels a little more room with 13px text and 34px rows, lighten project names to regular
+  weight, and keep the selected chat easy to find. Chat, settings, the phone companion, and default
+  document previews share the native font styling.
+
 ## 0.27.3 — 2026-11-05
 
 - Align the Phone button and version number at the bottom of the sidebar, with even vertical

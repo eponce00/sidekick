@@ -93,6 +93,46 @@ describe('Sidebar chat section', () => {
     await act(async () => element!.click())
   }
 
+  it.each(['folders', 'recent'])(
+    'shows pinned chats in the %s view without opening actions',
+    async (view) => {
+      vi.mocked(window.localStorage.getItem).mockImplementation((key: string) =>
+        key === 'sidebarView' ? view : null
+      )
+      const pinned = { ...chat('pinned-chat'), is_pinned: 1 }
+      const ordinary = chat('ordinary-chat')
+      await renderSidebar({
+        conversations: [pinned, ordinary],
+        busyConversationIds: new Set([pinned.id])
+      })
+
+      const indicator = container.querySelector('[role="img"][aria-label="Pinned chat"]')!
+      expect(indicator).not.toBeNull()
+      expect(indicator.closest('.conversation-select-button')?.textContent).toContain(pinned.title)
+      expect(indicator.closest('.conversation-actions')).toBeNull()
+      expect(container.querySelectorAll('.sidebar-pin-indicator')).toHaveLength(1)
+      expect(container.querySelector('.conversation-run-indicator.working')).not.toBeNull()
+
+      await renderSidebar({ conversations: [{ ...pinned, is_pinned: 0 }, ordinary] })
+      expect(container.querySelector('.sidebar-pin-indicator')).toBeNull()
+    }
+  )
+
+  it('shows a project pin beside its name until the project is unpinned', async () => {
+    const pinned = { ...project('pinned-project'), is_pinned: 1 }
+    const ordinary = project('ordinary-project')
+    await renderSidebar({ conversations: [], projects: [pinned, ordinary] })
+
+    const indicator = container.querySelector('[role="img"][aria-label="Pinned project"]')!
+    expect(indicator).not.toBeNull()
+    expect(indicator.closest('.project-name')?.textContent).toContain(pinned.name)
+    expect(indicator.closest('.project-actions')).toBeNull()
+    expect(container.querySelectorAll('.sidebar-pin-indicator')).toHaveLength(1)
+
+    await renderSidebar({ conversations: [], projects: [{ ...pinned, is_pinned: 0 }, ordinary] })
+    expect(container.querySelector('.sidebar-pin-indicator')).toBeNull()
+  })
+
   it('deletes a chat only after the user confirms', async () => {
     const onDeleteConversation = vi.fn()
     await renderSidebar({ conversations: [chat('chat-1')], onDeleteConversation })

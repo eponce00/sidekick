@@ -1017,13 +1017,14 @@ export function installBrowserApiMock(): void {
         created_at: Date.now(),
         updated_at: Date.now()
       }),
-      update: async (id, input) => ({
-        ...(previewProjects.find((project) => project.id === id) || previewProjects[0]),
-        id,
-        name: input.name || previewProjects[0].name,
-        is_pinned: input.isPinned ? 1 : 0,
-        updated_at: Date.now()
-      }),
+      update: async (id, input) => {
+        const project = previewProjects.find((candidate) => candidate.id === id)
+        if (!project) throw new Error('Project not found')
+        if (input.name !== undefined) project.name = input.name
+        if (input.isPinned !== undefined) project.is_pinned = input.isPinned ? 1 : 0
+        project.updated_at = Date.now()
+        return { ...project }
+      },
       updateFolders: async (input) => {
         const project = previewProjects.find(({ id }) => id === input.projectId)
         if (!project) throw new Error('Project not found')

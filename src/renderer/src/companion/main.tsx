@@ -1,10 +1,4 @@
 import { createRoot } from 'react-dom/client'
-// Inter at the four weights the app uses, bundled as on the desktop: the phone page loads
-// nothing from elsewhere.
-import '@fontsource/inter/400.css'
-import '@fontsource/inter/500.css'
-import '@fontsource/inter/600.css'
-import '@fontsource/inter/700.css'
 // The desktop's design tokens and chat styles, so the phone matches it in both themes.
 import '../styles/App.css'
 import '../styles/codeTheme.css'
