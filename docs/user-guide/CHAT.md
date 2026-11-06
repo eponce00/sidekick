@@ -205,19 +205,16 @@ its own, for the same chat, where you let go. Its title bar names the app and th
 returns it to the panel. While it has its own window, choosing it in the panel brings that window
 forward, and closing SideKick's main window closes it too.
 
-Drag the panel's left edge to resize it. While you drag, nothing else moves: a tinted outline shows where the panel will land,
-with an icon for what letting go will do. Let go, and the panel glides there in one motion as the
-chat and the left sidebar make room.
+Drag the panel's left edge to resize it. The panel follows your pointer, and the chat and left
+sidebar make room. Dragging stops before the chat gets too narrow; it does not expand over the chat.
 
-- Near the **narrow** column or an **even split** with the chat, the outline settles on it with a
-  little spring. Anywhere in between, the panel stays where you leave it, and SideKick remembers
-  the width.
-- Past the point where the chat would get too narrow, the outline takes the **full window**: the
-  chat steps aside and the left sidebar folds to its thin rail, so a browser page, for example, gets
-  the whole window. Drag back to bring them back. Opening the sidebar also returns the panel beside
-  the chat.
-- Nearly shut, the outline shrinks to the rail and the panel **folds away** to its tab icons when
-  let go. Click an icon, or drag out from the rail, to open it again at the width it had.
+- Let go within a few pixels of the **narrow** column or an **even split** with the chat to settle
+  on that width. Anywhere else, the panel stays where you leave it, and SideKick remembers the width.
+- Choose **Expand panel** at the end of the first tab row for the **full window**. Choose
+  **Restore panel beside chat** to return to your previous width. Opening the sidebar also returns
+  the panel beside the chat.
+- Drag nearly shut and let go to **fold away** the panel to its tab icons. Click an icon, or drag
+  out from the rail, to open it again at the width it had.
 - **Esc** while dragging leaves the panel as it was.
 
 The fold button at the end of the first row of tabs also folds the panel away. Double-click the

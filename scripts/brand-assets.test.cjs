@@ -11,21 +11,21 @@ const runtimeIconPath = path.join(root, 'resources/icon.png')
 
 const EXPECTED_BRAND_ASSET_HASHES = new Map([
   // Drawn by scripts/generate-brand-assets.cjs: the masters, then everything rendered from them.
-  ['build/icon.svg', '6ea14e12dbc42ee71bb5ccfe7c5c1c1a8d971da8814a23b3e2825794d469a726'],
+  ['build/icon.svg', 'a4c94a2927cec25931c738f7fb328a4a3d73cc16ca2b71f8c097788ab01cd13e'],
   ['build/icon-small.svg', '044f7a2ffd8bcda5d83e292ffe71234a3d6df19c38a20189a21518c9b043773c'],
   [
     'src/renderer/src/assets/sidekick-peek.svg',
-    'c32f72441e8af637d1bdcb9ffa43c90d37f11b011b95c344be7f27b8ce919b35'
+    '37ec3c5c4c7163bc4cdc02307880a4306f774adbf351b68f3bb3806907e47367'
   ],
-  ['build/icon.icns', '4b222af043091f9086b064e45eb62acfefe52d955a48ad3a88c9b84de24f7099'],
-  ['build/icon.ico', 'ad540ec6e8ab9b2ecc47c319947c51982402ba17d2288d7de737ca754ae0ab52'],
-  ['resources/icon.png', '706052f0bdcf2dc57587ec531740a8c46bc2ffc6e19e4482b4fe2656042349bc'],
+  ['build/icon.icns', 'aee07806def5a9882fef3f695661720815fe1e94e2e09ae9a0d8ac1d6c74849a'],
+  ['build/icon.ico', '1bbd0dc990be9b89a604375baebbb96b567691aeea366ffab9b746fa2589abfe'],
+  ['resources/icon.png', '9077c627e836f0df96caa563db3d35308eeac8698de102dacb6551f1fe3de57c'],
   ['resources/tray.png', 'ba9e54f54f1acd95c2d5c9448cfa1f9ece98f1c12bd06fde40147656d2a888d6'],
-  ['build/appx/LargeTile.png', 'cd3abcd06a6cd446f1c232ee5889cd94a34e48b1e168968308a4e1c0ed3fdfb3'],
+  ['build/appx/LargeTile.png', '70e5c2c88d72e71f5dd737981ca4fc6afcf23a116300602d0f86a6eeb4112200'],
   ['build/appx/SmallTile.png', '068ca30262f8e4836a4a3f5a8519d254fa2704d0a3c96ebf44eb8f83567b77f8'],
   [
     'build/appx/Square150x150Logo.png',
-    'a9a8ff8b81a4f2af2185e5b25cfab808ef859756ea366f313cb104badd07f5c4'
+    'd9ec079a7bbc1300143b880cf224bd29385ee9092bae2844185f1475d45ccfb4'
   ],
   [
     'build/appx/Square44x44Logo.png',
@@ -45,16 +45,16 @@ const EXPECTED_BRAND_ASSET_HASHES = new Map([
   ],
   [
     'build/appx/Square44x44Logo.targetsize-48_altform-unplated.png',
-    '00591f65ad7bed55db76f922f19a539c4ff7133bc128f9fa0147c9df6effe501'
+    '8f48e53d2bc0c141875681522004b99319081068c6829ced39ea15d31256149c'
   ],
   [
     'build/appx/Square44x44Logo.targetsize-256_altform-unplated.png',
-    'fa1ec514e6fae61badc34f3bd79067a3fde693c89de42135ea992f04abe5272a'
+    '0136c4385bcf660b832c8960b85952efa3fb0c9755a6622b40238adc7caf8ca8'
   ],
   ['build/appx/StoreLogo.png', 'a30d1d2a3bb8bfbab5bc391d65371772ab27a294aa7a22e188dc2de2ac81974a'],
   [
     'build/appx/Wide310x150Logo.png',
-    'fdf5aa32017a08436e4256a6f2471fc8ae18ea3122f6a1fa57771bab6976f2e1'
+    '9948255fe2fad6858f93bbb367990114cfd008270a4a9d096e115307a1476c98'
   ]
 ])
 
@@ -81,6 +81,18 @@ test('normalizes irrelevant vector line endings before hashing', () => {
     canonicalAssetContents('build/icon.svg', Buffer.from('<svg>\r\n</svg>\r\n')).toString(),
     '<svg>\n</svg>\n'
   )
+})
+
+test('prints the console shield on the cape instead of fastening a disk under the face', () => {
+  const svg = readFileSync(path.join(root, 'src/renderer/src/assets/sidekick-peek.svg'), 'utf8')
+  const rig = svg.match(/<g class="peek-cape-rig">([\s\S]*?)<\/g>/)?.[1]
+  assert.ok(rig)
+  assert.match(rig, /class="peek-emblem"/)
+  assert.match(rig, /class="peek-emblem-mark"/)
+  assert.ok(rig.indexOf('peek-emblem') < rig.indexOf('peek-cape-lining'))
+  assert.doesNotMatch(svg, /peek-badge/)
+  const mark = rig.match(/class="peek-emblem-mark" d="([^"]+)"/)?.[1]
+  assert.equal(mark?.match(/M/g)?.length, 2, 'prompt and cursor must be separate strokes')
 })
 
 test('uses deterministic platform derivatives of one SideKick drawing', () => {

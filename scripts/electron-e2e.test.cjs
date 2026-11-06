@@ -209,6 +209,77 @@ test(
       )
       assert.equal(await page.getByRole('button', { name: 'Resume agent' }).count(), 0)
       assert.equal(await page.getByRole('button', { name: 'Take control' }).count(), 0)
+      // Resize while the native page is mounted. Intermediate widths must follow the pointer,
+      // stay put on release, and leave the chat visible even when dragged past the limit.
+      const panel = page.locator('.activity-panel')
+      const edge = page.getByRole('separator', { name: 'Resize workspace inspector' })
+      await page.waitForTimeout(500)
+      const initialWidth = await panel.evaluate((element) => element.getBoundingClientRect().width)
+      const edgeBox = await edge.boundingBox()
+      const grabX = edgeBox.x + edgeBox.width / 2
+      const grabY = edgeBox.y + edgeBox.height / 2
+      await page.mouse.move(grabX, grabY)
+      await page.mouse.down()
+      await page.mouse.move(grabX - 83, grabY, { steps: 8 })
+      await page.waitForFunction(
+        (width) =>
+          Math.abs(
+            document.querySelector('.activity-panel').getBoundingClientRect().width - width
+          ) < 2,
+        initialWidth + 83
+      )
+      await page.mouse.up()
+      assert.ok(
+        Math.abs(
+          (await panel.evaluate((element) => element.getBoundingClientRect().width)) -
+            initialWidth -
+            83
+        ) < 2
+      )
+      const widerEdge = await edge.boundingBox()
+      await page.mouse.move(widerEdge.x + widerEdge.width / 2, grabY)
+      await page.mouse.down()
+      await page.mouse.move(0, grabY, { steps: 12 })
+      await page.mouse.up()
+      assert.equal(await panel.getAttribute('data-size'), 'wide')
+      assert.ok(
+        (await page
+          .locator('.conversation-panel-stack')
+          .evaluate((element) => element.getBoundingClientRect().width)) >= 319
+      )
+      await page.getByRole('button', { name: 'Expand panel', exact: true }).click()
+      assert.equal(await panel.getAttribute('data-size'), 'full')
+      await page.getByRole('button', { name: 'Restore panel beside chat' }).click()
+      assert.equal(await panel.getAttribute('data-size'), 'wide')
+      // Shrink back through the native page area; pointer capture keeps the edge's drag alive.
+      await page.waitForTimeout(500)
+      const restoredEdge = await edge.boundingBox()
+      await page.mouse.move(restoredEdge.x + restoredEdge.width / 2, grabY)
+      await page.mouse.down()
+      await page.mouse.move(grabX - 83, grabY, { steps: 12 })
+      await page.mouse.up()
+      try {
+        await page.waitForFunction(
+          (width) =>
+            Math.abs(
+              document.querySelector('.activity-panel').getBoundingClientRect().width - width
+            ) < 2,
+          initialWidth + 83,
+          { timeout: 5_000 }
+        )
+      } catch (cause) {
+        const actual = await panel.evaluate((element) => ({
+          width: element.getBoundingClientRect().width,
+          style: element.getAttribute('style'),
+          classes: element.className,
+          viewport: innerWidth,
+          pixelRatio: devicePixelRatio
+        }))
+        throw new Error(
+          `Browser resize expected ${initialWidth + 83}, got ${JSON.stringify(actual)}`,
+          { cause }
+        )
+      }
       const embedded = await application.evaluate(({ BrowserWindow }) => {
         const main = BrowserWindow.getAllWindows().find((window) =>
           window.webContents.getURL().includes('/out/renderer/')

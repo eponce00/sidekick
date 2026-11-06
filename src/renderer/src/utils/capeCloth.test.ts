@@ -30,12 +30,14 @@ describe('cape cloth', () => {
     const cloth = new CapeCloth()
     for (let i = 0; i < 120; i += 1) {
       cloth.step(1 / 60, i < 40 ? 1 : 0)
-      const { cape, folds } = cloth.paths()
-      for (const d of [cape, folds]) {
+      const { cape, folds, emblem } = cloth.paths()
+      for (const d of [cape, folds, emblem.shield]) {
         expect(d).toMatch(/^M-?\d/)
         expect(d.endsWith('Z')).toBe(true)
         expect(d).not.toMatch(/NaN|Infinity/)
       }
+      expect(emblem.mark).not.toMatch(/NaN|Infinity/)
+      expect(emblem.mark.match(/M/g)).toHaveLength(2)
     }
   })
 })

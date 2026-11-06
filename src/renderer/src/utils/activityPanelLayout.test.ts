@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   ACTIVITY_PANEL_MIN_WIDTH,
   ACTIVITY_PANEL_NARROW_WIDTH,
-  activityPanelDragZone,
   activityPanelMaximumWidth,
   activityPanelSnapWidths,
   clampActivityPanelWidth,
@@ -48,13 +47,6 @@ describe('activity panel layout', () => {
 })
 
 describe('dragging the inspector edge', () => {
-  it('folds when let go nearly shut, and takes the window when dragged well past the chat', () => {
-    expect(activityPanelDragZone(150, 900)).toBe('fold')
-    expect(activityPanelDragZone(320, 900)).toBe('side')
-    expect(activityPanelDragZone(930, 900)).toBe('side')
-    expect(activityPanelDragZone(960, 900)).toBe('full')
-  })
-
   it('snaps to the narrow column and an even split with the chat', () => {
     const snaps = activityPanelSnapWidths({
       viewportWidth: 1_448,
@@ -62,13 +54,15 @@ describe('dragging the inspector edge', () => {
       sideBySideMax: 1_080
     })
     expect(snaps).toEqual([ACTIVITY_PANEL_NARROW_WIDTH, 700])
-    expect(snapActivityPanelWidth(350, snaps)).toBe(320)
-    expect(snapActivityPanelWidth(680, snaps)).toBe(700)
+    expect(snapActivityPanelWidth(330, snaps)).toBe(320)
+    expect(snapActivityPanelWidth(692, snaps)).toBe(700)
+    expect(snapActivityPanelWidth(350, snaps)).toBe(350)
+    expect(snapActivityPanelWidth(680, snaps)).toBe(680)
     expect(snapActivityPanelWidth(500, snaps)).toBe(500)
-    // A small window leaves no room for a split distinct from the narrow column.
+    // A compact window still offers an even split distinct from the narrow column.
     expect(
       activityPanelSnapWidths({ viewportWidth: 800, sidebarWidth: 48, sideBySideMax: 432 })
-    ).toEqual([ACTIVITY_PANEL_NARROW_WIDTH])
+    ).toEqual([ACTIVITY_PANEL_NARROW_WIDTH, 376])
   })
 })
 

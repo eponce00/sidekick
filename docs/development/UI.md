@@ -72,7 +72,7 @@ Type and shape stay on fixed scales rather than ad-hoc values:
 
 SideKick is a superhero's robot sidekick: a helmet in the tile's continuous-corner shape, a glass
 visor cut like a domino mask with pointed tips, pixel LED eyes, an antenna, an ear module, and a red
-cape fastened with a badge that carries a prompt chevron, flying in from the side of its tile.
+cape carrying a shield with a terminal prompt (`>_`), flying in from the side of its tile.
 Surfaces, text, and borders are pure greys with no hue, so the interface stays quiet and colour
 means something. Accents are soft: the default Blue (`#86AEE8`, deepening to `#2850B8` in light
 themes so it reads as text), with the other palettes in Settings, among them Lime, the icon's LED
@@ -83,7 +83,7 @@ palette's full-brightness shade, so it stays the one bright thing on screen.
   small cut for 16 to 32 px, and the peeking robot on an empty chat. Change the drawing there and
   run it; never edit the generated files. The cape is one piece of fabric with a softly waving hem
   and two creases, as the app's moving cape draws it. The small cut keeps a plain cape but leaves
-  out the creases, the badge and the mask's tips, which are noise at 16 px.
+  out the creases, the shield and the mask's tips, which are noise at 16 px.
 - Semantic colours stay clear of the accent's hue so a working dot is never mistaken for a warning
   or a failure at 6 px: warnings are orange rather than yellow, and errors are rose.
 - The robot appears where it adds character and no information: the icon, the title bar, the
@@ -91,7 +91,9 @@ palette's full-brightness shade, so it stays the one bright thing on screen.
   and then. It is decoration, hidden from screen readers.
 - On an empty chat its cape is cloth (`utils/capeCloth.ts`): a Verlet-integrated chain from the
   neck to the hem, with one piece of fabric drawn around it, so it folds wherever it bends, its
-  creases deepen with the bend, and it shades toward the neck. Gravity drapes it, a light breeze
+  creases deepen with the bend, and it shades toward the neck. Its shield is printed on the cloth:
+  the emblem and both prompt strokes follow the same surface as the fabric, under its creases.
+  Gravity drapes it, a light breeze
   sways it, a gust now and then streams it back with ripples running down it, the pointer pushes
   the cloth where it brushes through, and a click flicks it up. Streaks
   (`utils/windStreaks.ts`) sweep past behind the robot while the wind blows, with a burst as a gust

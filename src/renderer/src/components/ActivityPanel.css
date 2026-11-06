@@ -16,77 +16,16 @@
   border-left: 1px solid var(--rail-border);
 }
 
-/* Let go of its edge, it settles where the phantom showed with a slight overshoot. */
+/* Opening, folding, and explicit size changes settle with a slight overshoot. */
 .activity-panel.is-gliding {
   transition:
     width var(--duration-glide) var(--ease-spring),
     min-width var(--duration-glide) var(--ease-spring);
 }
 
-/* Dragged nearly shut, its content dims to show it will fold away when let go. */
-.activity-panel > .activity-content {
-  transition: opacity var(--duration-normal) var(--ease-out);
-}
-
-.activity-panel[data-landing='fold'].is-pinned > .activity-content {
-  opacity: 0.35;
-}
-
-/* Where the panel will land while its edge is dragged. Only this moves with the pointer; it
-   eases onto a snap width, the rail or the whole window with a little spring. */
-.activity-panel-phantom {
-  position: fixed;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  background: var(--accent-subtle);
-  backdrop-filter: saturate(0.7);
-  opacity: 0;
-  pointer-events: none;
-  will-change: width;
-  transition:
-    width 90ms var(--ease-out),
-    background-color var(--duration-normal) var(--ease-out),
-    opacity var(--duration-fast) ease;
-}
-
-.activity-panel-phantom[data-shown] {
-  opacity: 1;
-}
-
-.activity-panel-phantom:not([data-landing='free']) {
-  background: var(--accent-muted);
-  transition:
-    width 320ms var(--ease-spring),
-    background-color var(--duration-normal) var(--ease-out),
-    opacity var(--duration-fast) ease;
-}
-
-.activity-panel-phantom-edge {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 2px;
-  background: var(--accent);
-}
-
-/* What letting go will do: fold to the rail, take the window, or sit at a snap width. */
-.activity-panel-phantom-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  flex-shrink: 0;
-  border: 1px solid var(--panel-border);
-  border-radius: var(--radius-full);
-  background: var(--surface-2);
-  box-shadow: var(--shadow-md);
-  color: var(--text-primary);
-  animation: motion-fade-in var(--duration-fast) var(--ease-out);
+/* The actual panel follows the pointer, with no animation lag. */
+.activity-panel.is-resizing {
+  transition: none;
 }
 
 /* Its content is laid out at the width the panel is heading for, so opening or resizing reveals

@@ -35,15 +35,24 @@ describe('SidekickPeek', () => {
     await act(async () => root.render(<SidekickPeek />))
     const drawn = capeOutline()
     const cape = container.querySelector('.peek-cape')
+    const emblem = container.querySelector('.peek-emblem')!
+    const emblemDrawing = emblem.getAttribute('d')
+    expect(container.querySelector('.peek-badge')).toBeNull()
+    expect(emblem.closest('.peek-cape-rig')).not.toBeNull()
     await frames(2)
     const moving = capeOutline()
     expect(moving).not.toBe(drawn)
+    expect(emblem.getAttribute('d')).not.toBe(emblemDrawing)
+    expect(
+      container.querySelector('.peek-emblem-mark')!.getAttribute('d')!.match(/M/g)
+    ).toHaveLength(2)
     await act(async () => container.querySelector<HTMLButtonElement>('.sidekick-peek')!.click())
     await frames(4)
     expect(capeOutline()).not.toBe(moving)
     expect(capeOutline()).not.toMatch(/NaN/)
     // Its reaction re-renders the button without redrawing the robot, so the cloth stays put.
     expect(container.querySelector('.peek-cape')).toBe(cape)
+    expect(container.querySelector('.peek-emblem')).toBe(emblem)
   })
 
   it('leaves the cape as drawn when motion is reduced', async () => {

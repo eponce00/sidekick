@@ -19,10 +19,8 @@ export function defaultActivityPanelWidth(viewportWidth: number): number {
 }
 /** Let go narrower than this, the inspector folds to its rail of tabs. */
 export const ACTIVITY_PANEL_FOLD_WIDTH = 200
-/** Dragged this far past the widest it fits beside the chat, it takes the whole window. */
-export const ACTIVITY_PANEL_FULL_PULL = 48
 /** This close to a snap width, the dragged edge settles on it. */
-export const ACTIVITY_PANEL_SNAP_DISTANCE = 48
+export const ACTIVITY_PANEL_SNAP_DISTANCE = 12
 
 /**
  * The inspector beside the chat at a width the user drags it to, or across the whole window
@@ -72,19 +70,6 @@ export function storedActivityPanelWidth(
     return clampActivityPanelWidth(ACTIVITY_PANEL_NARROW_WIDTH, viewportWidth)
   const width = value === null ? NaN : Number(value)
   return Number.isFinite(width) ? clampActivityPanelWidth(width, viewportWidth) : null
-}
-
-/**
- * Where a dragged edge is heading: folded to the rail, beside the chat, or across the whole
- * window. `width` is where the pointer puts the edge, before any limit; `sideBySideMax` is the
- * widest the inspector fits beside the chat.
- */
-export type ActivityPanelDragZone = 'fold' | 'side' | 'full'
-
-export function activityPanelDragZone(width: number, sideBySideMax: number): ActivityPanelDragZone {
-  if (width < ACTIVITY_PANEL_FOLD_WIDTH) return 'fold'
-  if (width > sideBySideMax + ACTIVITY_PANEL_FULL_PULL) return 'full'
-  return 'side'
 }
 
 /**
