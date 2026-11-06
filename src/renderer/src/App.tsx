@@ -317,8 +317,7 @@ function App(): React.JSX.Element {
     : panelSize === 'full'
       ? layout.panelMaxWidth
       : Math.min(panelWidth, layout.panelMaxWidth)
-  // The widest the inspector fits beside the chat, with the sidebar folded for it: dragged well
-  // past this, it takes the whole window.
+  // Dragging stops at the widest the inspector fits beside the chat, with the sidebar folded.
   const panelSideBySideMax = workspaceLayout({
     viewportWidth,
     sidebarCollapsed: isSidebarCollapsed,

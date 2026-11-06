@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { PanelRightClose, Plus, X } from 'lucide-react'
+import { Maximize2, Minimize2, PanelRightClose, Plus, X } from 'lucide-react'
 import {
   canSplit,
   chooseApp,
@@ -48,6 +48,8 @@ export function PanelSections({
   onChange,
   renderApp,
   onFold,
+  expanded = false,
+  onToggleExpand,
   onTearOut,
   elsewhere = {},
   arriving = null
@@ -59,6 +61,9 @@ export function PanelSections({
   renderApp: (kind: PanelApp, active: boolean) => React.ReactNode
   /** Folds the panel to its rail, from a button at the end of the first strip. */
   onFold?: () => void
+  /** Full-window mode is an explicit choice; dragging keeps the chat beside the panel. */
+  expanded?: boolean
+  onToggleExpand?: () => void
   /** A tab let go outside the window: it opens in a window of its own. */
   onTearOut?: (app: PanelApp, screen: { x: number; y: number }) => void
   /** Apps open in windows of their own, each with how to bring its window forward. */
@@ -256,7 +261,20 @@ export function PanelSections({
                 >
                   <Plus size={15} />
                 </button>
-                {index === 0 && onFold && <span className="panel-tabs-spacer" />}
+                {index === 0 && (onFold || onToggleExpand) && (
+                  <span className="panel-tabs-spacer" />
+                )}
+                {index === 0 && onToggleExpand && (
+                  <button
+                    type="button"
+                    className="panel-fold"
+                    onClick={onToggleExpand}
+                    title={expanded ? 'Restore panel beside chat' : 'Expand panel'}
+                    aria-label={expanded ? 'Restore panel beside chat' : 'Expand panel'}
+                  >
+                    {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+                  </button>
+                )}
                 {index === 0 && onFold && (
                   <button
                     type="button"
