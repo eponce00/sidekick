@@ -58,11 +58,11 @@
 
 .sidekick-peek .peek-led,
 .sidekick-peek .peek-eye,
-.sidekick-peek .peek-badge {
+.sidekick-peek .peek-emblem {
   fill: var(--brand-led);
 }
 
-.sidekick-peek .peek-badge-mark {
+.sidekick-peek .peek-emblem-mark {
   stroke: var(--brand-visor);
 }
 
@@ -110,8 +110,8 @@
 
 .sidekick-peek.is-wink .peek-led,
 .sidekick-peek.is-happy .peek-led,
-.sidekick-peek.is-wink .peek-badge,
-.sidekick-peek.is-happy .peek-badge {
+.sidekick-peek.is-wink .peek-emblem,
+.sidekick-peek.is-happy .peek-emblem {
   animation: sidekick-peek-flash 600ms ease-out;
 }
 

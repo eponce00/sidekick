@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.27.6 — 2026-11-05
+
+- Replace the round badge under SideKick's face with a larger, centred shield printed on its
+  cape, carrying a terminal prompt (`>_`). The shield follows the fabric's movement, perspective,
+  and creases; the static drawing and app icons use the same emblem.
+- Resize the browser and workspace panel continuously, keeping intermediate widths and space for
+  the chat. Dragging no longer unexpectedly expands the panel across the window. Use **Expand
+  panel** and **Restore panel beside chat** to switch deliberately, keeping your chosen width.
+
 ## 0.27.5 — 2026-11-05
 
 - Stop squeezing games and other canvas drawings into a 300px-high chart box. Responsive game

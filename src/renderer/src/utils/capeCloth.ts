@@ -9,6 +9,8 @@
  *
  * Coordinates are the drawing's own (the cape group's), y pointing down.
  */
+import { capeEmblemPaths } from '../../../shared/capeEmblem'
+
 export interface Point {
   x: number
   y: number
@@ -253,7 +255,12 @@ export class CapeCloth {
    * deepen with the bend. `shade` runs from the neck to the hem, for shading that darkens toward
    * the head.
    */
-  paths(): { cape: string; folds: string; shade: { from: Point; to: Point } } {
+  paths(): {
+    cape: string
+    folds: string
+    emblem: ReturnType<typeof capeEmblemPaths>
+    shade: { from: Point; to: Point }
+  } {
     const upper: Point[] = []
     const lower: Point[] = []
     const across: Point[] = []
@@ -324,6 +331,15 @@ export class CapeCloth {
     return {
       cape,
       folds,
+      emblem: capeEmblemPaths((position) => {
+        const at = Math.max(0, Math.min(SEGMENTS - 0.001, position * SEGMENTS))
+        const index = Math.floor(at)
+        const a = this.chain[index]
+        const b = this.chain[index + 1]
+        const length = Math.hypot(b.x - a.x, b.y - a.y) || 1
+        const point = mix(a, b, at - index)
+        return { ...point, tx: (b.x - a.x) / length, ty: (b.y - a.y) / length }
+      }),
       shade: { from: { x: this.chain[0].x, y: this.chain[0].y }, to: { x: end.x, y: end.y } }
     }
   }

@@ -140,10 +140,13 @@ export function SidekickPeek(): React.JSX.Element {
     const element = ref.current
     const cape = element?.querySelector<SVGPathElement>('.peek-cape')
     const lining = element?.querySelector<SVGPathElement>('.peek-cape-lining')
+    const emblem = element?.querySelector<SVGPathElement>('.peek-emblem')
+    const mark = element?.querySelector<SVGPathElement>('.peek-emblem-mark')
+    const emblemShade = element?.querySelector<SVGPathElement>('.peek-emblem-shade')
     // Only reduced motion stops it for good. A hidden window just pauses it: the browser holds
     // animation frames back until the window is seen again, so the robot can appear while SideKick
     // is in the tray and its cape still moves once it is shown.
-    if (!element || !cape || !lining || prefersReducedMotion()) return undefined
+    if (!element || !cape || !lining || !emblem || !mark || prefersReducedMotion()) return undefined
     const cloth = new CapeCloth()
     const air = new WindStreaks()
     const dressing = dressCape(cape, lining)
@@ -163,6 +166,9 @@ export function SidekickPeek(): React.JSX.Element {
       cape.setAttribute('d', paths.cape)
       // The lining's path now carries the creases where the cloth folds.
       lining.setAttribute('d', paths.folds)
+      emblem.setAttribute('d', paths.emblem.shield)
+      mark.setAttribute('d', paths.emblem.mark)
+      emblemShade?.setAttribute('d', paths.emblem.shield)
       dressing.shade.setAttribute('x1', paths.shade.from.x.toFixed(1))
       dressing.shade.setAttribute('y1', paths.shade.from.y.toFixed(1))
       dressing.shade.setAttribute('x2', paths.shade.to.x.toFixed(1))

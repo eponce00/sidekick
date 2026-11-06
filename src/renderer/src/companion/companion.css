@@ -366,11 +366,11 @@ body {
 
 .cp-robot .peek-led,
 .cp-robot .peek-eye,
-.cp-robot .peek-badge {
+.cp-robot .peek-emblem {
   fill: var(--brand-led);
 }
 
-.cp-robot .peek-badge-mark {
+.cp-robot .peek-emblem-mark {
   stroke: var(--brand-visor);
 }
 

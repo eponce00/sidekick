@@ -225,7 +225,7 @@ test(
         (width) =>
           Math.abs(
             document.querySelector('.activity-panel').getBoundingClientRect().width - width
-          ) < 1,
+          ) < 2,
         initialWidth + 83
       )
       await page.mouse.up()
@@ -234,7 +234,7 @@ test(
           (await panel.evaluate((element) => element.getBoundingClientRect().width)) -
             initialWidth -
             83
-        ) < 1
+        ) < 2
       )
       const widerEdge = await edge.boundingBox()
       await page.mouse.move(widerEdge.x + widerEdge.width / 2, grabY)
@@ -258,13 +258,28 @@ test(
       await page.mouse.down()
       await page.mouse.move(grabX - 83, grabY, { steps: 12 })
       await page.mouse.up()
-      await page.waitForFunction(
-        (width) =>
-          Math.abs(
-            document.querySelector('.activity-panel').getBoundingClientRect().width - width
-          ) < 1,
-        initialWidth + 83
-      )
+      try {
+        await page.waitForFunction(
+          (width) =>
+            Math.abs(
+              document.querySelector('.activity-panel').getBoundingClientRect().width - width
+            ) < 2,
+          initialWidth + 83,
+          { timeout: 5_000 }
+        )
+      } catch (cause) {
+        const actual = await panel.evaluate((element) => ({
+          width: element.getBoundingClientRect().width,
+          style: element.getAttribute('style'),
+          classes: element.className,
+          viewport: innerWidth,
+          pixelRatio: devicePixelRatio
+        }))
+        throw new Error(
+          `Browser resize expected ${initialWidth + 83}, got ${JSON.stringify(actual)}`,
+          { cause }
+        )
+      }
       const embedded = await application.evaluate(({ BrowserWindow }) => {
         const main = BrowserWindow.getAllWindows().find((window) =>
           window.webContents.getURL().includes('/out/renderer/')

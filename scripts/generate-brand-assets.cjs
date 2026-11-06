@@ -7,6 +7,7 @@
 // Run after changing the robot: node scripts/generate-brand-assets.cjs
 const { mkdirSync, writeFileSync } = require('node:fs')
 const path = require('node:path')
+const { CAPE_EMBLEM_STROKE, capeEmblemPaths } = require('../src/shared/capeEmblem.ts')
 
 const root = path.resolve(__dirname, '..')
 
@@ -107,7 +108,7 @@ function visorPath() {
 
 /**
  * The robot flying in from the right edge of its tile, a superhero's sidekick: a cape, a domino
- * mask with pointed tips, and a badge with a prompt chevron where the cape fastens. `small` is the
+ * mask with pointed tips, and a console shield printed on its cape. `small` is the
  * cut for 16-32 px: a bigger head, bolder eyes, a shorter antenna and no visor glint, so it still
  * reads as a robot when every part is a few pixels. `glyph` drops the tile and cuts the head with
  * a straight edge, for the app's own surfaces; its parts carry classes so CSS can theme and
@@ -146,7 +147,23 @@ function robot({ small = false, glyph = false } = {}) {
     `<path${part('cape')} d="${scalePath(CAPE, sx, sy)}" fill="${shaded ? 'url(#sidekick-cape-shade)' : COLORS.cape}"/>`
   )
   if (!small) {
+    const length = Math.hypot(435, 180)
+    const emblem = capeEmblemPaths((position) => ({
+      x: -112 - 435 * position,
+      y: 196 - 180 * position,
+      tx: -435 / length,
+      ty: -180 / length
+    }))
     parts.push(
+      `<linearGradient id="sidekick-emblem-shade">` +
+        `<stop offset="0" stop-color="${COLORS.visor}" stop-opacity="0.18"/>` +
+        `<stop offset="0.27" stop-color="${COLORS.visor}" stop-opacity="0"/>` +
+        `<stop offset="0.55" stop-color="${COLORS.visor}" stop-opacity="0"/>` +
+        `<stop offset="0.76" stop-color="${COLORS.visor}" stop-opacity="0.3"/>` +
+        `<stop offset="1" stop-color="${COLORS.visor}" stop-opacity="0.06"/></linearGradient>`,
+      `<path${part('emblem')} d="${scalePath(emblem.shield, sx, sy)}" fill="${COLORS.led}"/>`,
+      `<path${part('emblem-mark')} d="${scalePath(emblem.mark, sx, sy)}" fill="none" stroke="${COLORS.visor}" stroke-width="${CAPE_EMBLEM_STROKE}" stroke-linecap="round" stroke-linejoin="round"/>`,
+      `<path${part('emblem-shade')} d="${scalePath(emblem.shield, sx, sy)}" fill="url(#sidekick-emblem-shade)"/>`,
       `<path${part('cape-lining')} d="${scalePath(CAPE_FOLDS, sx, sy)}" fill="${COLORS.capeLining}" opacity="0.55"/>`
     )
   }
@@ -158,17 +175,6 @@ function robot({ small = false, glyph = false } = {}) {
     `<rect${part('shade')} x="${cx - rx - 46}" y="${cy - 80}" width="70" height="160" rx="32" fill="${COLORS.shade}"/>`,
     `<path${part('helmet')} d="${superellipse(cx, cy, rx, ry, 4.2)}" fill="${COLORS.helmet}"/>`
   )
-  // The badge where the cape fastens, a prompt chevron for the hero's emblem, and the domino
-  // mask's pointed tips. Both are detail the small cut leaves out: at 16 px they are noise.
-  const bx = round(cx - 40 * sx)
-  const by = round(cy + 214 * sy)
-  const br = 50
-  if (!small) {
-    parts.push(
-      `<circle${part('badge')} cx="${bx}" cy="${by}" r="${br}" fill="${COLORS.led}"/>`,
-      `<path${part('badge-mark')} d="M${round(bx - br * 0.3)} ${round(by - br * 0.42)} L${round(bx + br * 0.22)} ${by} L${round(bx - br * 0.3)} ${round(by + br * 0.42)}" fill="none" stroke="${COLORS.visor}" stroke-width="${round(br * 0.28)}" stroke-linecap="round" stroke-linejoin="round"/>`
-    )
-  }
   parts.push(
     `<g transform="translate(${cx - 24} ${cy - 8})">`,
     `<path${part('visor')} d="${visorPath()}" fill="${COLORS.visor}"/>`
