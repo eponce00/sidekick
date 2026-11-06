@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.27.7 — 2026-11-05
+
+- Publish a fresh maintenance build containing all completed fixes through 0.27.6: the console
+  shield on SideKick's cape, continuous browser-panel resizing, proportional game canvases,
+  sidebar spacing, visible pins, and native typography. There are no additional product changes
+  since 0.27.6.
+
 ## 0.27.6 — 2026-11-05
 
 - Replace the round badge under SideKick's face with a larger, centred shield printed on its
