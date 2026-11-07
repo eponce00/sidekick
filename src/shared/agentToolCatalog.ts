@@ -1123,7 +1123,7 @@ const browserClick = definition(
 
 const browserHold = definition(
   'browser_hold',
-  'Press and hold a control, or drag it to to_x and to_y, using real mouse events. For sliders, maps, canvases and the like. Start from a ref when there is one: small handles are easy to miss by eye. Never use it for CAPTCHA, anti-bot, or human-verification challenges; call browser_request_human instead.',
+  "Press and hold a control, or drag it to to_x and to_y, using real mouse events. For sliders, maps, canvases and the like. Start from a ref when there is one: small handles are easy to miss by eye. For a same-document CAPTCHA or human-verification control, one attempt aimed at the challenge control itself is allowed (see the observation's humanVerification.attemptAllowed); if it does not clear the check, use another source or browser_request_human rather than trying again.",
   {
     type: 'object',
     anyOf: [
@@ -1159,7 +1159,7 @@ const browserHold = definition(
 
 const browserRequestHuman = definition(
   'browser_request_human',
-  'Last resort when a CAPTCHA, anti-bot checkpoint, login confirmation, or another human-only step blocks the one page that can finish the task. First use another legitimate source if there is one, such as another search engine or site. SideKick shows the page to the user, in the Browser panel or Chrome, and waits, with the same cookies, DOM state, and history, until the check is gone, then returns so you observe the page and continue. Never try to complete the check yourself.',
+  'Last resort when a CAPTCHA, anti-bot checkpoint, login confirmation, or another human-only step blocks the one page that can finish the task. You get one automated try at a challenge control first; use this once that try has been made and failed, or when there is no clickable control to aim at, or after you have weighed another legitimate source (such as another search engine or site) and none fits. SideKick shows the page to the user, in the Browser panel or Chrome, and waits, with the same cookies, DOM state, and history, until the check is gone, then returns so you observe the page and continue.',
   {
     type: 'object',
     required: ['reason'],

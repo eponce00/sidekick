@@ -43,8 +43,10 @@ WebContents IDs are never accepted. Browser content has no SideKick preload or N
 Manual input claims a conversation-scoped user-control flag when an agent action is not executing.
 The active action completes atomically; new agent browser actions wait while the user edits.
 Programmatic tool gestures are marked separately so they do not count as the user's input.
-Resuming invalidates semantic refs. A human check is cleared the same way: `browser_request_human`
-holds the session, marks the run `awaiting_user`, opens the panel on the page, and polls until the
+Resuming invalidates semantic refs. A human check follows the same path: a detected challenge allows
+exactly one agent pointer action aimed at its own widget, with humanoid pointer motion, before any
+further input is refused. Only after that, `browser_request_human` holds the session, marks the run
+`awaiting_user`, opens the panel on the page, and polls until the
 check is gone, with no card. Useful pages remain available across turns.
 
 ## Annotations

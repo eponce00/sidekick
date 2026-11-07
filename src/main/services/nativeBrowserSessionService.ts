@@ -187,6 +187,34 @@ export interface BrowserHumanVerification {
   kind: 'captcha_or_bot_challenge'
   message: string
   detectedBy: 'accessibility' | 'page_title' | 'dom_marker'
+  /**
+   * Whether the agent still has its one automated attempt on the challenge's own control. True
+   * only while a clickable challenge widget is on the page and no attempt has been spent on this
+   * same challenge; once it is spent, the site rests and the path is the human's.
+   */
+  attemptAllowed?: boolean
+}
+
+/**
+ * The single challenge widget the agent is allowed to point its one attempt at: a visible checkbox,
+ * or a known provider container whose verify control renders at its left edge. Text-only interstitials
+ * and image grids have no such box, so they are never offered an attempt.
+ */
+interface ChallengeWidget {
+  kind: 'recaptcha' | 'hcaptcha' | 'turnstile' | 'checkbox'
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** A detected challenge plus what the one-attempt policy needs to know about it. */
+interface ChallengeDetection {
+  verification: BrowserHumanVerification
+  /** The clickable widget box, or null when there is nothing the agent may safely aim at. */
+  widget: ChallengeWidget | null
+  /** Stable identity of this challenge (host + widget kind); the attempt budget is keyed on it. */
+  signature: string | null
 }
 
 export interface BrowserNetworkFailure {
@@ -939,6 +967,12 @@ interface TabState {
   stuckAt?: number
   /** Scripts run since the last action on the page. */
   scriptsInARow?: number
+  /**
+   * Identity of the challenge the agent has already spent its one automated attempt on, so a second
+   * input on the same challenge is refused and only the human clears it. Cleared when the challenge
+   * is gone, so a later one, or the same kind after the user solved it, gets a fresh attempt.
+   */
+  challengeAttempted?: string
   lastViewportScreenshot?: {
     id: string
     imageWidth: number
@@ -1102,10 +1136,16 @@ const HUMAN_VERIFICATION_TITLE_PATTERNS: readonly RegExp[] = [
   /^access\s+denied\b/i
 ]
 
+type ChallengeRefusal = 'aim-at-control' | 'already-attempted' | 'no-control'
+
 class BrowserHumanVerificationError extends Error {
-  constructor() {
+  constructor(reason: ChallengeRefusal) {
     super(
-      'Human verification required. Keep this browser session open and call browser_request_human so the user can take over safely.'
+      reason === 'already-attempted'
+        ? 'This site asked for human verification and the single automated attempt on its control did not clear it. Use another legitimate source; if this page is the only way, call browser_request_human so the user clears it in the Browser panel.'
+        : reason === 'no-control'
+          ? 'This site asked for human verification, but it shows no clickable control to safely try (a plain block page or an image puzzle). Do not keep trying; use another legitimate source, or if this page is the only way, call browser_request_human so the user clears it.'
+          : 'This site asked for human verification. Make one browser_click or browser_hold aimed exactly at the challenge control (its checkbox or widget); this is your only automated try. If it does not clear the check, or there is no such control, use another source or call browser_request_human.'
     )
     this.name = 'BrowserHumanVerificationError'
   }
@@ -3592,17 +3632,53 @@ export class NativeBrowserSessionService {
     }
   }
 
+  /**
+   * The observation-facing detector: the challenge, if any, plus whether the agent still has its one
+   * automated attempt on it. It never rests the site or spends the budget; only the action gate does.
+   */
   private async detectHumanVerification(
     tab: TabState,
     semanticSnapshot: string | undefined,
     signal?: AbortSignal
   ): Promise<BrowserHumanVerification | null> {
+    const found = await this.detectChallenge(tab, semanticSnapshot, signal)
+    if (!found) {
+      // The page shows no challenge, so any spent attempt is stale: a later one, or the same kind
+      // the user has cleared, gets a fresh attempt.
+      tab.challengeAttempted = undefined
+      return null
+    }
+    const attemptAllowed =
+      Boolean(found.widget) &&
+      found.signature !== null &&
+      tab.challengeAttempted !== found.signature
+    return { ...found.verification, attemptAllowed }
+  }
+
+  /**
+   * The challenge on the page plus the one clickable widget the agent may aim its single attempt at.
+   * The provider widgets whose box we can name (reCAPTCHA/hCaptcha/Turnstile and a labeled
+   * challenge checkbox) report a box; a text-only interstitial or image grid does not, so it is
+   * never offered an attempt. This is the shared probe the gate and the observation both use, and it
+   * changes no tab state.
+   */
+  private async detectChallenge(
+    tab: TabState,
+    semanticSnapshot: string | undefined,
+    signal?: AbortSignal
+  ): Promise<ChallengeDetection | null> {
     const domState = await abortable(
       tab.surface
         .executeJavaScript<{
           pageText: string
           unresolvedMarker: boolean
           solvedKnownWidget: boolean
+          widgetBoxes?: Array<
+            | { kind: 'recaptcha'; x: number; y: number; width: number; height: number }
+            | { kind: 'hcaptcha'; x: number; y: number; width: number; height: number }
+            | { kind: 'turnstile'; x: number; y: number; width: number; height: number }
+            | { kind: 'checkbox'; x: number; y: number; width: number; height: number }
+          >
         }>(
           `(() => {
           const visible = node => {
@@ -3636,14 +3712,21 @@ export class NativeBrowserSessionService {
           });
           const checkboxSolved = node => node.matches(':checked') || node.getAttribute('aria-checked') === 'true';
           const solvedCheckbox = challengeCheckboxes.some(checkboxSolved);
-          const unresolvedCheckbox = challengeCheckboxes.some(node => !checkboxSolved(node) && visible(node));
+          const unresolvedCheckboxes = challengeCheckboxes.filter(node => !checkboxSolved(node) && visible(node));
           const recaptchaSolved = responseCount(['textarea[name="g-recaptcha-response"]', 'input[name="g-recaptcha-response"]']);
           const hcaptchaSolved = responseCount(['textarea[name="h-captcha-response"]', 'input[name="h-captcha-response"]']);
           const turnstileSolved = responseCount(['input[name="cf-turnstile-response"]', 'textarea[name="cf-turnstile-response"]']);
+          const boxOf = node => { const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
           const widgetCount = (containerSelector, iframeSelectors) => {
             const containers = visibleNodes([containerSelector]).length;
             if (containers) return containers;
             return visibleNodes(iframeSelectors).length > 0 ? 1 : 0;
+          };
+          // The first still-asked box of a kind, to aim one attempt at. A provider container holds the
+          // clickable verify control at its left edge, so its box is a safe aim target for clickInFrame.
+          const firstBox = (kind, containerSelector, iframeSelectors) => {
+            const node = visibleNodes([containerSelector])[0] || visibleNodes(iframeSelectors)[0];
+            return node ? { kind, ...boxOf(node) } : undefined;
           };
           const recaptchaVisible = widgetCount('.g-recaptcha', ['iframe[src*="recaptcha"]']);
           const hcaptchaVisible = widgetCount('.h-captcha', ['iframe[src*="hcaptcha"]']);
@@ -3656,14 +3739,29 @@ export class NativeBrowserSessionService {
             !/recaptcha|hcaptcha|challenges\\.cloudflare\\.com/i.test(node.getAttribute('src') || '')
           );
           const solvedKnownWidget = solvedCheckbox || recaptchaSolved > 0 || hcaptchaSolved > 0 || turnstileSolved > 0;
+          const widgetBoxes = [];
+          if (turnstileVisible > turnstileSolved) {
+            const b = firstBox('turnstile', '.cf-turnstile', ['iframe[src*="challenges.cloudflare.com"]']);
+            if (b) widgetBoxes.push(b);
+          }
+          if (recaptchaVisible > recaptchaSolved) {
+            const b = firstBox('recaptcha', '.g-recaptcha', ['iframe[src*="recaptcha"]']);
+            if (b) widgetBoxes.push(b);
+          }
+          if (hcaptchaVisible > hcaptchaSolved) {
+            const b = firstBox('hcaptcha', '.h-captcha', ['iframe[src*="hcaptcha"]']);
+            if (b) widgetBoxes.push(b);
+          }
+          if (unresolvedCheckboxes.length) widgetBoxes.push({ kind: 'checkbox', ...boxOf(unresolvedCheckboxes[0]) });
           return {
             pageText: (document.body?.innerText || '').slice(0, 32768),
             solvedKnownWidget,
+            widgetBoxes,
             unresolvedMarker:
               recaptchaVisible > recaptchaSolved ||
               hcaptchaVisible > hcaptchaSolved ||
               turnstileVisible > turnstileSolved ||
-              unresolvedCheckbox ||
+              unresolvedCheckboxes.length > 0 ||
               opaqueChallengeVisible ||
               genericCaptchaVisible
           };
@@ -3672,29 +3770,68 @@ export class NativeBrowserSessionService {
         .catch(() => undefined),
       signal
     )
-    const found: BrowserHumanVerification | null = domState?.unresolvedMarker
-      ? {
+    const host = this.checkedSiteHost(tab.surface.getURL())
+    if (domState?.unresolvedMarker) {
+      const widget = this.pickChallengeWidget(domState.widgetBoxes)
+      return {
+        verification: {
           required: true,
           kind: 'captcha_or_bot_challenge',
           message:
             'This site requires a human verification step before browser automation can continue.',
           detectedBy: 'dom_marker'
-        }
-      : detectTextualHumanVerification(
-          tab.surface.getTitle(),
-          [semanticSnapshot, domState?.pageText].filter(Boolean).join('\n'),
-          domState?.solvedKnownWidget === true
-        )
-    if (found) this.rememberCheckedSite(tab)
-    return found
+        },
+        widget,
+        signature: widget && host ? `${host}|${widget.kind}` : null
+      }
+    }
+    const textual = detectTextualHumanVerification(
+      tab.surface.getTitle(),
+      [semanticSnapshot, domState?.pageText].filter(Boolean).join('\n'),
+      domState?.solvedKnownWidget === true
+    )
+    // A text-only interstitial has no widget the agent may aim at, so it is never attemptable.
+    return textual ? { verification: textual, widget: null, signature: null } : null
   }
 
-  private checkedSiteKey(session: { runId: string }, url: string): string | undefined {
+  /** The one box to aim the single attempt at: the topmost still-unanswered widget on the page. */
+  private pickChallengeWidget(
+    boxes:
+      | Array<{
+          kind: ChallengeWidget['kind']
+          x: number
+          y: number
+          width: number
+          height: number
+        }>
+      | undefined
+  ): ChallengeWidget | null {
+    if (!boxes?.length) return null
+    const usable = boxes.filter(
+      (box) =>
+        Number.isFinite(box.x) &&
+        Number.isFinite(box.y) &&
+        Number.isFinite(box.width) &&
+        Number.isFinite(box.height) &&
+        box.width > 1 &&
+        box.height > 1
+    )
+    if (!usable.length) return null
+    // The most prominent (largest) box is the one the page is actually asking about.
+    return usable.reduce((a, b) => (b.width * b.height > a.width * a.height ? b : a))
+  }
+
+  private checkedSiteHost(url: string): string | undefined {
     try {
-      return `${session.runId} ${new URL(url).hostname.replace(/^www\./, '')}`
+      return new URL(url).hostname.replace(/^www\./, '')
     } catch {
       return undefined
     }
+  }
+
+  private checkedSiteKey(session: { runId: string }, url: string): string | undefined {
+    const host = this.checkedSiteHost(url)
+    return host ? `${session.runId} ${host}` : undefined
   }
 
   private rememberCheckedSite(tab: TabState): void {
@@ -4761,9 +4898,9 @@ export class NativeBrowserSessionService {
       const fingerprint = canonicalFingerprint({ action: 'click', tabId: tab.id, input })
       this.guardRepeatedAction(tab, fingerprint)
       await this.ensureBaselineHash(session, tab, signal)
-      await this.assertAutomatedMutationAllowed(tab, signal)
       const target = await this.resolveTarget(tab, input.target, true, signal)
       const byPosition = target.mode === 'coordinates'
+      const { challengeAttempt } = await this.assertAutomatedMutationAllowed(tab, signal, target)
       const control =
         this.options.policy || byPosition ? await this.controlFacts(tab, target, signal) : undefined
       if (this.options.policy && control) {
@@ -4777,12 +4914,20 @@ export class NativeBrowserSessionService {
       const clickCount = input.clickCount ?? 1
       const pressed = byPosition && control?.name ? { pressed: control.name } : {}
       const urlBefore = tab.surface.getURL()
+      if (challengeAttempt) {
+        // A single, human-shaped attempt at the challenge's own control: travel to it, dwell, press.
+        await this.approachWidget(tab, target, signal)
+      }
       // The page can be busy with something else, which says nothing about this click. Its picture does,
       // taken with the pointer already there, as what's under a pointer often lights up by itself.
       // In Chrome a picture takes a second or more, so only for a click that's being tried again.
       let pictureBefore: string | undefined
       const tryingAgain = tab.actionHistory.at(-1)?.fingerprint === fingerprint
-      if (!session.quickAction && (session.lookAfterAction !== false || tryingAgain)) {
+      if (
+        !challengeAttempt &&
+        !session.quickAction &&
+        (session.lookAfterAction !== false || tryingAgain)
+      ) {
         tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
         await delay(HOVER_SETTLE_MS, signal)
         pictureBefore = await this.pictureHash(session, tab, signal)
@@ -4794,7 +4939,9 @@ export class NativeBrowserSessionService {
         }
       }
       const inFrame =
-        byPosition && tab.surface.clickInFrame && (await this.frameAtPoint(tab, target, signal))
+        (byPosition || challengeAttempt) &&
+        tab.surface.clickInFrame &&
+        (await this.frameAtPoint(tab, target, signal))
       const clicked = await this.catchingFileChooser(tab, async () => {
         if (inFrame) {
           await abortable(tab.surface.clickInFrame!(target, button, clickCount), signal)
@@ -4843,6 +4990,10 @@ export class NativeBrowserSessionService {
           NO_EFFECT_NOTE +
           (this.runtime.hasDialogsOfItsOwn && !tab.surface.attached ? WINDOW_LOOK_NOTE : '')
       }
+      // A challenge attempt that left the check on the page failed: rest the site so the agent
+      // doesn't navigate back into it, the behaviour the site's check punishes. A clear is left open.
+      if (challengeAttempt && seen.observation.humanVerification?.required)
+        this.rememberCheckedSite(tab)
       return { ...seen, ...pressed, ...(tab.actionNote ? { note: tab.actionNote } : {}) }
     })
   }
@@ -5080,8 +5231,8 @@ export class NativeBrowserSessionService {
       })
       this.guardRepeatedAction(tab, fingerprint)
       await this.ensureBaselineHash(session, tab, signal)
-      await this.assertAutomatedMutationAllowed(tab, signal)
       const target = await this.resolveTarget(tab, input.target, true, signal)
+      const { challengeAttempt } = await this.assertAutomatedMutationAllowed(tab, signal, target)
       // A drag from a ref still has its end on a picture, which can only be the latest one the agent saw.
       const end = input.dragTo
         ? await this.coordinatePoint(
@@ -5096,9 +5247,9 @@ export class NativeBrowserSessionService {
         await this.options.policy.beforePress(control.name, tab.surface.getURL(), signal)
         await this.checkWhatsAtThePoint(tab, target, control.name, signal)
       }
-      // Press-and-hold is useful for ordinary canvas, map, slider, and test UI.
-      // It is not an automated CAPTCHA solver; a detected anti-bot checkpoint
-      // stops automated input until the user clears it in the Browser panel.
+      // Press-and-hold suits ordinary canvas, map, slider and test UI, and one attempt at a
+      // same-document "press & hold to confirm you are human" widget. A cross-origin press-and-hold
+      // can't be held from here, so it spends the attempt and rests, leaving the path to the human.
       const startedAt = this.now()
       this.setPointer(tab, target, 'hold', startedAt)
       tab.surface.focus()
@@ -5117,7 +5268,11 @@ export class NativeBrowserSessionService {
           signal
         )
       }
-      tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
+      if (challengeAttempt) {
+        await this.approachWidget(tab, target, signal)
+      } else {
+        tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
+      }
       tab.surface.sendInputEvent({
         type: 'mouseDown',
         x: target.x,
@@ -5155,7 +5310,7 @@ export class NativeBrowserSessionService {
           })
         }
       }
-      return this.finishAction(
+      const held = await this.finishAction(
         session,
         tab,
         'hold',
@@ -5165,6 +5320,11 @@ export class NativeBrowserSessionService {
         startedAt,
         signal
       )
+      // A same-document press-and-hold that left the check on the page failed: rest the site.
+      if (challengeAttempt && held.observation.humanVerification?.required) {
+        this.rememberCheckedSite(tab)
+      }
+      return held
     })
   }
 
@@ -5234,13 +5394,46 @@ export class NativeBrowserSessionService {
     return facts.result.value ?? { name: '', submit: '', secret: false }
   }
 
-  private async assertAutomatedMutationAllowed(tab: TabState, signal?: AbortSignal): Promise<void> {
+  /**
+   * The one gate every page-changing path passes. With a challenge present, only a pointer action
+   * aimed exactly at the challenge's own widget is let through, and only once per challenge; a
+   * second action on the same challenge, or any action that isn't aimed at the widget, is refused.
+   * A pointer action that is allowed spends the attempt, so a later one on the same challenge fails.
+   * With no challenge the settle mark begins, as before. Returns whether this action is that single
+   * attempt, so the caller can move the pointer like a person and rest the site only if it fails.
+   */
+  private async assertAutomatedMutationAllowed(
+    tab: TabState,
+    signal?: AbortSignal,
+    target?: { x: number; y: number }
+  ): Promise<{ challengeAttempt: boolean }> {
     // This DOM/text probe is intentionally cheaper than another full CDP
     // accessibility snapshot. It gates every input/evaluation path, while the
     // post-action observation still produces the rich semantic state once.
-    const challenge = await this.detectHumanVerification(tab, undefined, signal)
-    if (challenge) throw new BrowserHumanVerificationError()
-    // Every action that changes the page passes here first, so this is where it begins.
+    const challenge = await this.detectChallenge(tab, undefined, signal)
+    if (challenge) {
+      const spent = challenge.signature != null && tab.challengeAttempted === challenge.signature
+      const spendable =
+        !spent &&
+        target != null &&
+        challenge.widget != null &&
+        challenge.signature != null &&
+        this.pointInsideWidget(target, challenge.widget)
+      if (!spendable) {
+        const reason: ChallengeRefusal = spent
+          ? 'already-attempted'
+          : challenge.widget
+            ? 'aim-at-control'
+            : 'no-control'
+        throw new BrowserHumanVerificationError(reason)
+      }
+      // Aimed at the widget for the first time: this action is the one attempt.
+      tab.challengeAttempted = challenge.signature ?? undefined
+    } else {
+      // The page shows no challenge, so any spent attempt is stale.
+      tab.challengeAttempted = undefined
+    }
+    // The action is allowed, so it may change the page: begin where its wait counts from.
     const at = this.now()
     const mark = await abortable(
       tab.surface.executeJavaScript<{ token?: unknown; id?: unknown }>(SETTLE_MARK_SCRIPT),
@@ -5253,6 +5446,48 @@ export class NativeBrowserSessionService {
       typeof mark?.token === 'string' && typeof mark.id === 'string'
         ? { token: mark.token, id: mark.id, at }
         : undefined
+    return { challengeAttempt: challenge != null }
+  }
+
+  /** Whether a point falls inside the challenge widget, plus a small margin for its own edge. */
+  private pointInsideWidget(point: { x: number; y: number }, widget: ChallengeWidget): boolean {
+    const pad = 4
+    return (
+      point.x >= widget.x - pad &&
+      point.x <= widget.x + widget.width + pad &&
+      point.y >= widget.y - pad &&
+      point.y <= widget.y + widget.height + pad
+    )
+  }
+
+  /**
+   * A pointer that travels to the widget rather than teleporting, so the one attempt on a bot check
+   * reads as a hand and not a script: several stepped moves from wherever the pointer last was, a
+   * brief dwell, then the caller's press. The moves and dwell stay inside a tight bound.
+   */
+  private async approachWidget(
+    tab: TabState,
+    target: { x: number; y: number },
+    signal?: AbortSignal
+  ): Promise<void> {
+    const from = tab.lastPointer
+      ? { x: tab.lastPointer.x, y: tab.lastPointer.y }
+      : { x: target.x - 60, y: target.y - 24 }
+    const steps = 6
+    for (let step = 1; step <= steps; step++) {
+      // Ease-out along a slightly curved path so consecutive points are never evenly spaced.
+      const t = 1 - Math.pow(1 - step / steps, 2)
+      const bow = Math.sin((step / steps) * Math.PI) * 8
+      tab.surface.sendInputEvent({
+        type: 'mouseMove',
+        x: from.x + (target.x - from.x) * t,
+        y: from.y + (target.y - from.y) * t - bow
+      })
+      await delay(14 + step * 6, signal)
+    }
+    tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
+    // A short, bounded dwell before pressing, as a hand settles on a target.
+    await delay(120 + Math.floor(Math.random() * 140), signal)
   }
 
   async type(

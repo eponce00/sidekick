@@ -22,7 +22,8 @@ what does not match. This happens only with a model that can see images.
 
 `browser_hold` provides one bounded, atomic press-and-hold gesture for ordinary controls such as
 maps, sliders, canvases, and test interfaces. It always releases the mouse even if the action is
-cancelled. It is not a CAPTCHA solver.
+cancelled. It is not a general CAPTCHA solver: the agent may make at most one attempt at a site check
+that shows a clickable control (see below).
 
 `browser_fill_form` batches up to 25 native textboxes, selects, checkboxes, and radio buttons in
 one model turn. It uses current semantic references or unambiguous selectors/accessible names,
@@ -201,17 +202,19 @@ the site says to; it always counts as a change.
 
 ## Human-only site checks
 
-When SideKick detects a CAPTCHA or anti-bot verification, automated input and page evaluation stop.
-The agent first tries another source, such as another search engine, without bothering you. Only
-when that page is the one way to finish the task does it wait for you: its step in the chat says what
-the site wants, for example **Waiting for you in the browser: DuckDuckGo wants you to confirm you
-are human**, the chat shows as waiting, and the Browser panel opens on the page. Complete the check
-right there in the panel. SideKick notices when it is gone and the agent continues on the same page
-by itself; there is nothing to press. If you stop the run, or the check is still there after ten
-minutes, the agent moves on without it.
+When SideKick detects a CAPTCHA or anti-bot verification, the agent is first allowed one automated try
+at it, aimed only at the check's own clickable control (its checkbox or widget), with a human-like pointer
+motion rather than a jump. If that clears the check, the agent continues. If the check is still there, or
+the page shows nothing to click, automated input and page evaluation on that site stop: the agent first
+tries another source, such as another search engine, without bothering you. Only when that page is the
+one way to finish the task does it wait for you: its step in the chat says what the site wants, for
+example **Waiting for you in the browser: DuckDuckGo wants you to confirm you are human**, the chat shows
+as waiting, and the Browser panel opens on the page. Complete the check right there in the panel. SideKick
+notices when it is gone and the agent continues on the same page by itself; there is nothing to press. If
+you stop the run, or the check is still there after ten minutes, the agent moves on without it.
 
-CAPTCHA and anti-bot checks are always human-only; SideKick does not ask the model to bypass or solve
-them.
+A site check gets at most one automated attempt; after that it is human-only. SideKick never asks the
+model to keep guessing at an image puzzle or to read the hidden token a check writes.
 
 ## Isolation and safety
 

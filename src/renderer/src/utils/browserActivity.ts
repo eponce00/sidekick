@@ -40,6 +40,8 @@ export interface BrowserVerification {
 export interface BrowserHumanVerificationState {
   kind: 'captcha_or_bot_challenge'
   message: string
+  /** Whether the agent still has its one automated attempt on the challenge control. */
+  attemptAllowed?: boolean
 }
 
 export interface BrowserActivityState {
@@ -286,7 +288,8 @@ function humanVerificationProjection(records: UnknownRecord[]): {
           kind: 'captcha_or_bot_challenge',
           message:
             firstString([raw], ['message']) ??
-            'This site requires a human verification step before automation can continue.'
+            'This site requires a human verification step before automation can continue.',
+          ...(raw.attemptAllowed === true ? { attemptAllowed: true } : {})
         }
       }
     }
