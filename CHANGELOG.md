@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.27.8 — 2026-11-07
+
+- Let the browser agent try a detected site's checkbox or press-and-hold check once before
+  asking for help. Further automated input stays blocked if the check remains; the agent tries
+  another source or waits for you in the Browser panel. Image puzzles and text-only checks
+  still require you.
+
 ## 0.27.7 — 2026-11-05
 
 - Publish a fresh maintenance build containing all completed fixes through 0.27.6: the console
