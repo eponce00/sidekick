@@ -885,10 +885,11 @@ function errorResult(
     return toolExecutionFailed({
       title,
       code: 'unsupported',
-      message: 'The site requires human verification before automation can continue.',
+      message:
+        'The site requires human verification. One automated try at the challenge control is allowed; further ones are refused.',
       recoveryAction: 'change_strategy',
       recovery:
-        "Use another legitimate source if there is one. If you're in the built-in browser and browser_open offers browser: 'chrome', the user's own Chrome may not be asked. If this page is the only way to finish the task, call browser_request_human so the user clears the check."
+        "If the page shows a clickable challenge control, make exactly one browser_click or browser_hold aimed at it; after that, or if there is no such control, do not retry. Use another legitimate source if there is one. If you're in the built-in browser and browser_open offers browser: 'chrome', the user's own Chrome may not be asked. If this page is the only way to finish the task, call browser_request_human so the user clears the check."
     })
   }
   if (isMissingSessionError(error)) {

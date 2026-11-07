@@ -117,6 +117,14 @@ class FakeSurface implements NativeBrowserSurface {
   humanVerificationMarkerVisible = false
   humanVerificationSolved = false
   humanVerificationAdditionalUnresolved = false
+  /** When set, the challenge widget box included in a dom_marker probe. */
+  humanVerificationWidgetBox?: {
+    kind: 'recaptcha' | 'hcaptcha' | 'turnstile' | 'checkbox'
+    x: number
+    y: number
+    width: number
+    height: number
+  }
   showChallengeAfterNextTextInput = false
   debuggerAttached = false
   insertedText = ''
@@ -335,7 +343,10 @@ class FakeSurface implements NativeBrowserSurface {
         unresolvedMarker:
           (this.humanVerificationMarkerVisible && !this.humanVerificationSolved) ||
           this.humanVerificationAdditionalUnresolved,
-        solvedKnownWidget: this.humanVerificationSolved
+        solvedKnownWidget: this.humanVerificationSolved,
+        ...(this.humanVerificationWidgetBox
+          ? { widgetBoxes: [this.humanVerificationWidgetBox] }
+          : {})
       } as T
     }
     if (source.includes('io.sidekick.browser.coordinate-capture-state')) {
@@ -1934,7 +1945,9 @@ describe('NativeBrowserSessionService', () => {
     expect(observed.humanVerification).toMatchObject({
       required: true,
       kind: 'captcha_or_bot_challenge',
-      detectedBy: 'accessibility'
+      detectedBy: 'accessibility',
+      // A text-only interstitial has no widget to aim at, so no automated attempt is offered.
+      attemptAllowed: false
     })
     const inputCount = surface.inputEvents.length
     await expect(
@@ -1992,6 +2005,91 @@ describe('NativeBrowserSessionService', () => {
       service.evaluate({ sessionId: opened.sessionId, expression: 'document.body.click()' })
     ).rejects.toMatchObject({ name: 'BrowserHumanVerificationError' })
     expect(surface.inputEvents).toHaveLength(inputCount)
+  })
+
+  it('lets one aimed click at a challenge widget through, then refuses the same challenge', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'widget-attempt', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    // A resolvable challenge checkbox; the fake reports every node at (20,30,100,40), so its
+    // resolved click center is (70,50) and the widget box must contain that point.
+    surface.humanVerificationMarkerVisible = true
+    surface.humanVerificationWidgetBox = { kind: 'checkbox', x: 20, y: 30, width: 100, height: 40 }
+
+    const observed = await service.observe(opened.sessionId, { screenshot: 'none' })
+    expect(observed.humanVerification).toMatchObject({ required: true, attemptAllowed: true })
+
+    const before = surface.inputEvents.length
+    await expect(
+      service.click({ sessionId: opened.sessionId, target: { role: 'button', name: 'Save' } })
+    ).resolves.toMatchObject({ action: 'click' })
+    // The attempt is not a teleport: the pointer travels in several steps before pressing.
+    const emitted = surface.inputEvents.slice(before)
+    const firstDown = emitted.findIndex((input) => input.type === 'mouseDown')
+    const movesBeforeDown = emitted
+      .slice(0, Math.max(0, firstDown))
+      .filter((i) => i.type === 'mouseMove')
+    expect(movesBeforeDown.length).toBeGreaterThanOrEqual(3)
+
+    // The check is still on the page, so the same challenge's budget is now spent.
+    const after = await service.observe(opened.sessionId, { screenshot: 'none' })
+    expect(after.humanVerification).toMatchObject({ required: true, attemptAllowed: false })
+    await expect(
+      service.click({ sessionId: opened.sessionId, target: { role: 'button', name: 'Save' } })
+    ).rejects.toMatchObject({ name: 'BrowserHumanVerificationError' })
+  })
+
+  it('refuses a challenge click that is not aimed at the widget, without spending the attempt', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'widget-miss', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    surface.humanVerificationMarkerVisible = true
+    surface.humanVerificationWidgetBox = { kind: 'checkbox', x: 20, y: 30, width: 100, height: 40 }
+
+    const current = await service.observe(opened.sessionId, { screenshot: 'viewport' })
+    await expect(
+      service.click({
+        sessionId: opened.sessionId,
+        target: { screenshotId: current.screenshot!.id, coordinates: { x: 400, y: 400 } }
+      })
+    ).rejects.toMatchObject({ name: 'BrowserHumanVerificationError' })
+
+    // The miss did not spend the attempt: a click aimed at the widget is still allowed.
+    await expect(
+      service.click({ sessionId: opened.sessionId, target: { role: 'button', name: 'Save' } })
+    ).resolves.toMatchObject({ action: 'click' })
+  })
+
+  it('gives a fresh challenge a new attempt after the user clears or a different one appears', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'widget-reset', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    surface.humanVerificationMarkerVisible = true
+    surface.humanVerificationWidgetBox = { kind: 'checkbox', x: 20, y: 30, width: 100, height: 40 }
+
+    await service.click({ sessionId: opened.sessionId, target: { role: 'button', name: 'Save' } })
+    expect(
+      (await service.observe(opened.sessionId, { screenshot: 'none' })).humanVerification
+    ).toMatchObject({
+      attemptAllowed: false
+    })
+
+    // The user clears it; seeing no challenge makes any spent attempt stale.
+    surface.humanVerificationMarkerVisible = false
+    surface.humanVerificationWidgetBox = undefined
+    await service.humanVerificationRequired(opened.sessionId)
+    expect(
+      (await service.observe(opened.sessionId, { screenshot: 'none' })).humanVerification
+    ).toBeNull()
+
+    // A different challenge widget (another kind) is a different challenge: it gets its own attempt.
+    surface.humanVerificationMarkerVisible = true
+    surface.humanVerificationWidgetBox = { kind: 'recaptcha', x: 20, y: 30, width: 100, height: 40 }
+    expect(
+      (await service.observe(opened.sessionId, { screenshot: 'none' })).humanVerification
+    ).toMatchObject({
+      attemptAllowed: true
+    })
   })
 
   it('treats a solved provider widget as cleared even when its static label remains', async () => {

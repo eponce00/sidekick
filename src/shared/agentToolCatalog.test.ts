@@ -121,7 +121,9 @@ describe('canonical agent tool catalog', () => {
     expect(hold?.definition.function.parameters).toMatchObject({
       properties: { duration_ms: { minimum: 100, maximum: 10_000 } }
     })
-    expect(hold?.definition.function.description).toContain('Never use it for CAPTCHA')
+    expect(hold?.definition.function.description).toContain(
+      'one attempt aimed at the challenge control'
+    )
   })
 
   it('exposes goal completion control only inside a durable goal run', () => {
