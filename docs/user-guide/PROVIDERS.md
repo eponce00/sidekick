@@ -136,6 +136,24 @@ SIDEKICK_LITELLM_SMOKE_API_KEY=your-virtual-key \
 npm run test:litellm-smoke
 ```
 
+## OpenCode Go
+
+Use **Add provider → OpenAI-compatible**, name the connection **OpenCode Go**, and set its Base URL
+to `https://opencode.ai/inference/go/openai/v1`. Enter the API key from the workspace with your Go
+subscription, then select **Connect** and choose which models appear in chat. An existing
+OpenAI-compatible connection at that address works too; **Refresh models** loads its metadata.
+
+SideKick uses Go's separate model catalog to read each model's context window, maximum output,
+tool calling, input modalities, and reasoning levels. The catalog's maximum output caps the
+reply budget; it does not request that entire maximum for every reply. Missing metadata stays
+unknown, and your manual overrides survive refreshes.
+
+The main process identifies SideKick and sends a stable opaque session id for each chat, including
+its summary and title requests. It uses Go endpoints throughout and never switches a request to
+OpenCode's separate pay-as-you-go endpoint. Go's own limits and Extra Usage settings still apply.
+See OpenCode's [Go requirements](https://opencode.ai/docs/console/go/#where-can-i-use-it) and
+[API endpoints and sessions](https://opencode.ai/docs/console/harnesses/).
+
 ## Adding a provider
 
 1. Add its metadata and capabilities to `providerRegistry.ts`.

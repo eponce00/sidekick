@@ -43,6 +43,66 @@ function transcript(): ProviderChatMessage[] {
 }
 
 describe('AgentContextManager', () => {
+  it('keeps a first greeting verbatim when fixed instructions exceed an estimated compaction point', async () => {
+    const complete = vi.fn()
+    const messages: ProviderChatMessage[] = [
+      { role: 'system', content: 'Fixed tool policy. '.repeat(7_000) },
+      { role: 'user', content: 'hello' }
+    ]
+    const manager = new AgentContextManager({
+      target,
+      contextLength: 32_768,
+      maxOutputTokens: 8_192,
+      threshold: 0.8,
+      enabled: true,
+      complete
+    })
+    expect(manager.shouldCompact(messages, [])).toBe(true)
+    await expect(
+      manager.compact(messages, [], new AbortController().signal)
+    ).resolves.toMatchObject({
+      messages,
+      compacted: false,
+      details: { reason: 'no_compactable_conversation' }
+    })
+    expect(complete).not.toHaveBeenCalled()
+    const discovered = new AgentContextManager({
+      target,
+      contextLength: 262_144,
+      maxOutputTokens: 32_768,
+      threshold: 0.8,
+      enabled: true
+    })
+    expect(discovered.shouldCompact(messages, [])).toBe(false)
+  })
+
+  it('uses the chat identity for summary requests', async () => {
+    const complete = vi.fn(async (_request: ProviderChatRequest) => ({
+      ok: true,
+      data: {
+        message: { role: 'assistant', content: 'Summary' },
+        promptTokens: 100,
+        completionTokens: 2,
+        reasoningTokens: 0,
+        finishReason: 'stop'
+      }
+    }))
+    const manager = new AgentContextManager({
+      target,
+      conversationId: 'stable-chat',
+      contextLength: 8192,
+      maxOutputTokens: 2048,
+      threshold: 0.8,
+      enabled: true,
+      complete
+    })
+    await manager.compact(transcript(), [], new AbortController().signal)
+    expect(complete.mock.calls[0][0]).toMatchObject({
+      conversationId: 'stable-chat',
+      purpose: 'compaction'
+    })
+  })
+
   it('budgets across history so later corrections survive large early messages', async () => {
     let serialized = ''
     let record: AgentCompactionRecord | undefined

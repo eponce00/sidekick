@@ -1174,6 +1174,7 @@ export class ConversationRunPreparer {
           reasoningLevel: reasoningLevel(target, model)
         },
         contextManager: new AgentContextManager({
+          conversationId: input.conversationId,
           target: { ...target, contextLength },
           contextLength,
           maxOutputTokens,

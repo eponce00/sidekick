@@ -132,6 +132,7 @@ describe('AgentRunKernel', () => {
     ])
     // The model's first turn already holds both reads, as calls it made and their results.
     const firstRequest = vi.mocked(sampler).mock.calls[0][0]
+    expect(firstRequest.conversationId).toBe('thread-1')
     const toolResults = firstRequest.messages.filter((message) => message.role === 'tool')
     expect(toolResults.map((message) => message.content)).toEqual([
       expect.stringContaining('contents of site/index.html'),

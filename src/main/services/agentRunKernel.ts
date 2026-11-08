@@ -1655,6 +1655,7 @@ The user approved this exact plan revision. Act capabilities are now available a
             this.sample(
               {
                 ...activeRequest,
+                conversationId: input.threadId,
                 maxOutputTokens: replyLimit,
                 messages: requestMessages,
                 tools: toolDefinitions

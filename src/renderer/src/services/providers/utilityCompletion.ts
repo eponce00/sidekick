@@ -30,6 +30,7 @@ export type UtilityCompletionPurpose =
   | 'other'
 
 export interface UtilityCompletionRequest {
+  conversationId?: string
   model: UtilityModelConfig
   messages: ConversationMessage[]
   tools?: unknown[]
@@ -161,6 +162,7 @@ async function executeCompletion(
 ): Promise<Omit<UtilityCompletionResult, 'attempts'>> {
   const { model } = request
   const result = await api.providers.complete({
+    conversationId: request.conversationId,
     target: {
       providerInstanceId: model.providerInstanceId,
       providerKind: model.providerKind ?? providerKindForTransport(model.provider),
