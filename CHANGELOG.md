@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.27.9 — 2026-11-08
+
+- Use an OpenCode Go subscription through an existing OpenAI-compatible connection. Go model
+  discovery now fills in context windows, maximum output, tools, vision, and reasoning settings.
+  Requests identify SideKick and keep a stable session across replies, summaries, and titles,
+  using Go endpoints throughout.
+- Keep a first greeting unchanged when fixed instructions trigger compaction before there is
+  any prior work to summarize. It no longer fails because summarizing a short request would
+  make it larger. Go's reported limits also replace the conservative unknown-context fallback.
+
 ## 0.27.8 — 2026-11-07
 
 - Let the browser agent try a detected site's checkbox or press-and-hold check once before
