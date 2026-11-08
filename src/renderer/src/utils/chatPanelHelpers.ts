@@ -84,6 +84,7 @@ export async function generateConversationTitle(
 
   try {
     const titleResult = await completeUtilityText({
+      conversationId,
       model: createUtilityModelConfig({ ...config, provider, model, contextLength }),
       messages: titleMessages,
       maxOutputTokens: 128,

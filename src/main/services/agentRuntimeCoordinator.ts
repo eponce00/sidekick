@@ -1050,6 +1050,7 @@ export class AgentRuntimeCoordinator {
       permissionMode: parentInput.permissionMode,
       toolRouter: session.router,
       contextManager: new AgentContextManager({
+        conversationId: parentContext.conversationId || parentContext.runId,
         target,
         contextLength: target.contextLength ?? 32_768,
         maxOutputTokens: parentInput.request.maxOutputTokens ?? 4_096,
@@ -1174,6 +1175,7 @@ export class AgentRuntimeCoordinator {
       toolRouter: session.router,
       verificationController: session.verificationController,
       contextManager: new AgentContextManager({
+        conversationId: parentContext.conversationId || parentContext.runId,
         target,
         contextLength,
         maxOutputTokens: parentInput.request.maxOutputTokens ?? 4_096,

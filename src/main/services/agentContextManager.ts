@@ -34,6 +34,7 @@ const MAX_SUMMARY_INPUT_CHARS = 120_000
 export const COMPACTION_IDLE_TIMEOUT_MS = 5 * 60_000
 
 export interface AgentContextManagerOptions {
+  conversationId?: string
   target: ProviderChatRequest['target']
   contextLength: number
   maxOutputTokens: number
@@ -488,6 +489,17 @@ export class AgentContextManager implements AgentKernelContextManager {
     const conversation = messages.filter(
       (message) => message.role !== 'system' && !isProjectInstructionsMessage(message)
     )
+    // A first request has no prior work to summarize. Summarizing "hello" only makes it larger
+    // when a conservative window estimate or the fixed tool schemas trigger compaction.
+    if (
+      !conversation.some(
+        (message) =>
+          message.role === 'tool' ||
+          (message.role === 'assistant' && (message.content?.trim() || message.tool_calls?.length))
+      )
+    ) {
+      return { messages, compacted: false, details: { reason: 'no_compactable_conversation' } }
+    }
     const split = chooseSplit(conversation, this.options.contextLength)
     const compactedMessages = conversation.slice(0, split)
     const room =
@@ -547,6 +559,7 @@ export class AgentContextManager implements AgentKernelContextManager {
     const result = await completion(
       {
         target: this.options.target,
+        conversationId: this.options.conversationId,
         purpose: 'compaction',
         maxOutputTokens: summaryOutputTokens,
         temperature: 0.1,

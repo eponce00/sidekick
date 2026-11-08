@@ -65,6 +65,8 @@ export type ProviderRequestPurpose =
   | 'other'
 
 export interface ProviderChatRequest {
+  /** Stable chat identity for providers that route and cache by conversation. */
+  conversationId?: string
   target: ProviderTarget
   messages: ProviderChatMessage[]
   tools?: unknown[]

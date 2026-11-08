@@ -64,6 +64,7 @@ import {
   resolveProviderInstanceById
 } from './providerResolver'
 import { llamaCppReasoning, type ReasoningCapabilities } from './reasoningCapabilities'
+import { discoverOpenCodeGoModels, openCodeGoEndpoints, openCodeGoHeaders } from './openCodeGo'
 
 type Emit = (chunk: ProviderStreamChunk) => void
 type ProviderHealthPublisher = (change: ProviderHealthChangedEvent) => void
@@ -390,8 +391,13 @@ export function toOpenAICompatibleMessages(
   return converted
 }
 
-function openAIHeaders(instance: ProviderInstance): Record<string, string> {
+function openAIHeaders(
+  instance: ProviderInstance,
+  request?: ProviderChatRequest
+): Record<string, string> {
   const headers = openAICompatibleHeaders(instance.apiKey)
+  if (openCodeGoEndpoints(instance))
+    Object.assign(headers, openCodeGoHeaders(request?.conversationId))
   if (providerKindForInstance(instance) === 'openrouter') {
     headers['HTTP-Referer'] = PRODUCT_REPOSITORY_URL
     headers['X-Title'] = `${PRODUCT_IDENTITY.productName} Desktop Agent`
@@ -402,9 +408,16 @@ function openAIHeaders(instance: ProviderInstance): Record<string, string> {
 const REASONING_FIELDS = ['reasoning', 'reasoning_effort', 'chat_template_kwargs'] as const
 
 /** Each OpenAI-compatible server's own way of carrying a reasoning level. */
-function openAIReasoningFields(request: ProviderChatRequest): Record<string, unknown> {
+function openAIReasoningFields(
+  request: ProviderChatRequest,
+  gatewayReasoning: boolean
+): Record<string, unknown> {
   const level = requestReasoningLevel(request)
   if (!level) return {}
+  if (gatewayReasoning) {
+    if (level === 'on') return {}
+    return { reasoning_effort: level === 'off' ? 'none' : level }
+  }
   const kind = request.target.providerKind
   if (kind === 'openrouter') {
     if (level === 'off') return { reasoning: { effort: 'none' } }
@@ -437,14 +450,17 @@ function openAIReasoningFields(request: ProviderChatRequest): Record<string, unk
   }
 }
 
-export function openAIRequest(request: ProviderChatRequest): Record<string, unknown> {
+export function openAIRequest(
+  request: ProviderChatRequest,
+  gatewayReasoning = false
+): Record<string, unknown> {
   return {
     model: request.target.model,
     messages: toOpenAICompatibleMessages(request.messages),
     tools: request.tools?.length ? request.tools : undefined,
     max_tokens: request.maxOutputTokens,
     temperature: request.temperature,
-    ...openAIReasoningFields(request)
+    ...openAIReasoningFields(request, gatewayReasoning)
   }
 }
 
@@ -462,9 +478,10 @@ export async function executeOpenAICompatibleWithReasoningFallback<
   T extends { ok: boolean; error?: string }
 >(
   request: ProviderChatRequest,
-  execute: (body: Record<string, unknown>) => Promise<T>
+  execute: (body: Record<string, unknown>) => Promise<T>,
+  gatewayReasoning = false
 ): Promise<T> {
-  const body = openAIRequest(request)
+  const body = openAIRequest(request, gatewayReasoning)
   const result = await execute(body)
   const carried = REASONING_FIELDS.filter((field) => field in body)
   if (!carried.length || !reasoningWasRejected(result)) return result
@@ -499,6 +516,8 @@ export async function streamProviderChat(
   const instance = resolveProviderInstance(request.target)
   const definition = providerDefinitionForInstance(instance)
   const preparedRequest = await materializeProviderRequestMedia(request)
+  const endpoints = openCodeGoEndpoints(instance)
+  const headers = openAIHeaders(instance, preparedRequest)
   return observeProviderRequest(instance, preparedRequest, signal, () => {
     if (definition.capabilities.credentials === 'required') requireProviderApiKey(instance)
     if (definition.protocol === 'ollama') {
@@ -511,15 +530,18 @@ export async function streamProviderChat(
         streamAnthropicChat(instance, attempt, emit, fetch, signal)
       )
     }
-    return executeOpenAICompatibleWithReasoningFallback(preparedRequest, (body) =>
-      streamOpenAICompatibleChat(
-        instance.baseUrl,
-        body,
-        openAIHeaders(instance),
-        emit,
-        fetch,
-        signal
-      )
+    return executeOpenAICompatibleWithReasoningFallback(
+      preparedRequest,
+      (body) =>
+        streamOpenAICompatibleChat(
+          endpoints?.chat ?? instance.baseUrl,
+          body,
+          headers,
+          emit,
+          fetch,
+          signal
+        ),
+      Boolean(endpoints)
     )
   })
 }
@@ -531,6 +553,8 @@ export async function completeProviderChat(
   const instance = resolveProviderInstance(request.target)
   const definition = providerDefinitionForInstance(instance)
   const preparedRequest = await materializeProviderRequestMedia(request)
+  const endpoints = openCodeGoEndpoints(instance)
+  const headers = openAIHeaders(instance, preparedRequest)
   return observeProviderRequest(instance, preparedRequest, signal, () => {
     if (definition.capabilities.credentials === 'required') requireProviderApiKey(instance)
     if (definition.protocol === 'ollama') {
@@ -543,14 +567,33 @@ export async function completeProviderChat(
         completeAnthropicChat(instance, attempt, fetch, signal)
       )
     }
-    return executeOpenAICompatibleWithReasoningFallback(preparedRequest, (body) =>
-      completeOpenAIChat(instance.baseUrl, body, openAIHeaders(instance), fetch, signal)
+    return executeOpenAICompatibleWithReasoningFallback(
+      preparedRequest,
+      (body) =>
+        completeOpenAIChat(endpoints?.chat ?? instance.baseUrl, body, headers, fetch, signal),
+      Boolean(endpoints)
     )
   })
 }
 
 async function discoverOpenAIModels(instance: ProviderInstance): Promise<ProviderDiscoveryResult> {
   const kind = providerKindForInstance(instance)
+  if (openCodeGoEndpoints(instance)) {
+    const result = await discoverOpenCodeGoModels(instance, openAIHeaders(instance))
+    return result.ok && result.models
+      ? {
+          ok: true,
+          models: result.models
+            .map((model) =>
+              applyProviderModelOverrides(
+                model,
+                instance.models.find(({ id }) => id === model.id)
+              )
+            )
+            .sort((left, right) => left.id.localeCompare(right.id))
+        }
+      : result
+  }
   if (kind === 'litellm') {
     const result = await discoverLiteLLMModels(instance, openAIHeaders(instance))
     return result.ok && result.data
@@ -677,6 +720,16 @@ async function resolveOpenAIContext(
   }
   try {
     signal?.throwIfAborted()
+    if (openCodeGoEndpoints(instance)) {
+      const result = await discoverOpenCodeGoModels(
+        instance,
+        openAIHeaders(instance),
+        contextFetch,
+        signal
+      )
+      signal?.throwIfAborted()
+      return result.models?.find((candidate) => candidate.id === model)?.contextLength
+    }
     if (definition.capabilities.context === 'litellm-model-metadata') {
       const result = await discoverLiteLLMModels(
         instance,
