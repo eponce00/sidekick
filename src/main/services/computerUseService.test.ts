@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+// Loaded with the file: a native module's first load on a busy Windows runner has taken longer
+// than a test's time limit when it fell inside the first test to use it.
+import { createCanvas, loadImage } from '@napi-rs/canvas'
 import {
   computerAppAccess,
   matchInstalledApp,
@@ -843,7 +846,6 @@ describe('what the agent may reach', () => {
     const { service, call, appWindows } = harness([app('notes')])
     const answer = call.getMockImplementation()!
     // A minimal JPEG: start, then a frame header 500 wide.
-    const { createCanvas } = await import('@napi-rs/canvas')
     const picture = (width: number, height: number): string =>
       createCanvas(width, height).toBuffer('image/png').toString('base64')
     call.mockImplementation(async (tool, args) => ({
@@ -868,7 +870,6 @@ describe('what the agent may reach', () => {
     await service.look('chat', 'notes', true, signal)
     const zoomed = await service.zoom('chat', 'notes', { x: 0, y: 0, toX: 1000, toY: 50 }, signal)
     // The middle 500 of the look is 1000 of the full picture, enlarged to 1200.
-    const { loadImage } = await import('@napi-rs/canvas')
     expect((await loadImage(Buffer.from(zoomed.images[0].data, 'base64'))).width).toBe(1200)
     await service.click('chat', 'notes', { x: 600, y: 60, fromZoom: true }, signal)
     expect(call).toHaveBeenLastCalledWith(
@@ -952,7 +953,6 @@ describe('what the agent may reach', () => {
 
   it('refuses to act past the edge of the picture, where it would land on something else', async () => {
     const { service, call } = harness([app('notes')])
-    const { createCanvas } = await import('@napi-rs/canvas')
     const data = createCanvas(1280, 672).toBuffer('image/png').toString('base64')
     const answer = call.getMockImplementation()!
     call.mockImplementation(async (tool, args) => ({
@@ -1022,7 +1022,6 @@ describe('what the agent may reach', () => {
 
   it('drags from one row to another by where they are on screen', async () => {
     const { service, call, appWindows } = harness([app('notes')])
-    const { createCanvas } = await import('@napi-rs/canvas')
     const data = createCanvas(500, 250).toBuffer('image/png').toString('base64')
     appWindows.windowsOf.mockResolvedValue([
       { id: 77, title: 'W', bounds: { x: 100, y: 200, width: 1000, height: 500 } }
@@ -1062,7 +1061,6 @@ describe('what the agent may reach', () => {
 
   it('draws an open menu onto the picture, since a picture of the window leaves it out', async () => {
     const { service, call, appWindows } = harness([app('notes')])
-    const { createCanvas, loadImage } = await import('@napi-rs/canvas')
     const data = createCanvas(100, 50).toBuffer('image/png').toString('base64')
     const menu = createCanvas(40, 40)
     const brush = menu.getContext('2d')
@@ -1179,7 +1177,6 @@ describe('what the agent may reach', () => {
 
   it('notices a small change where a step happened, though not one elsewhere', async () => {
     const { service, call, appWindows } = harness([app('notes')])
-    const { createCanvas } = await import('@napi-rs/canvas')
     const picture = (mark?: { x: number; y: number }): string => {
       const canvas = createCanvas(1000, 500)
       const context = canvas.getContext('2d')
