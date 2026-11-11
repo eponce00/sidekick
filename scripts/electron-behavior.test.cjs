@@ -196,6 +196,11 @@ test(
       models: [{ id: MODEL, context_length: WINDOW }],
       reply
     })
+    // The app names chats in the background on a timer of its own, so a title request can land
+    // inside any scenario. The scenarios count the chats' own requests.
+    const isTitle = (record) =>
+      text(record.messages[0]?.content).startsWith('Name the concrete topic')
+    const requests = () => model.requests.filter((record) => !isTitle(record))
     let application
     try {
       application = await electron.launch({
@@ -347,9 +352,9 @@ test(
         },
         { notes, filler: FILLER, history }
       )
-      const before = model.requests.length
+      const before = requests().length
       await send(notes, 'notes-first', 'COMPACTION-FIXTURE: one more note.', 'Noted.')
-      const first = model.requests.slice(before)
+      const first = requests().slice(before)
       assert.equal(first.length, 1, 'A chat under the threshold sends exactly one request')
       assert.equal(
         isCompaction(first[0].messages),
@@ -373,14 +378,14 @@ test(
       // Notes SideKick estimates at 0.3 tokens a character, putting its estimate past the
       // threshold by half that overshoot, and the model's count under it by the other half.
       const pastByEstimate = trigger + overshoot / 2 - firstUsage.estimatedPromptTokens
-      const calibratedStart = model.requests.length
+      const calibratedStart = requests().length
       await send(
         notes,
         'notes-calibrated',
         `COMPACTION-FIXTURE: more notes. ${FILLER.repeat(Math.ceil(pastByEstimate / 0.3 / FILLER.length))}`,
         'Noted.'
       )
-      const calibrated = model.requests.slice(calibratedStart)
+      const calibrated = requests().slice(calibratedStart)
       const calibratedUsage = await usageOf('notes-calibrated')
       assert.ok(
         calibratedUsage.estimatedPromptTokens >= trigger,
@@ -395,14 +400,14 @@ test(
       calibrated.forEach(assertFits)
 
       // Past the threshold, the next run compacts once before it asks the model.
-      const middle = model.requests.length
+      const middle = requests().length
       await send(
         notes,
         'notes-second',
         `COMPACTION-FIXTURE: a long addition. ${FILLER.repeat(Math.ceil((WINDOW * 0.3 * 3.33) / FILLER.length))}`,
         'Noted.'
       )
-      const second = model.requests.slice(middle)
+      const second = requests().slice(middle)
       assert.deepEqual(
         second.map(kind),
         ['compaction', 'reply'],
@@ -420,9 +425,9 @@ test(
 
       // The next run starts from the saved summary, and keeps what the summary left word for
       // word. Anchored at the compacting run's own request, the summary lost both.
-      const thirdStart = model.requests.length
+      const thirdStart = requests().length
       await send(notes, 'notes-third', 'COMPACTION-FIXTURE: and a last note.', 'Noted.')
-      const third = model.requests.slice(thirdStart)
+      const third = requests().slice(thirdStart)
       assert.deepEqual(third.map(kind), ['reply'], 'The next run does not compact again')
       const thirdText = third[0].messages.map((message) => text(message.content)).join('\n')
       assert.ok(thirdText.includes(SUMMARY), 'It starts from the saved summary')
@@ -467,14 +472,14 @@ test(
         async (projectId) => (await window.api.conversations.create('Runaway', projectId)).id,
         projectId
       )
-      const runawayStart = model.requests.length
+      const runawayStart = requests().length
       await send(
         runawayChat,
         'runaway-run',
         'RUNAWAY-FIXTURE: click the start button.',
         'Ran it once; the cell answered.'
       )
-      const runawayRequests = model.requests.slice(runawayStart)
+      const runawayRequests = requests().slice(runawayStart)
       assert.equal(
         runawayRequests.length,
         3,
@@ -513,7 +518,7 @@ test(
         async (projectId) => (await window.api.conversations.create('Report checks', projectId)).id,
         projectId
       )
-      const familyStart = model.requests.length
+      const familyStart = requests().length
       await send(
         manager,
         'manager-run',
@@ -543,7 +548,7 @@ test(
         'The manager should read both reports and the stored rest of the long one',
         120_000
       )
-      const family = model.requests.slice(familyStart)
+      const family = requests().slice(familyStart)
       family.forEach(assertFits)
       const kinds = family.map((record) =>
         isCompaction(record.messages)
@@ -631,13 +636,16 @@ test(
         },
         { id: interrupted, filler: FILLER, size: interruptedHistory }
       )
-      const interruptStart = model.requests.length
+      const interruptStart = requests().length
       await send(interrupted, 'interrupt-run', 'INTERRUPT-FIXTURE: the request.')
       await until(
-        () => model.requests.slice(interruptStart).some((record) => kind(record) === 'reply'),
+        () =>
+          requests()
+            .slice(interruptStart)
+            .some((record) => kind(record) === 'reply'),
         'The run should compact, then ask for its reply'
       )
-      assert.deepEqual(model.requests.slice(interruptStart).map(kind), ['compaction', 'reply'])
+      assert.deepEqual(requests().slice(interruptStart).map(kind), ['compaction', 'reply'])
       await page.evaluate((runId) => window.api.agentRuns.stop(runId), 'interrupt-run')
       await until(
         () =>
@@ -649,7 +657,7 @@ test(
       )
       releaseInterrupted()
       // The user edits the request and sends it again, as the message's Edit does.
-      const retryStart = model.requests.length
+      const retryStart = requests().length
       await page.evaluate(
         async ({ id, pinned }) => {
           const request = (await window.api.conversations.getMessages(id)).find(
@@ -685,7 +693,7 @@ test(
         'The edited request should be answered',
         90_000
       )
-      const retried = model.requests.slice(retryStart)
+      const retried = requests().slice(retryStart)
       assert.deepEqual(
         retried.map(kind),
         ['reply'],
@@ -702,14 +710,14 @@ test(
         async (projectId) => (await window.api.conversations.create('Stream checks', projectId)).id,
         projectId
       )
-      const dropStart = model.requests.length
+      const dropStart = requests().length
       await send(
         streams,
         'drop-run',
         'DROP-FIXTURE: answer in one go.',
         'Recovered after the drop.'
       )
-      const dropped = model.requests.slice(dropStart)
+      const dropped = requests().slice(dropStart)
       assert.equal(dropped.length, 2, 'A reply whose stream broke off is asked again exactly once')
       assert.deepEqual(dropped[1].messages, dropped[0].messages, 'with the same request')
       const recovered = await page.evaluate(
@@ -737,18 +745,20 @@ test(
           (await window.api.conversations.create('Refusal checks', projectId)).id,
         projectId
       )
-      const refusalStart = model.requests.length
+      const refusalStart = requests().length
       await send(
         refusals,
         'refusal-first',
         'REFUSAL-FIXTURE: answer within the cap.',
         'Answered within the cap.'
       )
-      const refused = model.requests.slice(refusalStart).map((record) => record.maxTokens)
+      const refused = requests()
+        .slice(refusalStart)
+        .map((record) => record.maxTokens)
       assert.equal(refused.length, 2, 'A refused reply limit is asked again exactly once')
       assert.ok(refused[0] > HOSTED_REPLY_CAP, 'The first request asks for more than the cap')
       assert.equal(refused[1], HOSTED_REPLY_CAP, 'The retry asks for the cap the provider named')
-      const laterStart = model.requests.length
+      const laterStart = requests().length
       await send(
         refusals,
         'refusal-later',
@@ -756,7 +766,9 @@ test(
         'Answered within the cap.'
       )
       assert.deepEqual(
-        model.requests.slice(laterStart).map((record) => record.maxTokens <= HOSTED_REPLY_CAP),
+        requests()
+          .slice(laterStart)
+          .map((record) => record.maxTokens <= HOSTED_REPLY_CAP),
         [true],
         'A later run asks for no more than the cap from the start'
       )
@@ -766,7 +778,7 @@ test(
           (await window.api.conversations.create('Gateway checks', projectId)).id,
         projectId
       )
-      const gatewayStart = model.requests.length
+      const gatewayStart = requests().length
       await send(gateway, 'gateway-run', 'GATEWAY-FIXTURE: is anyone there?')
       const failed = await until(
         () =>
@@ -798,7 +810,7 @@ test(
           }),
         'The failed reply should say what went wrong'
       )
-      assert.equal(model.requests.length - gatewayStart, 1, 'A gateway failure is not retried')
+      assert.equal(requests().length - gatewayStart, 1, 'A gateway failure is not retried')
       assert.equal(failure.title, 'Model server unavailable')
       assert.ok(
         failure.text.includes(
