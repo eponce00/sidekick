@@ -77,6 +77,9 @@ When CI fails:
 - **One update breaks something.** Comment `@dependabot ignore <package> minor version` on the pull
   request to take it out of the group, and open an issue for it. The rest can then merge.
 - **The branch is stale.** Comment `@dependabot recreate`.
+- **Electron's pull request fails the runtime test.** Each Electron release embeds its own Node.js,
+  and `.node-version` has to name that exact version. The failing test prints it. Push a commit to
+  the pull request's branch that changes `.node-version` to match.
 
 ### When an alert arrives: decide how fast
 
