@@ -145,8 +145,14 @@ interface ChatPanelProps {
   selectedModel: string
   planningModelId?: string
   onModelChange: (modelId: string) => void
-  onTokenCountUpdate?: (currentTokens: number, maxTokens: number, narrowedTo?: number) => void
-  onConversationCostUpdate?: (totalCost: number) => void
+  /** Each report names the chat it is for: the panel's own, or null for a new chat's draft. */
+  onTokenCountUpdate?: (
+    conversationId: string | null,
+    currentTokens: number,
+    maxTokens: number,
+    narrowedTo?: number
+  ) => void
+  onConversationCostUpdate?: (conversationId: string | null, totalCost: number) => void
   onFocusChainUpdate: (conversationId: string, todos: TodoItem[]) => void
   autoCompactEnabled?: boolean
   autoCompactThreshold?: number
@@ -156,7 +162,7 @@ interface ChatPanelProps {
   /** Changes the permission mode every chat uses, from the composer. */
   onPermissionModeChange?: (mode: PermissionMode) => void
   userLocation?: { city?: string; country?: string; timezone?: string }
-  onResponseComplete?: (message: string) => void
+  onResponseComplete?: (conversationId: string | null, message: string) => void
   /** Changes when the user asked to see this conversation's newest reply. */
   focusReplyAt?: number
   onBusyStateChange?: (conversationId: string | null, busy: boolean) => void
@@ -231,6 +237,10 @@ function ChatPanel({
   onReasoningLevelChange,
   onOpenConversation
 }: ChatPanelProps): React.JSX.Element {
+  const reportCost = useCallback(
+    (totalCost: number) => onConversationCostUpdate?.(conversationId, totalCost),
+    [conversationId, onConversationCostUpdate]
+  )
   const {
     messages,
     setMessages,
@@ -239,7 +249,7 @@ function ChatPanel({
     loaded: messagesLoaded
   } = useConversationMessages({
     conversationId,
-    onCostUpdate: onConversationCostUpdate
+    onCostUpdate: reportCost
   })
   const selectedPinnedModel = pinnedModels.find((model) => model.id === selectedModel)
   // This chat's model was removed or turned off. The chat asks for another rather than quietly
@@ -251,8 +261,13 @@ function ChatPanel({
   const chatModelRef = useRef({ id: selectedModel, model: selectedPinnedModel })
   chatModelRef.current = { id: selectedModel, model: selectedPinnedModel }
   const selectedContextLength = selectedPinnedModel?.contextLength ?? 32_768
-  const tokenCountUpdateRef = useRef(onTokenCountUpdate)
-  tokenCountUpdateRef.current = onTokenCountUpdate
+  const reportTokenCount = useCallback(
+    (currentTokens: number, maxTokens: number, narrowedTo?: number) =>
+      onTokenCountUpdate?.(conversationId, currentTokens, maxTokens, narrowedTo),
+    [conversationId, onTokenCountUpdate]
+  )
+  const tokenCountUpdateRef = useRef(reportTokenCount)
+  tokenCountUpdateRef.current = reportTokenCount
   // One handler for every message. A fresh closure per message defeated the
   // message list's memoization, so each keystroke re-rendered the whole
   // conversation: markdown re-parsed and links remounted as the user typed.
@@ -430,7 +445,7 @@ function ChatPanel({
     onConversationCreated,
     onProjection: (projection) => {
       if (!openSubAgent)
-        onTokenCountUpdate?.(
+        reportTokenCount(
           contextTokens(projection.tokenUsage),
           selectedContextLength,
           projection.tokenUsage.contextLength
@@ -1116,7 +1131,7 @@ function ChatPanel({
         }, 50)
       } else if (completed && !failed && !leftRunningReply) {
         // A failed run is announced by the attention alert, which says what went wrong.
-        onResponseComplete?.('Response complete. Ready for your next message.')
+        onResponseComplete?.(conversationId, 'Response complete. Ready for your next message.')
       }
     }
   }

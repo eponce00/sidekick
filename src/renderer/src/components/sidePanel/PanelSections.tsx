@@ -15,6 +15,8 @@ import {
 } from './panelLayout'
 import './PanelSections.css'
 
+const NO_APPS: ReadonlySet<PanelApp> = new Set()
+
 export interface PanelAppInfo {
   label: string
   description: string
@@ -51,7 +53,8 @@ export function PanelSections({
   expanded = false,
   onToggleExpand,
   onTearOut,
-  elsewhere = {},
+  elsewhere = NO_APPS,
+  onShowElsewhere,
   arriving = null
 }: {
   layout: PanelLayout
@@ -66,8 +69,10 @@ export function PanelSections({
   onToggleExpand?: () => void
   /** A tab let go outside the window: it opens in a window of its own. */
   onTearOut?: (app: PanelApp, screen: { x: number; y: number }) => void
-  /** Apps open in windows of their own, each with how to bring its window forward. */
-  elsewhere?: Partial<Record<PanelApp, () => void>>
+  /** Apps open in windows of their own. */
+  elsewhere?: ReadonlySet<PanelApp>
+  /** Brings an app's own window forward. */
+  onShowElsewhere?: (app: PanelApp) => void
   /** An app just put back from its own window: its tab lights up as it lands. */
   arriving?: PanelApp | null
 }): React.JSX.Element {
@@ -324,8 +329,7 @@ export function PanelSections({
                         }
                         elsewhere={elsewhere}
                         onChoose={(app) => {
-                          const there = elsewhere[app]
-                          if (there) there()
+                          if (elsewhere.has(app)) onShowElsewhere?.(app)
                           else onChange(chooseApp(layout, tab.id, app))
                         }}
                       />
@@ -358,7 +362,7 @@ function PanelLauncher({
 }: {
   apps: Partial<Record<PanelApp, PanelAppInfo>>
   openApps: Set<PanelTabKind>
-  elsewhere: Partial<Record<PanelApp, () => void>>
+  elsewhere: ReadonlySet<PanelApp>
   onChoose: (app: PanelApp) => void
 }): React.JSX.Element {
   const entries = Object.entries(apps) as Array<[PanelApp, PanelAppInfo]>
@@ -371,7 +375,7 @@ function PanelLauncher({
         onKeyDown={moveLauncherFocus}
       >
         {entries.map(([app, info]) => {
-          const where = elsewhere[app]
+          const where = elsewhere.has(app)
             ? 'In a window of its own'
             : openApps.has(app)
               ? 'Open in another tab'

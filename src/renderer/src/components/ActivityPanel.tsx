@@ -621,9 +621,8 @@ function ActivityPanel({
               }
               onTearOut={tearOut}
               arriving={arriving}
-              elsewhere={Object.fromEntries(
-                [...detached].map((app) => [app, () => void showApp(app)])
-              )}
+              elsewhere={detached}
+              onShowElsewhere={showApp}
             />
           </div>
         ) : (
