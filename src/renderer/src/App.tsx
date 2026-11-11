@@ -231,10 +231,10 @@ function App(): React.JSX.Element {
   )
   const [isCompactActivityOpen, setIsCompactActivityOpen] = useState(false)
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
-  // Kept by the sidebar and the activity panel for keyboard navigation; reading
-  // them never needs a render.
-  const sidebarOrderRef = useRef<string[]>([])
-  const activityTabRef = useRef<string | null>(null)
+  // Reported by the sidebar and the activity panel, for keyboard navigation and the command
+  // palette. They change only when what those show changes.
+  const [sidebarOrder, setSidebarOrder] = useState<string[]>([])
+  const [activityTab, setActivityTab] = useState<string | null>(null)
   const [activityTabRequest, setActivityTabRequest] = useState<{
     tab: 'browser'
     at: number
@@ -388,7 +388,7 @@ function App(): React.JSX.Element {
     setIsActivityPanelPinned((prev) => !prev)
   }
   const toggleBrowserPanel = (): void => {
-    if (effectiveActivityPanelPinned && activityTabRef.current === 'browser') {
+    if (effectiveActivityPanelPinned && activityTab === 'browser') {
       toggleActivityPanel()
       return
     }
@@ -976,6 +976,11 @@ function App(): React.JSX.Element {
     }
   })
 
+  const openSettings = (): void => {
+    setSettingsInitialSection('general')
+    setIsSettingsOpen(true)
+  }
+
   useEffect(() => {
     appCommandHandlerRef.current = (command): void => {
       if (command === 'open-settings') {
@@ -989,19 +994,17 @@ function App(): React.JSX.Element {
   })
 
   const handleSidebarOrderChange = useCallback((conversationIds: string[]): void => {
-    sidebarOrderRef.current = conversationIds
+    setSidebarOrder((current) =>
+      current.length === conversationIds.length &&
+      current.every((id, index) => id === conversationIds[index])
+        ? current
+        : conversationIds
+    )
   }, [])
-  const handleActivityTabChange = useCallback((tab: string): void => {
-    activityTabRef.current = tab
-  }, [])
-
-  const openSettings = (): void => {
-    setSettingsInitialSection('general')
-    setIsSettingsOpen(true)
-  }
+  const handleActivityTabChange = useCallback((tab: string): void => setActivityTab(tab), [])
   const showAdjacentConversation = (direction: 1 | -1): void => {
     const shown = currentConversationId
-    const target = adjacentConversationId(sidebarOrderRef.current, shown, direction)
+    const target = adjacentConversationId(sidebarOrder, shown, direction)
     if (target && target !== shown) void handleSelectConversation(target)
   }
   const voiceAvailable = Boolean(voiceState?.enabled && window.api.voice)
@@ -1021,7 +1024,7 @@ function App(): React.JSX.Element {
       if (dialogOpen) return
       const jump = conversationJumpIndex(event, platform)
       if (jump !== null) {
-        const target = sidebarOrderRef.current[jump - 1]
+        const target = sidebarOrder[jump - 1]
         if (!target) return
         event.preventDefault()
         void handleSelectConversation(target)
@@ -1047,10 +1050,10 @@ function App(): React.JSX.Element {
         platform,
         conversations,
         projects,
-        sidebarOrder: sidebarOrderRef.current,
+        sidebarOrder,
         currentConversationId,
         sidebarCollapsed: effectiveSidebarCollapsed,
-        browserPanelOpen: effectiveActivityPanelPinned && activityTabRef.current === 'browser',
+        browserPanelOpen: effectiveActivityPanelPinned && activityTab === 'browser',
         voiceOn: voiceAvailable ? dictating : null,
         theme,
         actions: {
@@ -1255,6 +1258,25 @@ function App(): React.JSX.Element {
     [currentConversationIdRef, handleResponseComplete, markConversationRead]
   )
 
+  const handlePanelTokenCount = useCallback(
+    (conversationId: string | null, current: number, max: number, narrowedTo?: number): void => {
+      if (conversationId) {
+        tokenCountsByConversation.current.set(conversationId, { current, max, narrowedTo })
+      }
+      // A new chat's draft panel exists only while it is the one on screen.
+      if (conversationId === null || currentConversationIdRef.current === conversationId) {
+        handleTokenCountUpdate(current, max, narrowedTo)
+      }
+    },
+    [currentConversationIdRef, handleTokenCountUpdate]
+  )
+  const handlePanelCost = useCallback(
+    (conversationId: string | null, cost: number): void => {
+      if (currentConversationIdRef.current === conversationId) setConversationCost(cost)
+    },
+    [currentConversationIdRef]
+  )
+
   /** The quicker model a chat's provider names for titles, when it differs from the chat's own. */
   const fastModelFor = (model: PinnedModel | undefined, modelId: string): string | undefined => {
     const modelName = model?.providerModelId || model?.name || modelId
@@ -1304,8 +1326,9 @@ function App(): React.JSX.Element {
   const titleBarContext = currentConversationId
     ? currentConversation?.title || 'Conversation'
     : null
+  const currentProjectId = currentConversation?.project_id ?? null
+  const activeProjectName = activeProject?.name
   const welcomeSuggestions = useMemo(() => {
-    const currentProjectId = currentConversation?.project_id ?? null
     const recentConversationTitles = conversations
       .filter(
         (conversation) =>
@@ -1321,9 +1344,9 @@ function App(): React.JSX.Element {
 
     return createWelcomeSuggestions({
       recentConversationTitles,
-      projectName: activeProject?.name
+      projectName: activeProjectName
     })
-  }, [activeProject?.name, conversations, currentConversation?.project_id, currentConversationId])
+  }, [activeProjectName, conversations, currentProjectId, currentConversationId])
 
   const renderConversationPanel = (
     conversation: Conversation | null,
@@ -1392,26 +1415,8 @@ function App(): React.JSX.Element {
           selectedModel={panelModel.modelId}
           planningModelId={settings.planningModelId}
           onModelChange={(modelId) => handleModelChange(panelConversationId, modelId)}
-          onTokenCountUpdate={(current, max, narrowedTo) => {
-            if (panelConversationId) {
-              tokenCountsByConversation.current.set(panelConversationId, {
-                current,
-                max,
-                narrowedTo
-              })
-            }
-            if (
-              currentConversationIdRef.current === panelConversationId ||
-              (visible && panelConversationId === null)
-            ) {
-              handleTokenCountUpdate(current, max, narrowedTo)
-            }
-          }}
-          onConversationCostUpdate={(cost) => {
-            if (currentConversationIdRef.current === panelConversationId) {
-              setConversationCost(cost)
-            }
-          }}
+          onTokenCountUpdate={handlePanelTokenCount}
+          onConversationCostUpdate={handlePanelCost}
           onFocusChainUpdate={handleFocusChainUpdate}
           autoCompactEnabled={settings.autoCompactEnabled ?? true}
           autoCompactThreshold={settings.autoCompactThreshold ?? 0.8}
@@ -1420,9 +1425,7 @@ function App(): React.JSX.Element {
           commandPermissionMode={settings.commandPermissionMode ?? 'full-access'}
           onPermissionModeChange={handlePermissionModeChange}
           userLocation={userLocation}
-          onResponseComplete={(message) =>
-            handleConversationResponseComplete(panelConversationId, message)
-          }
+          onResponseComplete={handleConversationResponseComplete}
           focusReplyAt={
             focusReplyRequest && focusReplyRequest.conversationId === panelConversationId
               ? focusReplyRequest.at

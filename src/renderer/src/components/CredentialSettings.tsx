@@ -275,9 +275,10 @@ export function CredentialSettings({
     }
   }, [draft?.id])
 
+  const draftId = draft?.id
   const editing = useMemo(
-    () => (draft?.id ? credentials?.find((credential) => credential.id === draft.id) : undefined),
-    [credentials, draft?.id]
+    () => (draftId ? credentials?.find((credential) => credential.id === draftId) : undefined),
+    [credentials, draftId]
   )
   const shown = useMemo(() => {
     const words = query.trim().toLowerCase()
