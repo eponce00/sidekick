@@ -33,6 +33,7 @@ export function useConversationPanelRegistry(
   const [draftPanelKey, setDraftPanelKey] = useState(() => `draft:${crypto.randomUUID()}`)
   const releaseTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const currentConversationIdRef = useRef<string | null>(currentConversationId)
+  const unmountedRef = useRef(false)
 
   useEffect(() => {
     currentConversationIdRef.current = currentConversationId
@@ -45,6 +46,9 @@ export function useConversationPanelRegistry(
       clearTimeout(pendingRelease)
       releaseTimersRef.current.delete(conversationId)
     }
+    // A panel reports that it stopped from its own cleanup, which React runs after this hook's,
+    // so a release timer started then would outlive everything it updates.
+    if (unmountedRef.current) return
     if (busy) {
       setBusyConversationIds((current) => {
         if (current.has(conversationId)) return current
@@ -97,13 +101,15 @@ export function useConversationPanelRegistry(
     setConversationPanelKeys({})
   }, [])
 
-  useEffect(
-    () => () => {
-      for (const timer of releaseTimersRef.current.values()) clearTimeout(timer)
-      releaseTimersRef.current.clear()
-    },
-    []
-  )
+  useEffect(() => {
+    const releaseTimers = releaseTimersRef.current
+    unmountedRef.current = false
+    return () => {
+      unmountedRef.current = true
+      for (const timer of releaseTimers.values()) clearTimeout(timer)
+      releaseTimers.clear()
+    }
+  }, [])
 
   const mountedConversationIds = useMemo(() => {
     const knownIds = new Set(conversations.map(({ id }) => id))
