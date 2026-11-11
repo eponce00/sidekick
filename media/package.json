@@ -13,8 +13,8 @@
     "@remotion/cli": "4.0.540",
     "@remotion/google-fonts": "4.0.540",
     "@remotion/transitions": "4.0.540",
-    "react": "19.2.4",
-    "react-dom": "19.2.4",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "remotion": "4.0.540"
   }
 }
