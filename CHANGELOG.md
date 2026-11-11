@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.27.10 — 2026-11-11
+
+- Run on Electron 43.8.7, which brings the Node.js 24.22.1 security release, and on current
+  versions of the libraries that ship inside SideKick. None of them had a known vulnerability
+  left open.
+- Stop a chat panel that closes with the window from updating it a moment after it is gone.
+
 ## 0.27.9 — 2026-11-08
 
 - Use an OpenCode Go subscription through an existing OpenAI-compatible connection. Go model
