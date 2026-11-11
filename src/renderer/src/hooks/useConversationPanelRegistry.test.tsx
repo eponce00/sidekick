@@ -31,12 +31,20 @@ describe('useConversationPanelRegistry', () => {
   let registry: ConversationPanelRegistry
   const conversations = [conversation('a'), conversation('b')]
 
-  function Harness({ currentId }: { currentId: string | null }): null {
+  // Reports that it stopped from its own cleanup, as a chat panel does.
+  function Panel({
+    onBusyStateChange
+  }: Pick<ConversationPanelRegistry, 'onBusyStateChange'>): null {
+    useEffect(() => () => onBusyStateChange('a', false), [onBusyStateChange])
+    return null
+  }
+
+  function Harness({ currentId }: { currentId: string | null }): React.JSX.Element {
     const value = useConversationPanelRegistry(conversations, currentId)
     useEffect(() => {
       registry = value
     }, [value])
-    return null
+    return <Panel onBusyStateChange={value.onBusyStateChange} />
   }
 
   const render = async (currentId: string | null): Promise<void> => {
@@ -72,5 +80,14 @@ describe('useConversationPanelRegistry', () => {
     expect(registry.mountedConversationIds).toEqual(['b', 'a'])
     act(() => vi.advanceTimersByTime(150))
     expect(registry.mountedConversationIds).toEqual(['b'])
+  })
+
+  it('starts no timer for a panel that stops as the whole view unmounts', async () => {
+    await render('a')
+    act(() => registry.onBusyStateChange('a', true))
+    await act(async () => root.unmount())
+
+    expect(vi.getTimerCount()).toBe(0)
+    root = createRoot(container)
   })
 })
