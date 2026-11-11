@@ -22,6 +22,11 @@ updates:
       - dependency-name: '*'
         update-types: ['version-update:semver-major']
     groups:
+      # Electron alone: its pull request also needs .node-version moved to the Node.js it embeds,
+      # which Dependabot cannot do. See docs/development/DEPENDENCIES.md.
+      electron:
+        patterns: ['electron']
+        update-types: [minor, patch]
       # What ships inside SideKick, apart from what only builds and tests it.
       production:
         dependency-type: production
