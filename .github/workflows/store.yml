@@ -21,6 +21,11 @@ on:
 permissions:
   contents: read
 
+# A dependency's install script runs only when package.json's allowScripts names that exact
+# version; anything else fails the install. See docs/development/DEPENDENCIES.md.
+env:
+  npm_config_strict_allow_scripts: 'true'
+
 # One run at a time, so two runs never race to replace the same Partner Center submission.
 concurrency:
   group: store
@@ -127,11 +132,11 @@ jobs:
     timeout-minutes: 40
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.plan.outputs.ref }}
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: '.node-version'
           cache: npm
@@ -186,7 +191,7 @@ jobs:
           IDENTITY: ${{ vars.SIDEKICK_STORE_IDENTITY_NAME }}
           PUBLISHER: ${{ vars.SIDEKICK_STORE_PUBLISHER }}
       - name: Upload the Store package
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: SideKick-Microsoft-Store
           path: dist/SideKick-*-windows-x64-store.appx
@@ -194,7 +199,7 @@ jobs:
           retention-days: 30
       - name: Set up the Microsoft Store Developer CLI
         if: needs.plan.outputs.submit == 'true'
-        uses: microsoft/microsoft-store-apppublisher@v1.4
+        uses: microsoft/microsoft-store-apppublisher@cc9910a8d59f2eb55cbb83df0a3800cf3b5300e0 # v1.4
       - name: Submit the package for certification
         if: needs.plan.outputs.submit == 'true'
         shell: pwsh

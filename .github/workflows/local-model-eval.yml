@@ -34,6 +34,11 @@ on:
 permissions:
   contents: read
 
+# A dependency's install script runs only when package.json's allowScripts names that exact
+# version; anything else fails the install. See docs/development/DEPENDENCIES.md.
+env:
+  npm_config_strict_allow_scripts: 'true'
+
 concurrency:
   group: agent-system-eval
   cancel-in-progress: false
@@ -55,9 +60,9 @@ jobs:
       SIDEKICK_AGENT_EVAL_SUITE: ${{ inputs.system_suite }}
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: '.node-version'
           cache: npm
@@ -125,7 +130,7 @@ jobs:
 
       - name: Upload credential-free evaluation reports
         if: always() && hashFiles('artifacts/*.json') != ''
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: agent-system-eval-${{ github.run_number }}
           path: artifacts/*.json

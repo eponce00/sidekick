@@ -1,0 +1,70 @@
+# How SideKick keeps its dependencies current. The reasoning, and what to do with the pull requests
+# this opens, is in docs/development/DEPENDENCIES.md.
+#
+# Security fixes are not scheduled here: Dependabot opens those as soon as an advisory is published,
+# whatever the schedule, cooldown, ignore rules or limits below say.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    # A release has to be public for a week first. Most hijacked packages are caught and removed
+    # within days, so the wait keeps them out without any other tooling.
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    # A major version is a decision, not a routine update. The monthly dependency review lists
+    # the ones waiting.
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+    groups:
+      # What ships inside SideKick, apart from what only builds and tests it.
+      production:
+        dependency-type: production
+        update-types: [minor, patch]
+      development:
+        dependency-type: development
+        update-types: [minor, patch]
+      security:
+        applies-to: security-updates
+        patterns: ['*']
+
+  # The Remotion tooling that renders the README animations. It never ships.
+  - package-ecosystem: npm
+    directory: /media
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+    groups:
+      media:
+        patterns: ['*']
+
+  # scripts/requirements-*.txt record the versions a model build or a CI helper was run with, so
+  # they only move for a security fix.
+  - package-ecosystem: pip
+    directory: /scripts
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 0
+
+  # Workflow actions are pinned to a commit; this moves the pin and its version comment together.
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/prepare
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ['*']

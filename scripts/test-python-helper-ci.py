@@ -22,7 +22,7 @@ class PythonHelperCIContract(unittest.TestCase):
 
     def test_workflow_is_explicit_cross_platform_and_independent(self):
         workflow = (ROOT / ".github/workflows/python-helpers.yml").read_text(encoding="utf-8")
-        for required in ("contents: read", "actions/checkout@v7", "actions/setup-python@v7",
+        for required in ("contents: read", "actions/checkout@", "actions/setup-python@",
                          "python-version: '3.13'", "timeout-minutes: 10",
                          "os: [windows-latest, macos-15, ubuntu-22.04]",
                          "python -B scripts/test-python-helper-ci.py",

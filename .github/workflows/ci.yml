@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+# A dependency's install script runs only when package.json's allowScripts names that exact
+# version; anything else fails the install. See docs/development/DEPENDENCIES.md.
+env:
+  npm_config_strict_allow_scripts: 'true'
+
 # A newer push to the same pull request makes its running checks moot.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -24,14 +29,26 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/prepare
+      # Refuses a pull request that adds or updates a dependency to a version with a known
+      # vulnerability, in any lockfile, requirements file or workflow.
+      - name: Review the dependencies this pull request changes
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run docs:check
       - run: npm run test:docs
       - run: npm run test:coverage
       - run: npm audit --omit=dev --audit-level=high
+      - name: Audit the README media tooling
+        working-directory: media
+        run: npm audit --package-lock-only --audit-level=high
+      # Every installed package must carry the registry's signature for exactly these bytes.
+      - run: npm audit signatures
       # The suite already holds the recorded budget to the source; this refuses a pull request
       # that raises it. Labels are read when the step runs, so labelling and re-running is enough.
       - name: Check the per-turn agent context did not grow
@@ -70,7 +87,7 @@ jobs:
             os: macos-15
             shard: 1/1
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/prepare
       - run: npm test -- --shard=${{ matrix.shard }}
 
@@ -95,13 +112,13 @@ jobs:
             smoke: linux
             executable: dist/linux-unpacked/io.github.eponce00.sidekick
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/prepare
         id: prepare
 
       # electron-builder downloads the Electron release it packages on every run otherwise.
       - name: Restore Electron downloads
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cache/electron
