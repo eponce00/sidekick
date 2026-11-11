@@ -1,0 +1,47 @@
+name: Dependency review
+
+# Once a month, posts what the automatic updates leave for a person: vulnerabilities that have no
+# fix to merge yet, and major versions waiting. See docs/development/DEPENDENCIES.md.
+on:
+  schedule:
+    - cron: '0 7 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  npm_config_strict_allow_scripts: 'true'
+
+jobs:
+  report:
+    name: Post the monthly review
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # `npm outdated` compares against what is installed.
+      - uses: ./.github/actions/prepare
+        with:
+          linux-desktop: 'false'
+      - name: Write the report
+        run: node scripts/dependency-report.cjs > "$RUNNER_TEMP/report.md"
+      # One open issue at a time: a review nobody has closed is updated, with a comment so that
+      # the update is seen.
+      - name: Open or update the review issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TITLE: Monthly dependency review
+        run: |
+          open=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title \
+            --jq "[.[] | select(.title == \"$TITLE\")][0].number // empty")
+          if [ -n "$open" ]; then
+            gh issue edit "$open" --body-file "$RUNNER_TEMP/report.md"
+            gh issue comment "$open" --body "Updated with this month's report."
+          else
+            gh issue create --title "$TITLE" --body-file "$RUNNER_TEMP/report.md"
+          fi

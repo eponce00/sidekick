@@ -45,6 +45,7 @@ behavior, and the development guide when testing or publishing it.
 - [UI guidelines](development/UI.md) — visual and interaction conventions.
 - [README media](development/MEDIA.md) — how the README's animations are recorded from the real app and rendered.
 - [Releases](development/RELEASES.md) — permanent zero-cost distribution, packaging, provenance, and release checks.
+- [Dependencies](development/DEPENDENCIES.md) — how packages, actions and Electron are kept current and safe to install, and the weekly and monthly routine.
 - [Code signing policy](development/CODE_SIGNING.md) — what is signed through SignPath Foundation, by whom, and how.
 - [Reference repositories](development/REFERENCES.md) — upstream research and attribution policy.
 - [Voice models](development/VOICE_MODELS.md) — where the speech models come from, how the dictation model is built, and how to replace one.

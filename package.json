@@ -59,6 +59,7 @@
     "test:real-world-eval": "node scripts/run-real-world-eval.cjs",
     "test:system-eval": "node scripts/run-agent-system-eval.cjs",
     "audit:runs": "node scripts/audit-runs.cjs",
+    "deps:report": "node scripts/dependency-report.cjs",
     "test:behavior": "node --test scripts/electron-behavior.test.cjs scripts/electron-chat-family.test.cjs",
     "test:native-browser-smoke": "node scripts/run-native-browser-smoke.cjs",
     "test:native-browser-fixtures": "node scripts/run-native-browser-smoke.cjs --fixture-only",
@@ -154,7 +155,7 @@
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
-    "@vitest/coverage-v8": "^4.1.10",
+    "@vitest/coverage-v8": "^4.1.12",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
     "electron": "43.8.3",
@@ -171,11 +172,11 @@
     "react-dom": "^19.2.1",
     "typescript": "^5.9.3",
     "vite": "^7.3.7",
-    "vitest": "^4.1.11",
+    "vitest": "^4.1.12",
     "yaml": "^2.9.0"
   },
   "overrides": {
-    "@hono/node-server": "2.0.11",
+    "@hono/node-server": "2.1.6",
     "katex": "0.18.11"
   }
 }

@@ -47,8 +47,11 @@ Run the merge gate before opening a pull request:
 ```bash
 npm run check
 npm run test:e2e
-npm audit --audit-level=moderate
+npm audit --omit=dev --audit-level=high
 ```
+
+Add or update a dependency the way the [dependency guide](docs/development/DEPENDENCIES.md)
+describes.
 
 Platform-specific packaging changes should also run the relevant package validation and smoke test
 described in the [testing guide](docs/development/TESTING.md).

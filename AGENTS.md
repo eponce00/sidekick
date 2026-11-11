@@ -78,6 +78,8 @@ release test fails under any other version.
 - CSS uses the design tokens (`--surface-*`, `--text-*`, `--accent`, `--error`, …), never
   hard-coded colors, and every UI works in light and dark themes.
 - Commit titles say what changed for the user in the imperative; the body says why.
+- Add or update a dependency, a workflow action or an install-script approval only as the
+  [dependency guide](docs/development/DEPENDENCIES.md) describes.
 - Use authoritative upstream documentation for protocol details. Record material reference-repo
   influence according to [Reference repositories](docs/development/REFERENCES.md), and keep the
   license notice on any adapted code.

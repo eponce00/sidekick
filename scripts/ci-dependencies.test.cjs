@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict')
-const { readFileSync } = require('node:fs')
+const { readdirSync, readFileSync } = require('node:fs')
 const { join } = require('node:path')
 const { test } = require('node:test')
 const YAML = require('yaml')
@@ -55,6 +55,20 @@ test('any change to what npm ci installs changes the key', () => {
 const yaml = (...path) =>
   YAML.parse(readFileSync(join(__dirname, '..', '.github', ...path), 'utf8'))
 const prepare = yaml('actions', 'prepare', 'action.yml')
+
+// A tag can be moved to other code after review; a commit cannot.
+test('every action a workflow runs is pinned to a commit', () => {
+  const workflows = join(__dirname, '..', '.github', 'workflows')
+  const steps = [
+    ...prepare.runs.steps,
+    ...readdirSync(workflows).flatMap((file) =>
+      Object.values(yaml('workflows', file).jobs).flatMap((job) => job.steps ?? [])
+    )
+  ]
+  const actions = steps.map((step) => step.uses).filter((uses) => uses && !uses.startsWith('./'))
+  assert.ok(actions.length >= 30)
+  for (const uses of actions) assert.match(uses, /@[0-9a-f]{40}$/, `${uses} must name a commit`)
+})
 
 test('every clean install gets one more attempt after a transient failure', () => {
   const jobs = [
