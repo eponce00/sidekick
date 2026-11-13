@@ -34,15 +34,17 @@ Each one stops a different kind of failure, so none of them is optional.
   person updating by hand passes `--min-release-age=7`. Security fixes skip the wait.
 - **Workflow actions are pinned to a commit.** A tag can be moved to different code after it was
   reviewed. A commit cannot. A test in `scripts/ci-dependencies.test.cjs` fails on any action named
-  by tag.
+  by tag, and the repository's Actions settings refuse to run one.
 - **Packages are checked against the registry's signature.** `npm audit signatures` in CI fails
   when an installed package is not the one the registry signed.
 - **Known vulnerabilities stop a merge.** On a pull request, the dependency review refuses a
   dependency that is added or updated to a version with a known vulnerability of moderate severity
   or higher. On every run, `npm audit` fails on a high or critical vulnerability in anything that
   ships in the app or in the media tooling.
-- **GitHub watches the rest.** Dependabot alerts, Dependabot security updates, secret scanning with
-  push protection, and private vulnerability reporting are all turned on for the repository.
+- **GitHub watches the rest.** Dependabot alerts, Dependabot security updates, CodeQL code
+  scanning, secret scanning with push protection, and private vulnerability reporting are all
+  turned on for the repository. CodeQL runs GitHub's default setup on every pull request and each
+  week; its alerts are handled like a Dependabot alert.
 
 Dependabot does this work, rather than a separate service, because it is part of GitHub: there is
 no other application to give write access to the repository, and nothing to pay for.

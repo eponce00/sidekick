@@ -11,9 +11,9 @@ what is not done.
   `--no-sandbox`.
 - **Microsoft Store package.** The Store package cannot run installer scripts. Declare an
   `AppExecutionAlias` for the command, or document that Store installs have no command line.
-- **Electron fuses.** The command runs the app's executable as Node through
-  `ELECTRON_RUN_AS_NODE`. If the release ever disables the `RunAsNode` fuse, which hardening guides
-  recommend, the command needs its own small launcher first.
+- **The `RunAsNode` fuse.** Packaged builds set Electron's other fuses, but leave this one on,
+  because the command runs the app's executable as Node through `ELECTRON_RUN_AS_NODE`. Turning it
+  off, which hardening guides recommend, needs the command to have its own small launcher first.
 - **Starting the app.** A `--start` option could launch SideKick normally, with its window, and
   wait for the endpoint. Starting it headlessly stays out of scope, because approvals are dialogs in
   that window.

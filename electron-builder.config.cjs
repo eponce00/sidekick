@@ -43,6 +43,19 @@ module.exports = {
   // sherpa-onnx loads native libraries that the OS cannot read from inside app.asar, and
   // node-pty starts its own helpers (Windows' console host, a macOS spawn helper) from disk.
   asarUnpack: ['resources/**', '**/node_modules/sherpa-onnx-*/**', '**/node_modules/node-pty/**'],
+  // Packaged builds load only a validated app.asar and encrypt the browser's cookies, which hold
+  // the user's sign-ins. Running as Node stays on for the `sidekick` command, and NODE_OPTIONS
+  // because NODE_EXTRA_CA_CERTS, which a company's TLS proxy may need, goes with it. --inspect stays
+  // on because Playwright drives the packaged journeys through it. The renderer is a file:// page,
+  // so file:// keeps its privileges.
+  electronFuses: {
+    runAsNode: true,
+    enableNodeOptionsEnvironmentVariable: true,
+    enableNodeCliInspectArguments: true,
+    enableEmbeddedAsarIntegrityValidation: true,
+    onlyLoadAppFromAsar: true,
+    enableCookieEncryption: true
+  },
   win: {
     executableName: identity.productName,
     icon: 'build/icon.ico',

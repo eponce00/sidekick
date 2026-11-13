@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
-const { existsSync, readdirSync } = require('node:fs')
+const { existsSync, readdirSync, readFileSync } = require('node:fs')
 const { join, resolve } = require('node:path')
 const { listPackage } = require('@electron/asar')
+const identity = require('../src/shared/productIdentity.json')
 
 const FORBIDDEN_ROOTS = new Set([
   '.claude',
@@ -38,6 +39,18 @@ const PDF_NATIVE_BINDINGS = {
   'linux-x64': ['node_modules', '@napi-rs', 'canvas-linux-x64-gnu', 'skia.linux-x64-gnu.node'],
   'win32-x64': ['node_modules', '@napi-rs', 'canvas-win32-x64-msvc', 'skia.win32-x64-msvc.node']
 }
+
+// Electron's fuse wire: this marker, a version byte, a length byte, then one byte per fuse.
+const FUSE_SENTINEL = Buffer.from('dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX')
+// The fuses electron-builder.config.cjs sets, by their position in version 1 of the wire.
+const REQUIRED_FUSES = [
+  ['RunAsNode', '1'],
+  ['EnableCookieEncryption', '1'],
+  ['EnableNodeOptionsEnvironmentVariable', '1'],
+  ['EnableNodeCliInspectArguments', '1'],
+  ['EnableEmbeddedAsarIntegrityValidation', '1'],
+  ['OnlyLoadAppFromAsar', '1']
+]
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -85,6 +98,33 @@ function requiredPdfNativeBinding(platform = process.platform, arch = process.ar
   return binding
 }
 
+function validateFuseWire(binary) {
+  const start = binary.indexOf(FUSE_SENTINEL)
+  assert(start !== -1, 'Packaged Electron binary has no fuse wire')
+  const wire = start + FUSE_SENTINEL.length
+  assert(binary[wire] === 1, `Packaged Electron binary has fuse wire version ${binary[wire]}`)
+  assert(binary[wire + 1] >= REQUIRED_FUSES.length, 'Packaged Electron fuse wire is too short')
+  REQUIRED_FUSES.forEach(([name, expected], index) => {
+    const actual = String.fromCharCode(binary[wire + 2 + index])
+    assert(actual === expected, `Packaged Electron fuse ${name} is ${actual}, expected ${expected}`)
+  })
+}
+
+/** The file holding the fuse wire, relative to the packaged resources directory. */
+function fuseBinaryPath(resourcesDirectory, platform = process.platform) {
+  if (platform === 'darwin') {
+    return join(
+      resourcesDirectory,
+      '..',
+      'Frameworks',
+      'Electron Framework.framework',
+      'Electron Framework'
+    )
+  }
+  if (platform === 'win32') return join(resourcesDirectory, '..', `${identity.productName}.exe`)
+  return join(resourcesDirectory, '..', identity.appId)
+}
+
 function validatePackagedApp(resourcesDirectory) {
   const root = resolve(resourcesDirectory)
   const asarPath = join(root, 'app.asar')
@@ -99,6 +139,7 @@ function validatePackagedApp(resourcesDirectory) {
   }
   const nativeBinding = join(unpackedRoot, ...requiredPdfNativeBinding())
   assert(existsSync(nativeBinding), `Packaged app is missing PDF native renderer: ${nativeBinding}`)
+  validateFuseWire(readFileSync(fuseBinaryPath(root)))
 }
 
 if (require.main === module) {
@@ -112,4 +153,10 @@ if (require.main === module) {
   }
 }
 
-module.exports = { requiredPdfNativeBinding, validatePackageEntries, validateResourceEntries }
+module.exports = {
+  fuseBinaryPath,
+  requiredPdfNativeBinding,
+  validateFuseWire,
+  validatePackageEntries,
+  validateResourceEntries
+}
