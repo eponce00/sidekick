@@ -66,6 +66,15 @@ and the physical release matrix are specified in [Desktop integration](DESKTOP_I
 
 The renderer is treated as potentially compromised. Commands, workspace mutations, MCP calls, checkpoint restoration, sensitive settings, navigation, shell integration, and external URLs are validated or authorized in the main process. Renderer-side confirmation is usability, not authority.
 
+Packaged builds set Electron's fuses in `electron-builder.config.cjs`. The app loads its code only
+from `app.asar`, which macOS and Windows check against a hash in the signed executable. The
+`--inspect` flags are ignored, and cookies on disk, which hold the in-app browser's sign-ins, are
+encrypted with the operating system's key. Two fuses stay on: running as Node, which the
+[`sidekick` command](../user-guide/COMMAND_LINE.md) uses, and `NODE_OPTIONS`, because turning it
+off also drops `NODE_EXTRA_CA_CERTS`, which some company networks need. The renderer is loaded from a
+local file, so local files keep Electron's extra privileges. The packaged-content audit reads the
+fuses back from the built binary.
+
 ## Workspace mutation engine
 
 Direct chats and project-agent chats share one trusted mutation contract from

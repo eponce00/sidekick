@@ -3,6 +3,7 @@ const assert = require('node:assert/strict')
 const builder = require('../electron-builder.config.cjs')
 const {
   requiredPdfNativeBinding,
+  validateFuseWire,
   validatePackageEntries,
   validateResourceEntries
 } = require('./validate-packaged-app.cjs')
@@ -186,4 +187,18 @@ test('rejects legacy automatic-updater configuration from packaged resources', (
     () => validateResourceEntries(['app.asar', 'app-update.yml']),
     /obsolete updater configuration/
   )
+})
+
+test('rejects a packaged binary whose fuses were not flipped', () => {
+  const binary = (fuses) =>
+    Buffer.concat([
+      Buffer.from('ELF...dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX'),
+      Buffer.from([1, 8]),
+      Buffer.from(fuses)
+    ])
+  assert.doesNotThrow(() => validateFuseWire(binary('11101101')))
+  // Electron's defaults: the inspector open, and app code loadable from outside app.asar.
+  assert.throws(() => validateFuseWire(binary('10110001')), /EnableCookieEncryption is 0/)
+  assert.throws(() => validateFuseWire(binary('11111101')), /EnableNodeCliInspectArguments is 1/)
+  assert.throws(() => validateFuseWire(Buffer.from('no wire')), /no fuse wire/)
 })

@@ -245,8 +245,8 @@ The gates run in parallel jobs, each on a fresh runner that installs from a clea
 restores no installed dependencies. One Linux job runs typechecks, lint, and documentation
 validation. The test suite runs on all three platforms, Windows split across two machines. Beside
 them, a packaging job per platform runs the release validator tests, a packaged build (which
-typechecks again), an isolated real-Electron critical journey, a packaged-content audit, and a
-launch smoke test.
+typechecks again), an isolated real-Electron critical journey, a packaged-content audit that also
+reads back Electron's fuses, and a launch smoke test.
 
 Windows verifies that its NSIS installer is unsigned. With SignPath configured, a separate job
 submits it for signing only after every other job has passed, then verifies that the signed copy
@@ -282,7 +282,8 @@ The publisher starts only after every job has passed. It installs no packages, a
 
 If publication fails after draft creation, inspect the draft and workflow logs. A failed,
 never-published draft may be deleted before a clean rerun. Never delete, replace, or reuse a
-published version or source tag.
+published version or source tag; the repository's Release tags ruleset refuses moving or deleting
+any `v*` tag.
 
 ## Creating and proving a release
 
