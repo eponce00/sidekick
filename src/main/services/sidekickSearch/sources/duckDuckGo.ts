@@ -1,12 +1,12 @@
 import { JSDOM } from 'jsdom'
-import type { SearchSource } from '../source'
+import { isHostOrSubdomain, type SearchSource } from '../source'
 import { fetchSearchDocument, normalizedText } from '../searchHttp'
 import type { SourceSearchResult } from '../types'
 
 function unwrapDuckDuckGoUrl(value: string): string {
   try {
     const url = new URL(value.startsWith('//') ? `https:${value}` : value)
-    if (url.hostname.endsWith('duckduckgo.com') && url.pathname === '/l/') {
+    if (isHostOrSubdomain(url.hostname, 'duckduckgo.com') && url.pathname === '/l/') {
       return url.searchParams.get('uddg') || value
     }
     return url.toString()
