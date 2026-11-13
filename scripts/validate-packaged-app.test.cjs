@@ -196,9 +196,9 @@ test('rejects a packaged binary whose fuses were not flipped', () => {
       Buffer.from([1, 8]),
       Buffer.from(fuses)
     ])
-  assert.doesNotThrow(() => validateFuseWire(binary('11101101')))
-  // Electron's defaults: the inspector open, and app code loadable from outside app.asar.
+  assert.doesNotThrow(() => validateFuseWire(binary('11111101')))
+  // Electron's defaults: plaintext cookies, and app code loadable from outside app.asar.
   assert.throws(() => validateFuseWire(binary('10110001')), /EnableCookieEncryption is 0/)
-  assert.throws(() => validateFuseWire(binary('11111101')), /EnableNodeCliInspectArguments is 1/)
+  assert.throws(() => validateFuseWire(binary('11111001')), /OnlyLoadAppFromAsar is 0/)
   assert.throws(() => validateFuseWire(Buffer.from('no wire')), /no fuse wire/)
 })

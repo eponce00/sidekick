@@ -47,7 +47,7 @@ const REQUIRED_FUSES = [
   ['RunAsNode', '1'],
   ['EnableCookieEncryption', '1'],
   ['EnableNodeOptionsEnvironmentVariable', '1'],
-  ['EnableNodeCliInspectArguments', '0'],
+  ['EnableNodeCliInspectArguments', '1'],
   ['EnableEmbeddedAsarIntegrityValidation', '1'],
   ['OnlyLoadAppFromAsar', '1']
 ]
