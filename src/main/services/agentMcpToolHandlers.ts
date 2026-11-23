@@ -1,4 +1,5 @@
 import { toolExecutionFailed, toolExecutionSucceeded } from '../../shared/agentRuntime'
+import { mcpDirectoryText, type McpDirectoryEntry } from '../../shared/agentToolCatalog'
 import type { McpToolInfo } from '../../shared/types'
 import type { McpClientManager } from './mcpClientManager'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
@@ -37,31 +38,73 @@ export function mcpResultText(value: unknown): string {
   return parts.filter(Boolean).join('\n')
 }
 
+/** Words too common to tell one tool from another. */
+const STOP_WORDS = new Set(
+  'a an and are as at be by can do for from get how i in is it me my of on or the this to use using want with tool tools mcp server connector'.split(
+    ' '
+  )
+)
+
+function stem(word: string): string {
+  if (word.length > 4 && word.endsWith('ies')) return `${word.slice(0, -3)}y`
+  if (word.length > 3 && word.endsWith('s') && !word.endsWith('ss')) return word.slice(0, -1)
+  return word
+}
+
+function words(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((word) => word.length > 1 && !STOP_WORDS.has(word))
+      .map(stem)
+  )
+}
+
+/**
+ * The tools a search finds, best first. A tool or connector named exactly comes first; otherwise
+ * a word in a tool's or connector's name counts more than one in its description. A tool needs
+ * only one matching word: models search in sentences, and requiring every word found nothing.
+ */
+export function rankMcpTools(
+  query: string,
+  available: ReadonlyMap<string, McpToolInfo>,
+  limit: number
+): string[] {
+  const exact = query.trim().toLowerCase()
+  const terms = words(query)
+  return [...available]
+    .map(([functionName, tool], order) => {
+      const names = [functionName, tool.name, `${tool.serverName}/${tool.name}`]
+      let score = names.some((name) => name.toLowerCase() === exact) ? 100 : 0
+      const named = words(`${tool.serverId} ${tool.serverName} ${tool.name}`)
+      const described = words(tool.description || '')
+      for (const term of terms) score += named.has(term) ? 3 : described.has(term) ? 1 : 0
+      return { functionName, score, order }
+    })
+    .filter(({ score }) => score > 0)
+    .sort((left, right) => right.score - left.score || left.order - right.order)
+    .slice(0, limit)
+    .map(({ functionName }) => functionName)
+}
+
 export function registerMcpToolHandlers(
   registry: AgentToolHandlerRegistry,
   options: {
     mcp: McpClientManager
     available: Map<string, McpToolInfo>
+    /** What the model is told exists, for a search that finds nothing. */
+    directory: readonly McpDirectoryEntry[]
     enabled: Map<string, McpToolInfo>
     readReceipts: Map<string, string>
     outputs: ToolOutputStore
   }
 ): void {
   registry.register('search_tools', async ({ title, arguments: args }) => {
-    const terms = String(args.query || '')
-      .toLowerCase()
-      .split(/\s+/)
-      .filter(Boolean)
     const limit = bounded(args.max_results, 6, 1, 12)
-    const matches = [...options.available.entries()]
-      .map(([functionName, tool]) => ({
-        functionName,
-        tool,
-        haystack:
-          `${functionName} ${tool.serverName} ${tool.name} ${tool.description || ''}`.toLowerCase()
-      }))
-      .filter(({ haystack }) => terms.every((term) => haystack.includes(term)))
-      .slice(0, limit)
+    const matches = rankMcpTools(String(args.query || ''), options.available, limit).map(
+      (functionName) => ({ functionName, tool: options.available.get(functionName)! })
+    )
     for (const { functionName, tool } of matches) options.enabled.set(functionName, tool)
     const data = matches.map(({ functionName, tool }) => ({
       name: functionName,
@@ -72,8 +115,10 @@ export function registerMcpToolHandlers(
       title,
       data,
       modelContent: matches.length
-        ? `Enabled ${matches.length} matching tool(s): ${matches.map(({ functionName }) => functionName).join(', ')}`
-        : 'No matching MCP tools found.'
+        ? `Enabled ${matches.length} tool(s), callable from your next turn:\n${matches
+            .map(({ functionName, tool }) => `- ${functionName} (${tool.serverName}: ${tool.name})`)
+            .join('\n')}`
+        : `No MCP tool matched. Search again with one of these names.\n${mcpDirectoryText(options.directory)}`
     })
   })
 

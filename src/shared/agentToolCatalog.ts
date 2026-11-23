@@ -37,6 +37,14 @@ import { webMcpSite } from './webMcp'
 
 export const WEB_ARTIFACTS_SKILL_ID = 'web-artifacts'
 
+/** One MCP connector as the model is told about it before it searches. */
+export interface McpDirectoryEntry {
+  server: string
+  tools: readonly string[]
+  /** Set when the connector is configured but can't be used, such as a failed start. */
+  problem?: string
+}
+
 export interface AgentToolCatalogOptions {
   surface: AgentRunSurface
   webSearchEnabled?: boolean
@@ -52,6 +60,8 @@ export interface AgentToolCatalogOptions {
   capabilities?: readonly AgentCapability[]
   mcpTools?: readonly AgentToolDefinition[]
   mcpToolRisks?: Readonly<Record<string, ToolRisk>>
+  /** The user's MCP connectors this run can reach, or why one can't be reached. */
+  mcpDirectory?: readonly McpDirectoryEntry[]
   goalEnabled?: boolean
   codeIntelligenceAvailable?: boolean
   codeIntelligenceRisk?: ToolRisk
@@ -1673,18 +1683,50 @@ const toolOutput = definition(
   }
 )
 
-const searchTools = definition(
-  'search_tools',
-  'Discover MCP tools relevant to the current task. Matching tools become available for the next model turn, avoiding a large always-on tool catalog.',
-  {
-    type: 'object',
-    required: ['query'],
-    properties: {
-      query: { type: 'string', description: 'Capability, service, or action to find.' },
-      max_results: { type: 'number', minimum: 1, maximum: 12 }
+/** Longest list of connector tool names written into the search tool's description. */
+const MAX_DIRECTORY_CHARACTERS = 2_000
+
+/**
+ * The search tool names what is there to find. A model that doesn't know which connectors exist
+ * guesses at words, and its searches came back empty.
+ */
+export function mcpDirectoryText(directory: readonly McpDirectoryEntry[]): string {
+  const lines: string[] = []
+  let used = 0
+  for (const { server, tools, problem } of directory) {
+    if (problem) {
+      lines.push(`- ${server}: not available (${problem.slice(0, 200)})`)
+      continue
     }
+    const shown: string[] = []
+    for (const tool of tools) {
+      if (used + tool.length > MAX_DIRECTORY_CHARACTERS) break
+      shown.push(tool)
+      used += tool.length + 2
+    }
+    const rest = tools.length - shown.length
+    lines.push(`- ${server}: ${shown.join(', ')}${rest ? `, and ${rest} more` : ''}`)
   }
-)
+  return lines.join('\n')
+}
+
+function searchToolsDefinition(directory: readonly McpDirectoryEntry[]): AgentToolDefinition {
+  return definition(
+    'search_tools',
+    `Make the user's MCP connector tools available. Matching tools can be called from your next turn. Search with a tool's name, its connector's name, or words for what you need; results are ranked by how many words match.\n\nConnectors and their tools:\n${mcpDirectoryText(directory)}`,
+    {
+      type: 'object',
+      required: ['query'],
+      properties: {
+        query: {
+          type: 'string',
+          description: 'A tool name, a connector name, or words for the capability needed.'
+        },
+        max_results: { type: 'number', minimum: 1, maximum: 12 }
+      }
+    }
+  )
+}
 
 const createArtifact = definition(
   'create_artifact',
@@ -1762,11 +1804,6 @@ const coreEntries: AgentToolCatalogEntry[] = [
   entry(useSkill, 'skills', 'read'),
   entry(askUser, 'wait', 'read'),
   entry(toolOutput, 'tool.output', 'read', {
-    host: 'main',
-    timeoutMs: 10_000,
-    concurrency: 'parallel'
-  }),
-  entry(searchTools, 'mcp', 'read', {
     host: 'main',
     timeoutMs: 10_000,
     concurrency: 'parallel'
@@ -2089,6 +2126,16 @@ export function getAgentToolCatalog(options: AgentToolCatalogOptions): AgentTool
     ...SKILLS_WITH_GATED_TOOLS.filter((skillId) =>
       options.activeSkillIds?.includes(skillId)
     ).flatMap(getSkillToolCatalogEntries),
+    // Offered only when the user has a connector, so other runs don't spend a call on it.
+    ...(options.mcpDirectory?.length
+      ? [
+          entry(searchToolsDefinition(options.mcpDirectory), 'mcp', 'read', {
+            host: 'main',
+            timeoutMs: 10_000,
+            concurrency: 'parallel'
+          })
+        ]
+      : []),
     ...(options.mcpTools ?? []).map((tool) =>
       entry(tool, 'mcp', options.mcpToolRisks?.[tool.function.name] ?? 'network')
     )

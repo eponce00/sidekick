@@ -278,48 +278,55 @@ export class McpClientManager {
         this.connections.delete(id)
       }
     }
-    for (const config of enabled.values()) {
-      if (this.connections.has(config.id)) continue
-      if (!this.trust.isApproved(config)) {
-        this.connectionErrors.set(config.id, {
-          config,
-          error: 'This connector is new or changed. Approve it in Settings before it runs.',
-          status: 'needs_approval'
-        })
-        continue
-      }
-      let authProvider: OAuthClientProvider | undefined
-      if (config.transport === 'streamable-http' && config.authentication === 'oauth') {
-        authProvider = await this.oauth().providerForExistingSession(config)
-        if (!authProvider) {
-          this.connectionErrors.set(config.id, {
-            config,
-            error: 'OAuth sign-in is required.',
-            status: 'needs_auth'
-          })
-          continue
-        }
-      }
-      const adapter = this.createConnection(config, {
-        authProvider,
-        environment: this.trust.environment(config)
+    // Each connector starts on its own: one slow to start, such as an npx download, or one that
+    // never answers, no longer holds up the rest.
+    await Promise.all(
+      [...enabled.values()]
+        .filter((config) => !this.connections.has(config.id))
+        .map((config) => this.start(config))
+    )
+  }
+
+  private async start(config: McpServerConfig): Promise<void> {
+    if (!this.trust.isApproved(config)) {
+      this.connectionErrors.set(config.id, {
+        config,
+        error: 'This connector is new or changed. Approve it in Settings before it runs.',
+        status: 'needs_approval'
       })
-      try {
-        await withDeadline(
-          adapter.connect(),
-          `Connecting to MCP server ${config.name}`,
-          CONNECT_TIMEOUT_MS
-        )
-        this.connections.set(config.id, { config, adapter })
-        this.connectionErrors.delete(config.id)
-      } catch (error) {
+      return
+    }
+    let authProvider: OAuthClientProvider | undefined
+    if (config.transport === 'streamable-http' && config.authentication === 'oauth') {
+      authProvider = await this.oauth().providerForExistingSession(config)
+      if (!authProvider) {
         this.connectionErrors.set(config.id, {
           config,
-          error: errorMessage(error),
-          status: failureStatus(error)
+          error: 'OAuth sign-in is required.',
+          status: 'needs_auth'
         })
-        await this.closeConnection(adapter)
+        return
       }
+    }
+    const adapter = this.createConnection(config, {
+      authProvider,
+      environment: this.trust.environment(config)
+    })
+    try {
+      await withDeadline(
+        adapter.connect(),
+        `Connecting to MCP server ${config.name}`,
+        CONNECT_TIMEOUT_MS
+      )
+      this.connections.set(config.id, { config, adapter })
+      this.connectionErrors.delete(config.id)
+    } catch (error) {
+      this.connectionErrors.set(config.id, {
+        config,
+        error: errorMessage(error),
+        status: failureStatus(error)
+      })
+      await this.closeConnection(adapter)
     }
   }
 
@@ -407,13 +414,28 @@ export class McpClientManager {
     await this.syncQueue
     const tools: McpToolInfo[] = []
     const statuses: McpServerStatus[] = []
-    for (const [serverId, connection] of [...this.connections]) {
-      try {
-        const page = await withDeadline(
-          connection.adapter.listTools(),
-          `Listing tools from MCP server ${connection.config.name}`,
-          LIST_TIMEOUT_MS
-        )
+    // Asked all at once, then reported in the order the user listed the connectors, not the order
+    // they happened to start in.
+    const order = [...this.configs.keys()]
+    const connected = [...this.connections].sort(
+      ([left], [right]) => order.indexOf(left) - order.indexOf(right)
+    )
+    const listed = await Promise.all(
+      connected.map(async ([serverId, connection]) => {
+        try {
+          const page = await withDeadline(
+            connection.adapter.listTools(),
+            `Listing tools from MCP server ${connection.config.name}`,
+            LIST_TIMEOUT_MS
+          )
+          return { serverId, connection, page }
+        } catch (error) {
+          return { serverId, connection, error }
+        }
+      })
+    )
+    for (const { serverId, connection, page, error } of listed) {
+      if (page) {
         statuses.push({
           serverId,
           serverName: connection.config.name,
@@ -421,23 +443,23 @@ export class McpClientManager {
           toolCount: page.tools.length
         })
         tools.push(...page.tools)
-      } catch (error) {
-        const message = errorMessage(error)
-        statuses.push({
-          serverId,
-          serverName: connection.config.name,
-          status: 'error',
-          toolCount: 0,
-          error: message
-        })
-        this.connections.delete(serverId)
-        this.connectionErrors.set(serverId, {
-          config: connection.config,
-          error: message,
-          status: failureStatus(error)
-        })
-        await this.closeConnection(connection.adapter)
+        continue
       }
+      const message = errorMessage(error)
+      statuses.push({
+        serverId,
+        serverName: connection.config.name,
+        status: 'error',
+        toolCount: 0,
+        error: message
+      })
+      this.connections.delete(serverId)
+      this.connectionErrors.set(serverId, {
+        config: connection.config,
+        error: message,
+        status: failureStatus(error)
+      })
+      await this.closeConnection(connection.adapter)
     }
     for (const [serverId, failure] of this.connectionErrors) {
       if (statuses.some((status) => status.serverId === serverId)) continue

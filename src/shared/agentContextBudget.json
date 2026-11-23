@@ -1,8 +1,8 @@
 {
   "conversation": {
     "systemPromptBytes": 16925,
-    "toolCount": 61,
-    "toolJsonBytes": 51149,
+    "toolCount": 60,
+    "toolJsonBytes": 50725,
     "toolBytes": {
       "apply_patch": 1850,
       "ask_user": 1358,
@@ -48,7 +48,6 @@
       "provider_request_key": 489,
       "read": 1199,
       "read_command_output": 839,
-      "search_tools": 423,
       "send_command_input": 651,
       "send_message": 899,
       "settings_propose_change": 748,

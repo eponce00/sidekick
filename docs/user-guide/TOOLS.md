@@ -259,6 +259,12 @@ shell and everything it started; quitting SideKick ends them all.
   later run that calls one first is told to load the skill. Listing changes nothing; every create,
   change, pause, resume, and delete asks you first, even in Full access. See
   [Asking the agent](SCHEDULES.md#asking-the-agent).
+- With at least one MCP connector set up, the agent gets `search_tools`. Its description names
+  each connector with its tools, or says why a connector can't be used, such as one waiting for
+  you to sign in or approve it. A search with a tool's name, a connector's name, or ordinary words
+  turns on the best matches, ranked by how many words match, from the agent's next turn; a search
+  that finds nothing lists what there is. Connectors start, and list their tools, at the same time,
+  so a slow one doesn't hold up the others.
 - User-configured MCP servers add their advertised tools after schema normalization. A call has
   two minutes to answer, and stopping the run cancels it on the server. A result the server marks
   as an error is a failed call. A local server that exited starts again for the next run.
