@@ -98,18 +98,18 @@
     "build:linux": "npm run build && electron-builder --config electron-builder.config.cjs --linux --x64 --publish never"
   },
   "dependencies": {
-    "@babel/standalone": "^7.29.12",
+    "@babel/standalone": "^7.29.14",
     "@electron-toolkit/utils": "^4.0.0",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@mozilla/readability": "^0.6.0",
-    "@napi-rs/canvas": "1.1.0",
+    "@napi-rs/canvas": "1.1.1",
     "@tanstack/react-virtual": "^3.14.26",
     "@types/d3": "^7.4.3",
     "@types/leaflet": "^1.9.22",
     "@xterm/headless": "6.0.0",
     "anser": "^2.3.5",
-    "axios": "^1.21.0",
-    "better-sqlite3": "13.0.3",
+    "axios": "^1.21.1",
+    "better-sqlite3": "13.2.0",
     "chart.js": "^4.6.1",
     "d3": "^7.9.2",
     "date-fns": "^4.4.0",
@@ -134,12 +134,12 @@
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "sherpa-onnx-node": "1.13.8",
-    "tldts": "^7.4.19"
+    "tldts": "^7.5.4"
   },
   "optionalDependencies": {
-    "@napi-rs/canvas-darwin-arm64": "1.1.0",
-    "@napi-rs/canvas-linux-x64-gnu": "1.1.0",
-    "@napi-rs/canvas-win32-x64-msvc": "1.1.0"
+    "@napi-rs/canvas-darwin-arm64": "1.1.1",
+    "@napi-rs/canvas-linux-x64-gnu": "1.1.1",
+    "@napi-rs/canvas-win32-x64-msvc": "1.1.1"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.1",
