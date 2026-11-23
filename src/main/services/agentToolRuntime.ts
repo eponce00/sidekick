@@ -17,7 +17,7 @@ import {
   normalizeAgentToolParameters,
   type AgentToolDefinition
 } from '../../shared/agentToolDefinitions'
-import type { AgentToolCatalogOptions } from '../../shared/agentToolCatalog'
+import type { AgentToolCatalogOptions, McpDirectoryEntry } from '../../shared/agentToolCatalog'
 import { mcpToolRisk } from '../../shared/mcp'
 import {
   toolExecutionFailed,
@@ -27,7 +27,13 @@ import {
   type ToolExecutionResult,
   type ToolWorkspaceChange
 } from '../../shared/agentRuntime'
-import type { McpServerConfig, McpToolInfo, TodoItem, ToolRisk } from '../../shared/types'
+import type {
+  McpServerConfig,
+  McpServerStatus,
+  McpToolInfo,
+  TodoItem,
+  ToolRisk
+} from '../../shared/types'
 import { getSkillById } from '../../shared/skills'
 import {
   isWorkspaceMutationTool,
@@ -371,6 +377,32 @@ export function mcpFunctionName(tool: Pick<McpToolInfo, 'serverId' | 'name'>): s
   return `mcp__${mcpNameSegment(tool.serverId)}__${mcpNameSegment(tool.name)}`
 }
 
+const MCP_STATUS_PROBLEMS: Partial<Record<McpServerStatus['status'], string>> = {
+  needs_auth: 'needs the user to sign in, in Settings',
+  needs_approval: 'needs the user to approve it, in Settings'
+}
+
+/** Each enabled connector with its tools, or why the run can't use it. */
+export function mcpDirectoryFor(listed: {
+  tools: readonly McpToolInfo[]
+  statuses: readonly McpServerStatus[]
+}): McpDirectoryEntry[] {
+  return listed.statuses
+    .filter(({ status }) => status !== 'disabled')
+    .map(({ serverId, serverName, status, error }) =>
+      status === 'connected'
+        ? {
+            server: serverName,
+            tools: listed.tools.filter((tool) => tool.serverId === serverId).map(({ name }) => name)
+          }
+        : {
+            server: serverName,
+            tools: [],
+            problem: MCP_STATUS_PROBLEMS[status] ?? error ?? `connector is ${status}`
+          }
+    )
+}
+
 function mcpDefinition(tool: McpToolInfo): AgentToolDefinition {
   return {
     type: 'function',
@@ -587,10 +619,12 @@ export class AgentToolRuntime {
         : 'read',
       baselineRevision
     }
+    const mcpDirectory: McpDirectoryEntry[] = []
     if (input.mcpConfigs?.length) {
       await this.mcp.sync([...input.mcpConfigs])
       const listed = await this.mcp.listTools()
       for (const tool of listed.tools) mcpByFunction.set(mcpFunctionName(tool), tool)
+      mcpDirectory.push(...mcpDirectoryFor(listed))
     }
     const browserOf = (conversationId: string): AgentBrowserSessionManager =>
       input.chrome?.service.inChrome.has(conversationId) ? input.chrome.manager : this.browser!
@@ -707,6 +741,7 @@ export class AgentToolRuntime {
     registerMcpToolHandlers(handlers, {
       mcp: this.mcp,
       available: mcpByFunction,
+      directory: mcpDirectory,
       enabled: enabledMcpByFunction,
       readReceipts,
       outputs: this.outputs
@@ -742,6 +777,7 @@ export class AgentToolRuntime {
       activeSkillIds: [...activeSkillIds],
       officeHelpersAvailable: officeSession?.available() ?? false,
       capabilities: input.capabilities,
+      mcpDirectory,
       mcpTools: [...enabledMcpByFunction.values()].map(mcpDefinition),
       mcpToolRisks: Object.fromEntries(
         [...enabledMcpByFunction.entries()].map(([name, tool]) => [name, mcpToolRisk(tool)])

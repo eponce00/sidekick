@@ -432,6 +432,7 @@ describe('McpClientManager with a local stdio server', () => {
     registerMcpToolHandlers(registry, {
       mcp: manager,
       available: new Map([['fail', { ...listed.tools[0], name: 'fail' }]]),
+      directory: [],
       enabled: new Map(),
       readReceipts: new Map(),
       outputs: new ToolOutputStore(root)
