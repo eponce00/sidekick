@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.27.11 — 2026-11-23
+
+- Let the agent find and use the tools of your MCP connectors. Its tool search now lists each
+  connector with its tools, ranks matches instead of requiring every word, and says why a connector
+  can't be used. Connectors also start at the same time, so their tools are ready sooner.
+- Refuse to start a packaged SideKick whose app code was changed after it was built, and encrypt
+  the cookies that hold your browser sign-ins.
+- Keep Brave search results from sites whose names merely end in brave.com.
+
 ## 0.27.10 — 2026-11-11
 
 - Run on Electron 43.8.7, which brings the Node.js 24.22.1 security release, and on current
