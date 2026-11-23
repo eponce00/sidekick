@@ -1,5 +1,5 @@
 import { JSDOM } from 'jsdom'
-import type { SearchSource } from '../source'
+import { isHostOrSubdomain, type SearchSource } from '../source'
 import { fetchSearchDocument, normalizedText } from '../searchHttp'
 import type { SourceSearchResult } from '../types'
 
@@ -14,7 +14,8 @@ function decodeBase64Url(value: string): string | undefined {
 function unwrapBingUrl(value: string): string {
   try {
     const url = new URL(value)
-    if (!url.hostname.endsWith('bing.com') || url.pathname !== '/ck/a') return url.toString()
+    if (!isHostOrSubdomain(url.hostname, 'bing.com') || url.pathname !== '/ck/a')
+      return url.toString()
     const wrapped = url.searchParams.get('u')
     if (!wrapped?.startsWith('a1')) return value
     const decoded = decodeBase64Url(wrapped.slice(2))

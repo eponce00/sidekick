@@ -1381,7 +1381,7 @@ function redactFormObservation(
   if (semanticSnapshot) {
     // What was typed stays out. Whether a box ended up ticked isn't a secret, and shows that it worked.
     semanticSnapshot = semanticSnapshot.replace(
-      /\s(value)=("(?:\\.|[^"])*"|[^\s\]]+)/g,
+      /\s(value)=("(?:\\.|[^"\\])*"|[^\s\]]+)/g,
       ' $1=[redacted]'
     )
     semanticSnapshot = redact(semanticSnapshot)

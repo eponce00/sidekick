@@ -31,6 +31,13 @@ describe('embedded search source parsers', () => {
     ])
   })
 
+  it('keeps a Brave result from a site whose name only ends in brave.com', () => {
+    const html = `<div id="results"><div class="result-wrapper"><div class="result-content"><a href="https://lifebrave.com/"><div class="search-snippet-title">Life Brave</div></a></div></div></div>`
+    expect(parseBraveResults(html, 5).map((result) => result.url)).toEqual([
+      'https://lifebrave.com/'
+    ])
+  })
+
   it('parses Bing cards and decodes tracked destination links', () => {
     const destination = 'https://example.com/reference'
     const wrapped = `https://www.bing.com/ck/a?u=a1${Buffer.from(destination).toString('base64url')}`

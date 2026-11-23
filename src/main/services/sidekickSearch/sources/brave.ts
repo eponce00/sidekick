@@ -1,5 +1,5 @@
 import { JSDOM } from 'jsdom'
-import type { SearchSource } from '../source'
+import { isHostOrSubdomain, type SearchSource } from '../source'
 import { fetchSearchDocument, normalizedText } from '../searchHttp'
 import type { SourceSearchResult } from '../types'
 
@@ -23,7 +23,9 @@ export function parseBraveResults(html: string, limit: number): SourceSearchResu
       const description = normalizedText(
         wrapper?.querySelector('.generic-snippet .content')?.textContent
       )
-      return title && /^https?:\/\//.test(url) && !new URL(url).hostname.endsWith('brave.com')
+      return title &&
+        /^https?:\/\//.test(url) &&
+        !isHostOrSubdomain(new URL(url).hostname, 'brave.com')
         ? [{ title, url, description, source: 'brave' as const, rank: index + 1 }]
         : []
     })
