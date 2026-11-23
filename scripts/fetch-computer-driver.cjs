@@ -55,15 +55,13 @@ async function fetchComputerDriver() {
   try {
     const zipPath = join(scratch, 'driver.zip')
     writeFileSync(zipPath, zip)
+    // Windows' own tar reads zip archives, and fails with an exit code. Expand-Archive broke when a
+    // PowerShell 7 step started Windows PowerShell, which then loaded 7's Archive module, and it
+    // exited cleanly anyway. The full path keeps Git's tar, which can't read zip, out of it.
     execFileSync(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        'Expand-Archive -LiteralPath $env:SK_ZIP -DestinationPath $env:SK_OUT -Force'
-      ],
-      { env: { ...process.env, SK_ZIP: zipPath, SK_OUT: scratch }, stdio: 'inherit' }
+      join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'),
+      ['-xf', zipPath, '-C', scratch],
+      { stdio: 'inherit' }
     )
     rmSync(DESTINATION, { recursive: true, force: true })
     mkdirSync(DESTINATION, { recursive: true })
